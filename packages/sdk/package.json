@@ -12,7 +12,8 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "viem": "^2.0.0"
+    "viem": "^2.0.0",
+    "@echo/types": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.4.0",
