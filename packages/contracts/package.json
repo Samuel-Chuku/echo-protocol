@@ -1,0 +1,16 @@
+{
+  "name": "@echo/contracts",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Echo Protocol Solidity contracts",
+  "scripts": {
+    "build": "forge build",
+    "test": "forge test -vvv",
+    "test:coverage": "forge coverage",
+    "lint": "forge fmt --check",
+    "format": "forge fmt",
+    "clean": "forge clean && rm -rf cache out",
+    "deploy:testnet": "echo 'Run manually: forge script src/deployment/DeployEcho.s.sol --rpc-url $ARC_TESTNET_RPC_URL --private-key $PRIVATE_KEY --broadcast'"
+  },
+  "devDependencies": {}
+}
