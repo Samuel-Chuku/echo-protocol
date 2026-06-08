@@ -10,6 +10,7 @@ import {IAgenticCommerce} from "../interfaces/IERC8183.sol";
 import {IIdentityRegistry} from "../interfaces/IERC8004.sol";
 import {EchoHook} from "./EchoHook.sol";
 import {ParticipationReceipt} from "./ParticipationReceipt.sol";
+import {AttributionRegistry} from "./AttributionRegistry.sol";
 
 /**
  * @title MarketRegistry
@@ -52,6 +53,7 @@ contract MarketRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     IIdentityRegistry public identityRegistry;
     EchoHook public echoHook;
     ParticipationReceipt public participationReceipt;
+    AttributionRegistry public attributionRegistry;
 
     uint256 public marketCount;
     mapping(uint256 => Market) public markets;
@@ -93,6 +95,7 @@ contract MarketRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     error ZeroAddress();
 
     error AlreadySet();
+    error InvalidShare();
 
     function initialize(
         address _usdc,
@@ -121,6 +124,25 @@ contract MarketRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         if (address(participationReceipt) != address(0)) revert AlreadySet();
         if (_participationReceipt == address(0)) revert ZeroAddress();
         participationReceipt = ParticipationReceipt(_participationReceipt);
+    }
+
+    function setAttributionRegistry(address _attributionRegistry) external onlyOwner {
+        if (address(attributionRegistry) != address(0)) revert AlreadySet();
+        if (_attributionRegistry == address(0)) revert ZeroAddress();
+        attributionRegistry = AttributionRegistry(_attributionRegistry);
+    }
+
+    /// @notice Optional: a requester funds a pool that rewards the introducer of any applicant
+    ///         who advances a tier in this market. Drawn from the requester's own escrow, not
+    ///         from Echo's fee — so it is bounded only by the funded amount.
+    function fundAttributionPool(uint256 marketId, uint256 amount, uint16 introducerShareBps) external {
+        Market storage m = markets[marketId];
+        if (msg.sender != m.requester) revert NotRequester();
+        if (m.closed) revert MarketAlreadyClosed();
+        if (introducerShareBps > 10_000) revert InvalidShare();
+
+        usdc.safeTransferFrom(msg.sender, address(echoHook), amount);
+        echoHook.fundPool(marketId, amount, introducerShareBps);
     }
 
     function createMarket(
@@ -201,6 +223,11 @@ contract MarketRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         app.tierReached = 1;
 
         participationReceipt.advanceTier(app.receiptTokenId, 1, m.tierAmounts[0]);
+
+        if (address(attributionRegistry) != address(0)) {
+            attributionRegistry.recordGrade(identityRegistry.agentIdOf(participant), msg.sender);
+        }
+
         emit TierAdvanced(marketId, participant, 0, 1, jobId);
     }
 
@@ -244,8 +271,9 @@ contract MarketRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable {
 
         uint256 remaining = echoHook.remainingEscrow(marketId);
         if (remaining > 0) {
-            usdc.safeTransfer(m.requester, remaining);
+            echoHook.releaseEscrow(marketId, m.requester, remaining);
         }
+        echoHook.releasePoolRemainder(marketId, m.requester);
 
         emit MarketClosed(marketId, remaining);
     }
@@ -301,7 +329,7 @@ contract MarketRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable {
             requesterAgentId: requesterAgentId,
             tier: tier,
             ghostDeadline: block.timestamp + m.ghostDeadline,
-            tierAmount: m.tierAmounts[uint8(tier)],
+            tierAmount: m.tierAmounts[uint8(tier) - 1],
             ghostTriggered: false
         });
 
