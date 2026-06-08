@@ -18,14 +18,16 @@ export const CONTRACTS = {
     marketRegistry: '0x6ce0899056cb7e36524703289da66a8ed0e333dc' as Address,
     echoHook: '0x6333b42426e5684bdb696be2ff302ad5cfc84866' as Address,
     participationReceipt: '0xb767dff0813840fcf1d58cf79b161ba198967da0' as Address,
+    attributionRegistry: '0x8845b933C996EC7d15E6FC35276e9D360e9507dD' as Address,
+    attributionPayout: '0x3240a70f4688afe0AB6294585982324FF4CbACD3' as Address,
   },
 } as const;
 
 // Implementations (for upgrade transactions only)
 export const IMPLEMENTATIONS = {
   arcTestnet: {
-    marketRegistry: '0x3aF363855f0C0A5707D491a4681CB396A93593DD' as Address,
-    echoHook: '0x67031175300d756519F96EA52799dFeBAA17cf3e' as Address,
+    marketRegistry: '0xad3CC8Da62Fb017A987635562AF86da1E83bC52A' as Address,
+    echoHook: '0x572355F2A3037352681f9D4f475E97b66aCe900B' as Address,
     participationReceipt: '0x2bA8ED70dEe63351d2fF739E36182972e9a695C4' as Address,
   },
 } as const;
