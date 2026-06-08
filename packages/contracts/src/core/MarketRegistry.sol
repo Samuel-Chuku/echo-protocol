@@ -53,13 +53,15 @@ contract MarketRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     IIdentityRegistry public identityRegistry;
     EchoHook public echoHook;
     ParticipationReceipt public participationReceipt;
-    AttributionRegistry public attributionRegistry;
 
     uint256 public marketCount;
     mapping(uint256 => Market) public markets;
     mapping(uint256 => Application[]) public marketApplications;
     mapping(uint256 => mapping(address => uint256)) public participantApplicationIndex;
     mapping(address => uint256[]) public requesterMarkets;
+
+    // Appended after the original layout (UUPS-safe): added in the attribution upgrade.
+    AttributionRegistry public attributionRegistry;
 
     event MarketCreated(
         uint256 indexed marketId,
