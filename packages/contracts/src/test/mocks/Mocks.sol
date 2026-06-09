@@ -3,6 +3,7 @@ pragma solidity ^0.8.20;
 
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {IAgenticCommerce} from "../../interfaces/IERC8183.sol";
+import {IACPHook} from "../../interfaces/IACPHook.sol";
 
 /// @notice 6-decimal ERC20 standing in for Arc native USDC.
 contract MockUSDC is ERC20 {
@@ -17,90 +18,126 @@ contract MockUSDC is ERC20 {
     }
 }
 
-/// @notice Minimal ERC-8004 IdentityRegistry stand-in. agentIdOf returns a preset id.
+/// @notice Minimal ERC-8004 IdentityRegistry stand-in mirroring the live ERC-721 surface:
+///         no address→agentId reverse lookup. `isAuthorizedOrOwner` is the gate Echo uses.
 contract MockIdentityRegistry {
-    mapping(address => uint256) public ids;
+    mapping(address => uint256) public ids;    // address → its agentId (test convenience)
+    mapping(uint256 => address) public owners; // agentId → owner
     uint256 public next = 1;
 
+    /// @dev Test helper: bind an address to a fixed agentId.
     function setAgent(address user, uint256 id) external {
         ids[user] = id;
+        owners[id] = user;
     }
 
     function register(string calldata) external returns (uint256 agentId) {
         agentId = next++;
         ids[msg.sender] = agentId;
+        owners[agentId] = msg.sender;
     }
 
-    function agentIdOf(address user) external view returns (uint256) {
-        return ids[user];
+    function ownerOf(uint256 agentId) external view returns (address) {
+        return owners[agentId];
     }
 
-    function isRegistered(address user) external view returns (bool) {
-        return ids[user] != 0;
+    function getAgentWallet(uint256 agentId) external view returns (address) {
+        return owners[agentId];
     }
 
-    function agentOf(uint256) external pure returns (address) {
-        return address(0);
+    function isAuthorizedOrOwner(address spender, uint256 agentId) external view returns (bool) {
+        return owners[agentId] == spender;
+    }
+
+    function balanceOf(address user) external view returns (uint256) {
+        return ids[user] == 0 ? 0 : 1;
     }
 }
 
-/// @notice No-op ERC-8004 ReputationRegistry — records nothing, just accepts calls.
+/// @notice No-op ERC-8004 ReputationRegistry — mirrors the live `giveFeedback` signature
+///         and just emits, so EchoHook's best-effort reputation writes succeed in tests.
 contract MockReputationRegistry {
-    event Feedback(uint256 agentId, uint256 counterpartyId, string feedbackType, bytes32 metadata);
+    event Feedback(uint256 indexed agentId, int128 value, string tag1, string tag2, bytes32 feedbackHash);
 
-    function acceptFeedback(uint256 a, uint256 b, string calldata t, bytes32 m) external {
-        emit Feedback(a, b, t, m);
-    }
-
-    function getFeedbackCount(uint256) external pure returns (uint256) {
-        return 0;
+    function giveFeedback(
+        uint256 agentId,
+        int128 value,
+        uint8,
+        string calldata tag1,
+        string calldata tag2,
+        string calldata,
+        string calldata,
+        bytes32 feedbackHash
+    ) external {
+        emit Feedback(agentId, value, tag1, tag2, feedbackHash);
     }
 }
 
-/// @notice ERC-8183 AgenticCommerce stand-in that stores jobs and fires hook callbacks,
-///         so MarketRegistry → EchoHook lifecycle can be driven end-to-end in tests.
+/// @notice ERC-8183 AgenticCommerce stand-in that stores jobs and fires the IACPHook
+///         `afterAction` callback (matching live Arc), so MarketRegistry → EchoHook can be
+///         driven end-to-end in tests. Jobs carry no budget — Echo settles from its escrow.
 contract MockAgenticCommerce {
     IAgenticCommerce.Job[] private _jobs; // 1-indexed via +1 offset
     uint256 public jobCount;
+    mapping(address => bool) public whitelistedHooks;
+
+    function setHookWhitelist(address hook, bool status) external {
+        whitelistedHooks[hook] = status;
+    }
 
     function createJob(
         address provider,
         address evaluator,
         uint256 expiredAt,
-        bytes32 description,
+        string calldata description,
         address hook
     ) external returns (uint256 jobId) {
+        jobId = ++jobCount;
         _jobs.push(IAgenticCommerce.Job({
+            id: jobId,
             client: msg.sender,
             provider: provider,
             evaluator: evaluator,
+            description: description,
             budget: 0,
             expiredAt: expiredAt,
-            description: description,
-            status: IAgenticCommerce.JobStatus.Active,
+            status: IAgenticCommerce.JobStatus.Open,
             hook: hook
         }));
-        jobId = ++jobCount;
+        if (hook != address(0)) {
+            IACPHook(hook).afterAction(
+                jobId, IAgenticCommerce.createJob.selector, abi.encode(msg.sender, provider, evaluator)
+            );
+        }
     }
 
-    function jobs(uint256 jobId) external view returns (IAgenticCommerce.Job memory) {
+    function jobCounter() external view returns (uint256) {
+        return jobCount;
+    }
+
+    function getJob(uint256 jobId) external view returns (IAgenticCommerce.Job memory) {
         return _jobs[jobId - 1];
     }
 
-    /// @dev Test driver: simulate the evaluator completing a job, firing the hook.
+    /// @dev Test driver: provider submits a deliverable, firing the submit hook.
+    function submit(uint256 jobId, bytes32 deliverable) external {
+        IAgenticCommerce.Job storage j = _jobs[jobId - 1];
+        j.status = IAgenticCommerce.JobStatus.Submitted;
+        if (j.hook != address(0)) {
+            IACPHook(j.hook).afterAction(
+                jobId, IAgenticCommerce.submit.selector, abi.encode(j.provider, deliverable, bytes(""))
+            );
+        }
+    }
+
+    /// @dev Test driver: evaluator completes, firing the settlement hook.
     function complete(uint256 jobId, bytes32 reasonHash) external {
         IAgenticCommerce.Job storage j = _jobs[jobId - 1];
         j.status = IAgenticCommerce.JobStatus.Completed;
-        IEchoHookCallback(j.hook).onComplete(jobId, reasonHash);
+        if (j.hook != address(0)) {
+            IACPHook(j.hook).afterAction(
+                jobId, IAgenticCommerce.complete.selector, abi.encode(j.evaluator, reasonHash, bytes(""))
+            );
+        }
     }
-
-    /// @dev Test driver: simulate expiry, firing the hook.
-    function expire(uint256 jobId) external {
-        IEchoHookCallback(_jobs[jobId - 1].hook).onExpire(jobId);
-    }
-}
-
-interface IEchoHookCallback {
-    function onComplete(uint256 jobId, bytes32 reasonHash) external;
-    function onExpire(uint256 jobId) external;
 }

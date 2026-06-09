@@ -6,19 +6,33 @@ import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/Own
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {IAgenticCommerce} from "../interfaces/IERC8183.sol";
 import {IReputationRegistry} from "../interfaces/IERC8004.sol";
+import {IACPHook} from "../interfaces/IACPHook.sol";
 import {AttributionPayout} from "./AttributionPayout.sol";
 import {AttributionRegistry} from "./AttributionRegistry.sol";
 
 /**
  * @title EchoHook
- * @notice Upgradeable. The heart of Echo Protocol. Implements hook callbacks for
- *         every ERC-8183 job lifecycle transition. Handles tier payouts, ghost penalties,
- *         and writes P-Rep / R-Rep / G-Rep events to Arc's ReputationRegistry.
- * @dev Uses UUPS proxy pattern for upgradeability.
+ * @notice Upgradeable. The heart of Echo Protocol. Implements Arc's generic ERC-8183
+ *         hook interface (`IACPHook`): AgenticCommerce calls `beforeAction`/`afterAction
+ *         (jobId, selector, data)` on every job-lifecycle transition, and EchoHook
+ *         branches on the selector to drive tier payouts, ghost penalties, attribution
+ *         settlement and reputation writes.
+ *
+ *         Money model: Echo custodies its own escrow here (funded by MarketRegistry on
+ *         createMarket) and creates AgenticCommerce jobs with budget == 0, so Arc moves
+ *         no funds for Echo jobs — all tiered payouts/fees/attribution are settled from
+ *         this contract in `afterAction(complete)`.
+ *
+ *         Ghost path: Arc fires NO hook on expiry (`claimRefund` is silent), so the ghost
+ *         penalty is Echo-native — `triggerGhost` is driven by MarketRegistry, not Arc.
+ * @dev UUPS proxy. Storage layout is unchanged from the prior version (only the callback
+ *      surface changed: on*-callbacks → IACPHook before/afterAction + triggerGhost), so it
+ *      upgrades in place. Verify with `forge inspect EchoHook storageLayout` before deploy.
  */
-contract EchoHook is Initializable, OwnableUpgradeable, UUPSUpgradeable {
+contract EchoHook is Initializable, OwnableUpgradeable, UUPSUpgradeable, IACPHook {
     using SafeERC20 for IERC20;
 
     enum Tier {
@@ -137,7 +151,7 @@ contract EchoHook is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     }
 
     /// @notice Configure the protocol take-rate and attribution wiring. Until set, protocolFeeBps
-    ///         is 0 and onComplete pays the worker the full amount (legacy behavior).
+    ///         is 0 and completion pays the worker the full amount (legacy behavior).
     function setProtocolConfig(
         uint16 _feeBps,
         address _treasury,
@@ -174,20 +188,31 @@ contract EchoHook is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         }
     }
 
-    function onFund(uint256, address, uint256) external onlyAgenticCommerce {
-        // No-op: MarketRegistry handles escrow pool funding
+    // ──────────────────── ERC-8183 hook (IACPHook) ────────────────────
+
+    /// @inheritdoc IERC165
+    function supportsInterface(bytes4 interfaceId) public pure override returns (bool) {
+        return interfaceId == type(IACPHook).interfaceId || interfaceId == type(IERC165).interfaceId;
     }
 
-    function onSubmit(uint256 jobId, bytes32) external onlyAgenticCommerce {
-        MarketContext storage c = ctx[jobId];
-        if (c.marketId == 0) revert JobNotFound();
+    /// @notice Pre-action hook. Echo settles post-action only, so this is a no-op gate that
+    ///         simply asserts the caller is Arc's AgenticCommerce.
+    function beforeAction(uint256, bytes4, bytes calldata) external view onlyAgenticCommerce {}
 
-        reputationRegistry.acceptFeedback(
-            c.participantAgentId, c.requesterAgentId, "submitted", bytes32(0)
-        );
+    /// @notice Post-action hook. Arc passes the lifecycle selector (`msg.sig`) and the
+    ///         abi-encoded call args. Echo acts on `complete` (settle payout) and `submit`
+    ///         (acknowledge in reputation); other transitions need no Echo bookkeeping.
+    function afterAction(uint256 jobId, bytes4 selector, bytes calldata data) external onlyAgenticCommerce {
+        if (selector == IAgenticCommerce.complete.selector) {
+            // complete(uint256,bytes32,bytes) → data = abi.encode(evaluator, reason, optParams)
+            (, bytes32 reasonHash, ) = abi.decode(data, (address, bytes32, bytes));
+            _settleComplete(jobId, reasonHash);
+        } else if (selector == IAgenticCommerce.submit.selector) {
+            _ackSubmit(jobId);
+        }
     }
 
-    function onComplete(uint256 jobId, bytes32 reasonHash) external onlyAgenticCommerce {
+    function _settleComplete(uint256 jobId, bytes32 reasonHash) internal {
         MarketContext storage c = ctx[jobId];
         if (c.marketId == 0) revert JobNotFound();
 
@@ -195,7 +220,7 @@ contract EchoHook is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         if (distributed[c.marketId] + gross > escrowed[c.marketId]) revert InsufficientEscrow();
         distributed[c.marketId] += gross;
 
-        IAgenticCommerce.Job memory job = agenticCommerce.jobs(jobId);
+        IAgenticCommerce.Job memory job = agenticCommerce.getJob(jobId);
 
         // Echo's fee is skimmed from the payout; the worker receives the remainder.
         uint256 fee = gross * protocolFeeBps / 10_000;
@@ -218,6 +243,12 @@ contract EchoHook is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         _writeCompletionReputation(c, reasonHash);
 
         emit TierPayout(c.marketId, jobId, job.provider, c.tier, net);
+    }
+
+    function _ackSubmit(uint256 jobId) internal {
+        MarketContext storage c = ctx[jobId];
+        if (c.marketId == 0) revert JobNotFound();
+        _feedback(c.participantAgentId, int128(0), "submitted", bytes32(0));
     }
 
     /// @dev Pay platform ARs out of Echo's fee. Returns the total attributed.
@@ -262,39 +293,47 @@ contract EchoHook is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     }
 
     function _writeCompletionReputation(MarketContext storage c, bytes32 reasonHash) internal {
-        string memory feedbackType;
-        if (c.tier == Tier.Substantive) feedbackType = "tier_substantive";
-        else if (c.tier == Tier.Shortlist) feedbackType = "tier_shortlist";
-        else if (c.tier == Tier.Final) feedbackType = "tier_final";
-        else feedbackType = "tier_unknown";
+        string memory tag;
+        if (c.tier == Tier.Substantive) tag = "tier_substantive";
+        else if (c.tier == Tier.Shortlist) tag = "tier_shortlist";
+        else if (c.tier == Tier.Final) tag = "tier_final";
+        else tag = "tier_unknown";
 
-        reputationRegistry.acceptFeedback(c.participantAgentId, c.requesterAgentId, feedbackType, reasonHash);
-        reputationRegistry.acceptFeedback(c.requesterAgentId, c.participantAgentId, "responded", reasonHash);
+        // Echo vouches (as its own client identity) for both sides of a completed tier.
+        _feedback(c.participantAgentId, int128(1), tag, reasonHash);
+        _feedback(c.requesterAgentId, int128(1), "responded", reasonHash);
     }
 
-    function onExpire(uint256 jobId) external onlyAgenticCommerce {
+    /// @dev Write a single feedback to Arc's ReputationRegistry as EchoHook (the "client").
+    ///      Best-effort: reputation must never block a payout, and giveFeedback reverts on
+    ///      unregistered agents / self-feedback — so failures are swallowed.
+    function _feedback(uint256 agentId, int128 value, string memory tag, bytes32 hash) internal {
+        if (address(reputationRegistry) == address(0) || agentId == 0) return;
+        try reputationRegistry.giveFeedback(agentId, value, 0, "echo", tag, "", "", hash) {} catch {}
+    }
+
+    /// @notice Echo-native ghost penalty. Arc fires no expiry hook, so MarketRegistry drives
+    ///         this once a Final-tier job's ghost deadline passes without completion.
+    function triggerGhost(uint256 jobId) external onlyRegistry {
         MarketContext storage c = ctx[jobId];
         if (c.marketId == 0) revert JobNotFound();
         if (c.ghostTriggered) revert AlreadyWithdrawn();
+        if (c.tier != Tier.Final || block.timestamp < c.ghostDeadline) return;
 
-        if (c.tier == Tier.Final && block.timestamp >= c.ghostDeadline) {
-            uint256 ghostAmount = tierAmounts[c.marketId][3];
+        uint256 ghostAmount = tierAmounts[c.marketId][3];
+        if (distributed[c.marketId] + ghostAmount > escrowed[c.marketId]) revert InsufficientEscrow();
 
-            if (distributed[c.marketId] + ghostAmount > escrowed[c.marketId])
-                revert InsufficientEscrow();
+        distributed[c.marketId] += ghostAmount;
+        c.ghostTriggered = true;
 
-            distributed[c.marketId] += ghostAmount;
-            c.ghostTriggered = true;
+        IAgenticCommerce.Job memory job = agenticCommerce.getJob(jobId);
+        usdc.safeTransfer(job.provider, ghostAmount);
 
-            IAgenticCommerce.Job memory job = agenticCommerce.jobs(jobId);
-            usdc.safeTransfer(job.provider, ghostAmount);
+        _feedback(c.requesterAgentId, int128(-1), "ghosted", bytes32(0));
+        _feedback(c.participantAgentId, int128(1), "ghosted_victim", bytes32(0));
 
-            reputationRegistry.acceptFeedback(c.requesterAgentId, c.participantAgentId, "ghosted", bytes32(0));
-            reputationRegistry.acceptFeedback(c.participantAgentId, c.requesterAgentId, "ghosted_victim", bytes32(0));
-
-            emit GhostPenalty(c.marketId, jobId, job.provider, ghostAmount, job.client);
-            emit RRepSlashed(c.requesterAgentId, c.marketId, ghostAmount);
-        }
+        emit GhostPenalty(c.marketId, jobId, job.provider, ghostAmount, job.client);
+        emit RRepSlashed(c.requesterAgentId, c.marketId, ghostAmount);
     }
 
     function getTierAmount(uint256 marketId, uint8 tierIndex) external view returns (uint256) {

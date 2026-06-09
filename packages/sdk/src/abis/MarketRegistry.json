@@ -35,6 +35,11 @@
         "internalType": "uint256"
       },
       {
+        "name": "agentId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
         "name": "submissionHash",
         "type": "bytes32",
         "internalType": "bytes32"
@@ -111,6 +116,11 @@
       },
       {
         "name": "escrowTotal",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "requesterAgentId",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -220,6 +230,11 @@
             "name": "withdrawn",
             "type": "bool",
             "internalType": "bool"
+          },
+          {
+            "name": "agentId",
+            "type": "uint256",
+            "internalType": "uint256"
           }
         ]
       }
@@ -306,6 +321,11 @@
             "name": "closed",
             "type": "bool",
             "internalType": "bool"
+          },
+          {
+            "name": "requesterAgentId",
+            "type": "uint256",
+            "internalType": "uint256"
           }
         ]
       }
@@ -367,6 +387,11 @@
             "name": "withdrawn",
             "type": "bool",
             "internalType": "bool"
+          },
+          {
+            "name": "agentId",
+            "type": "uint256",
+            "internalType": "uint256"
           }
         ]
       }
@@ -542,6 +567,11 @@
         "name": "withdrawn",
         "type": "bool",
         "internalType": "bool"
+      },
+      {
+        "name": "agentId",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -629,6 +659,11 @@
         "name": "closed",
         "type": "bool",
         "internalType": "bool"
+      },
+      {
+        "name": "requesterAgentId",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -772,6 +807,24 @@
     "inputs": [
       {
         "name": "newOwner",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "triggerGhost",
+    "inputs": [
+      {
+        "name": "marketId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "participant",
         "type": "address",
         "internalType": "address"
       }
@@ -1105,6 +1158,11 @@
   {
     "type": "error",
     "name": "NoIdentity",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotAgentOwner",
     "inputs": []
   },
   {

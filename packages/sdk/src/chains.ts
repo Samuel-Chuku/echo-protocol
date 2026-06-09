@@ -1,20 +1,12 @@
 import { http, createConfig } from 'wagmi';
-import { createPublicClient, createWalletClient, custom } from 'viem';
+import { createWalletClient, custom } from 'viem';
 
-// Arc Testnet chain definition (not in wagmi builtins)
-export const arcTestnet = {
-  id: 5042002,
-  name: 'Arc Testnet',
-  nativeCurrency: { name: 'USDC', symbol: 'USDC', decimals: 6 },
-  rpcUrls: {
-    default: { http: ['https://rpc.testnet.arc.network'] },
-    public: { http: ['https://rpc.testnet.arc.network'] },
-  },
-  blockExplorers: {
-    default: { name: 'Arcscan', url: 'https://testnet.arcscan.app' },
-  },
-  testnet: true,
-} as const;
+// wagmi/browser bindings for React apps. The pure-viem chain definition and
+// read client live in ./chain so the SDK class can be used server-side without
+// pulling wagmi. Re-export them here for back-compat with existing imports.
+import { arcTestnet, publicClient } from './chain';
+
+export { arcTestnet, publicClient };
 
 // wagmi config for React
 export const wagmiConfig = createConfig({
@@ -22,12 +14,6 @@ export const wagmiConfig = createConfig({
   transports: {
     [arcTestnet.id]: http(),
   },
-});
-
-// viem public client for server-side / scripting
-export const publicClient = createPublicClient({
-  chain: arcTestnet,
-  transport: http(process.env.ARC_TESTNET_RPC_URL),
 });
 
 // viem wallet client (needs window.ethereum)

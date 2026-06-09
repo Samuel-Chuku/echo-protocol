@@ -87,14 +87,14 @@ contract MarketRegistryTest is Test {
         usdc.approve(address(registry), type(uint256).max);
         marketId = registry.createMarket(
             "ipfs://market", keccak256("scope"), tierAmounts,
-            0, MAX_APPLICANTS, GHOST_DEADLINE, ESCROW
+            0, MAX_APPLICANTS, GHOST_DEADLINE, ESCROW, REQ_AGENT
         );
         vm.stopPrank();
     }
 
     function _apply(uint256 marketId) internal returns (uint256 tokenId) {
         vm.prank(participant);
-        tokenId = registry.applyToMarket(marketId, keccak256("submission"));
+        tokenId = registry.applyToMarket(marketId, PART_AGENT, keccak256("submission"));
     }
 
     /// @dev Grade up one tier and immediately settle the spawned job via the mock.
@@ -121,7 +121,7 @@ contract MarketRegistryTest is Test {
         vm.startPrank(requester);
         usdc.approve(address(registry), type(uint256).max);
         vm.expectRevert();
-        registry.createMarket("uri", keccak256("s"), tierAmounts, 0, MAX_APPLICANTS, GHOST_DEADLINE, 1e6);
+        registry.createMarket("uri", keccak256("s"), tierAmounts, 0, MAX_APPLICANTS, GHOST_DEADLINE, 1e6, REQ_AGENT);
         vm.stopPrank();
     }
 
@@ -134,12 +134,12 @@ contract MarketRegistryTest is Test {
         assertEq(echoHook.escrowed(marketId), ESCROW); // apply doesn't touch escrow
     }
 
-    function test_RevertWhen_ApplyWithoutIdentity() public {
+    function test_RevertWhen_ApplyNotAgentOwner() public {
         uint256 marketId = _createMarket();
-        address stranger = makeAddr("stranger"); // no identity set
+        address stranger = makeAddr("stranger"); // does not own agentId 999
         vm.prank(stranger);
-        vm.expectRevert(MarketRegistry.NoIdentity.selector);
-        registry.applyToMarket(marketId, keccak256("x"));
+        vm.expectRevert(MarketRegistry.NotAgentOwner.selector);
+        registry.applyToMarket(marketId, 999, keccak256("x"));
     }
 
     // ---- grade + settle: fee skim ----

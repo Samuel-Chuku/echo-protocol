@@ -35,6 +35,9 @@ contract MarketRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         uint256 applicantCount;
         bool active;
         bool closed;
+        // ERC-8004 identity of the requester (Arc has no address→agentId reverse lookup,
+        // so the requester supplies their own agentId at createMarket and we verify+store it).
+        uint256 requesterAgentId;
     }
 
     struct Application {
@@ -46,6 +49,8 @@ contract MarketRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         uint256[] tierJobIds;
         uint48 appliedAt;
         bool withdrawn;
+        // ERC-8004 identity of the applicant, supplied + verified at applyToMarket.
+        uint256 agentId;
     }
 
     IERC20 public usdc;
@@ -94,6 +99,7 @@ contract MarketRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     error MaxApplicantsReached();
     error InvalidTierTransition(uint8 from, uint8 to);
     error NoIdentity();
+    error NotAgentOwner();
     error ZeroAddress();
 
     error AlreadySet();
@@ -154,10 +160,14 @@ contract MarketRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         uint256 minPRep,
         uint256 maxApplicants,
         uint256 ghostDeadline,
-        uint256 escrowTotal
+        uint256 escrowTotal,
+        uint256 requesterAgentId
     ) external returns (uint256 marketId) {
         uint256 minRequired = _calculateMinEscrow(tierAmounts, maxApplicants, ghostDeadline);
         if (escrowTotal < minRequired) revert InsufficientEscrow(escrowTotal, minRequired);
+
+        // Requester must control the ERC-8004 identity they claim (it receives R-Rep).
+        if (!identityRegistry.isAuthorizedOrOwner(msg.sender, requesterAgentId)) revert NotAgentOwner();
 
         marketId = ++marketCount;
 
@@ -174,7 +184,8 @@ contract MarketRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable {
             escrowSpent: 0,
             applicantCount: 0,
             active: true,
-            closed: false
+            closed: false,
+            requesterAgentId: requesterAgentId
         });
 
         requesterMarkets[msg.sender].push(marketId);
@@ -186,15 +197,16 @@ contract MarketRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         emit MarketCreated(marketId, msg.sender, escrowTotal, tierAmounts);
     }
 
-    function applyToMarket(uint256 marketId, bytes32 submissionHash) external returns (uint256 receiptTokenId) {
+    function applyToMarket(uint256 marketId, uint256 agentId, bytes32 submissionHash) external returns (uint256 receiptTokenId) {
         Market storage m = markets[marketId];
         if (!m.active) revert MarketNotActive();
         if (m.closed) revert MarketAlreadyClosed();
         if (m.applicantCount >= m.maxApplicants) revert MaxApplicantsReached();
         if (participantApplicationIndex[marketId][msg.sender] != 0) revert AlreadyApplied();
 
-        uint256 agentId = identityRegistry.agentIdOf(msg.sender);
-        if (agentId == 0) revert NoIdentity();
+        // Arc's IdentityRegistry has no address→agentId lookup; the applicant supplies
+        // their agentId and we verify they control it.
+        if (!identityRegistry.isAuthorizedOrOwner(msg.sender, agentId)) revert NotAgentOwner();
 
         receiptTokenId = participationReceipt.mint(msg.sender, marketId, submissionHash);
 
@@ -205,6 +217,7 @@ contract MarketRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         app.receiptTokenId = receiptTokenId;
         app.tierReached = 0;
         app.appliedAt = uint48(block.timestamp);
+        app.agentId = agentId;
 
         participantApplicationIndex[marketId][msg.sender] = marketApplications[marketId].length;
         m.applicantCount++;
@@ -227,7 +240,7 @@ contract MarketRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         participationReceipt.advanceTier(app.receiptTokenId, 1, m.tierAmounts[0]);
 
         if (address(attributionRegistry) != address(0)) {
-            attributionRegistry.recordGrade(identityRegistry.agentIdOf(participant), msg.sender);
+            attributionRegistry.recordGrade(app.agentId, msg.sender);
         }
 
         emit TierAdvanced(marketId, participant, 0, 1, jobId);
@@ -309,19 +322,24 @@ contract MarketRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         EchoHook.Tier tier
     ) internal returns (uint256 jobId) {
         Market storage m = markets[marketId];
-        uint256 participantAgentId = identityRegistry.agentIdOf(participant);
-        uint256 requesterAgentId = identityRegistry.agentIdOf(m.requester);
+        Application storage app = _getApplication(marketId, participant);
+        uint256 participantAgentId = app.agentId;
+        uint256 requesterAgentId = m.requesterAgentId;
 
         uint256 expiration = block.timestamp + 30 days;
         if (tier == EchoHook.Tier.Final) {
             expiration = block.timestamp + m.ghostDeadline;
         }
 
+        // Arc's createJob takes a human-readable string description and requires the hook to
+        // be whitelisted by Arc admins + advertise IACPHook via ERC-165. Echo creates the job
+        // with budget == 0 (set later via setBudget/fund only if needed) and settles tier
+        // payouts itself from EchoHook escrow on the `complete` callback.
         jobId = agenticCommerce.createJob(
             participant,
             m.requester,
             expiration,
-            keccak256(abi.encodePacked(marketId, participant, uint8(tier))),
+            m.metadataURI,
             address(echoHook)
         );
 
@@ -336,6 +354,16 @@ contract MarketRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         });
 
         echoHook.initJobContext(jobId, marketCtx);
+    }
+
+    /// @notice Echo-native ghost trigger. Arc fires no expiry hook, so once a participant's
+    ///         Final-tier job passes its ghost deadline uncompleted, anyone may trigger the
+    ///         penalty payout to the worker (and R-Rep slash of the requester) via EchoHook.
+    function triggerGhost(uint256 marketId, address participant) external {
+        Application storage app = _getApplication(marketId, participant);
+        if (app.tierReached != 3 || app.tierJobIds.length == 0) revert InvalidTierTransition(app.tierReached, 3);
+        uint256 finalJobId = app.tierJobIds[app.tierJobIds.length - 1];
+        echoHook.triggerGhost(finalJobId);
     }
 
     function getRequesterMarkets(address requester) external view returns (uint256[] memory) {
