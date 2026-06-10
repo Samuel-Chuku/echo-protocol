@@ -37,11 +37,11 @@ export const CONTRACTS = {
   },
 } as const;
 
-// Implementations (for upgrade transactions only). Latest = P1 mode+entry foundations (2026-06-10).
+// Implementations (for upgrade transactions only). Latest = P3 Mode B direct job (2026-06-11).
 export const IMPLEMENTATIONS = {
   arcTestnet: {
-    marketRegistry: '0x81c36c30fF5A8445153b653b0c95D7165C163913' as Address,
-    echoHook: '0xBb95Dd438a1aceADd4D45B31d5269900b1602303' as Address,
+    marketRegistry: '0x22e867a274b1e3BDe96af693724C7c1448A4242e' as Address,
+    echoHook: '0xbd858eDfd716D7be0a6Fc0495E1f148a49033263' as Address,
     participationReceipt: '0x2bA8ED70dEe63351d2fF739E36182972e9a695C4' as Address,
     validationGate: '0x5590Fa35b3E75A9cC3b12Edb7858936Aca383E32' as Address,
   },
