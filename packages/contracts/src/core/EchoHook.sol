@@ -40,7 +40,8 @@ contract EchoHook is Initializable, OwnableUpgradeable, UUPSUpgradeable, IACPHoo
         Substantive,
         Shortlist,
         Final,
-        Ghost
+        Ghost,
+        Milestone // Mode B direct-job milestone release (P3). Appended — enum is uint8, layout-safe.
     }
 
     struct MarketContext {
@@ -286,6 +287,18 @@ contract EchoHook is Initializable, OwnableUpgradeable, UUPSUpgradeable, IACPHoo
         _settle(marketId, 0, worker, participantAgentId, requesterAgentId, Tier.Substantive, gross, bytes32(0));
     }
 
+    /// @notice Settle a Mode B milestone (spec §2.2) — accept or auto-release. Same synchronous
+    ///         settlement leg as a reveal (fee skim + AR overlay + reputation), no ERC-8183 job.
+    function settleMilestone(
+        uint256 marketId,
+        address worker,
+        uint256 workerAgentId,
+        uint256 requesterAgentId,
+        uint256 amount
+    ) external onlyRegistry {
+        _settle(marketId, 0, worker, workerAgentId, requesterAgentId, Tier.Milestone, amount, bytes32(0));
+    }
+
     /// @dev Shared settlement leg for both the job-completion path and the reveal path. jobId == 0
     ///      marks a reveal (no underlying Arc job). Pays the worker net of Echo's fee, skims the
     ///      fee (attribution slice + treasury margin), pays the requester pool reward, and writes
@@ -383,6 +396,7 @@ contract EchoHook is Initializable, OwnableUpgradeable, UUPSUpgradeable, IACPHoo
         if (tier == Tier.Substantive) tag = "tier_substantive";
         else if (tier == Tier.Shortlist) tag = "tier_shortlist";
         else if (tier == Tier.Final) tag = "tier_final";
+        else if (tier == Tier.Milestone) tag = "milestone";
         else tag = "tier_unknown";
 
         // Echo vouches (as its own client identity) for both sides of a settled tier / reveal.

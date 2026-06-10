@@ -58,6 +58,30 @@ contract MarketRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         uint256 requesterAgentId;
     }
 
+    /// @notice Mode B milestone lifecycle (spec §2.2): Pending → Submitted → Released. A submitted
+    ///         milestone is protected by the auto-release clock; a released one cannot be clawed back.
+    enum MilestoneStatus { Pending, Submitted, Released }
+
+    /// @notice A two-party direct job (Mode B). No applicant pool, teaser, reveal, or stake — the
+    ///         parties already chose each other. Escrow custody reuses EchoHook (escrowed[marketId]).
+    struct DirectJob {
+        address requester;
+        address worker;
+        uint256 workerAgentId;     // for reputation/attribution (supplied by requester, unverified)
+        uint256 requesterAgentId;
+        bytes32 scopeHash;
+        string metadataURI;
+        uint256 reviewWindow;      // seconds after submit before a milestone may auto-release
+        bool cancelled;
+    }
+
+    struct Milestone {
+        uint256 amount;
+        uint64 submittedAt;        // 0 until submitted; deadline = submittedAt + reviewWindow
+        MilestoneStatus status;
+        bytes32 deliverableHash;
+    }
+
     struct Application {
         uint256 marketId;
         address participant;
@@ -97,6 +121,10 @@ contract MarketRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     mapping(uint256 => uint256) public revealFee;   // market => reveal fee R (0 = not a reveal market)
     mapping(uint256 => uint256) public revealCount; // market => reveals paid so far (for the floor guard)
 
+    // --- Mode B direct job (P3), appended storage (UUPS-safe). Shares the marketCount id space. ---
+    mapping(uint256 => DirectJob) public directJobs;
+    mapping(uint256 => Milestone[]) public directJobMilestones;
+
     event MarketCreated(
         uint256 indexed marketId,
         address indexed requester,
@@ -122,6 +150,10 @@ contract MarketRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     event MarketModeSet(uint256 indexed marketId, Mode mode, uint256 requiredProofs, uint256 stakeRequired);
     event StakeSlashed(uint256 indexed marketId, address indexed participant, address indexed to);
     event Revealed(uint256 indexed marketId, address indexed participant, uint256 revealFee);
+    event DirectJobCreated(uint256 indexed marketId, address indexed requester, address indexed worker, uint256 total, uint256 milestoneCount);
+    event MilestoneSubmitted(uint256 indexed marketId, uint256 indexed index, bytes32 deliverableHash);
+    event MilestoneReleased(uint256 indexed marketId, uint256 indexed index, uint256 amount, bool autoReleased);
+    event DirectJobCancelled(uint256 indexed marketId, uint256 refunded);
 
     error InsufficientEscrow(uint256 provided, uint256 required);
     error MarketNotActive();
@@ -142,6 +174,14 @@ contract MarketRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     error NotRevealMarket();
     error RevealFloorNotMet();
     error StakeTooSmall();
+    error NotDirectJob();
+    error NoMilestones();
+    error NotWorker();
+    error JobCancelled();
+    error MilestoneNotPending();
+    error MilestoneNotSubmitted();
+    error ReviewWindowNotElapsed();
+    error BadMilestoneIndex();
 
     function initialize(
         address _usdc,
@@ -485,6 +525,153 @@ contract MarketRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         address to = markets[marketId].requester;
         echoHook.slashStake(marketId, participant, to);
         emit StakeSlashed(marketId, participant, to);
+    }
+
+    // ──────────────────── Mode B — Direct Job + milestones (spec §2.2) ────────────────────
+
+    /// @notice Create a two-party direct job. No applicant pool, teaser, reveal, or stake — the
+    ///         parties already chose each other. The requester escrows the full job up front; the
+    ///         escrow is split into milestones (use a single milestone for a tiny one-shot job).
+    /// @param worker The chosen worker (the only address allowed to submit milestones).
+    /// @param workerAgentId Worker's ERC-8004 identity, used for reputation/attribution.
+    /// @param requesterAgentId Requester's identity (verified; receives R-Rep).
+    /// @param milestoneAmounts Per-milestone amounts; their sum is the escrowed total.
+    /// @param reviewWindow Seconds after a submission before that milestone may auto-release.
+    function createDirectJob(
+        address worker,
+        uint256 workerAgentId,
+        uint256 requesterAgentId,
+        string calldata metadataURI,
+        bytes32 scopeHash,
+        uint256[] calldata milestoneAmounts,
+        uint256 reviewWindow
+    ) external returns (uint256 marketId) {
+        if (milestoneAmounts.length == 0) revert NoMilestones();
+        if (worker == address(0)) revert ZeroAddress();
+        if (!identityRegistry.isAuthorizedOrOwner(msg.sender, requesterAgentId)) revert NotAgentOwner();
+
+        uint256 total;
+        for (uint256 i; i < milestoneAmounts.length; ++i) {
+            total += milestoneAmounts[i];
+        }
+
+        marketId = ++marketCount;
+        marketMode[marketId] = Mode.DirectJob;
+
+        directJobs[marketId] = DirectJob({
+            requester: msg.sender,
+            worker: worker,
+            workerAgentId: workerAgentId,
+            requesterAgentId: requesterAgentId,
+            scopeHash: scopeHash,
+            metadataURI: metadataURI,
+            reviewWindow: reviewWindow,
+            cancelled: false
+        });
+
+        Milestone[] storage ms = directJobMilestones[marketId];
+        for (uint256 i; i < milestoneAmounts.length; ++i) {
+            ms.push(Milestone({amount: milestoneAmounts[i], submittedAt: 0, status: MilestoneStatus.Pending, deliverableHash: bytes32(0)}));
+        }
+
+        requesterMarkets[msg.sender].push(marketId);
+
+        usdc.safeTransferFrom(msg.sender, address(echoHook), total);
+        echoHook.fundEscrow(marketId, total);
+
+        emit DirectJobCreated(marketId, msg.sender, worker, total, milestoneAmounts.length);
+    }
+
+    /// @notice Worker delivers a milestone — starts that milestone's review/auto-release clock.
+    function submitMilestone(uint256 marketId, uint256 index, bytes32 deliverableHash) external {
+        DirectJob storage j = _getDirectJob(marketId);
+        if (msg.sender != j.worker) revert NotWorker();
+        if (j.cancelled) revert JobCancelled();
+
+        Milestone storage milestone = _getMilestone(marketId, index);
+        if (milestone.status != MilestoneStatus.Pending) revert MilestoneNotPending();
+
+        milestone.status = MilestoneStatus.Submitted;
+        milestone.submittedAt = uint64(block.timestamp);
+        milestone.deliverableHash = deliverableHash;
+
+        emit MilestoneSubmitted(marketId, index, deliverableHash);
+    }
+
+    /// @notice Requester accepts a submitted milestone — pays that slice to the worker now.
+    function acceptMilestone(uint256 marketId, uint256 index) external {
+        DirectJob storage j = _getDirectJob(marketId);
+        if (msg.sender != j.requester) revert NotRequester();
+        Milestone storage milestone = _getMilestone(marketId, index);
+        if (milestone.status != MilestoneStatus.Submitted) revert MilestoneNotSubmitted();
+        _releaseMilestone(marketId, index, j, milestone, false);
+    }
+
+    /// @notice Anyone may release a submitted milestone once its review window has elapsed — the
+    ///         exit-theft guard (accept-but-don't-pay): silence never profits the silent party.
+    ///         Echo-native because Arc fires no expiry hook.
+    function autoReleaseMilestone(uint256 marketId, uint256 index) external {
+        DirectJob storage j = _getDirectJob(marketId);
+        Milestone storage milestone = _getMilestone(marketId, index);
+        if (milestone.status != MilestoneStatus.Submitted) revert MilestoneNotSubmitted();
+        if (block.timestamp < uint256(milestone.submittedAt) + j.reviewWindow) revert ReviewWindowNotElapsed();
+        _releaseMilestone(marketId, index, j, milestone, true);
+    }
+
+    /// @notice Requester stops the job. Refunds only PENDING (un-submitted) milestones; SUBMITTED
+    ///         ones stay funded so the worker can still auto-release them (no clawback of delivered
+    ///         work). Released milestones are already paid. Idempotent via the cancelled flag.
+    function cancelDirectJob(uint256 marketId) external {
+        DirectJob storage j = _getDirectJob(marketId);
+        if (msg.sender != j.requester) revert NotRequester();
+        if (j.cancelled) revert JobCancelled();
+        j.cancelled = true;
+
+        uint256 refund;
+        Milestone[] storage ms = directJobMilestones[marketId];
+        for (uint256 i; i < ms.length; ++i) {
+            if (ms[i].status == MilestoneStatus.Pending) {
+                refund += ms[i].amount;
+            }
+        }
+        if (refund > 0) {
+            echoHook.releaseEscrow(marketId, j.requester, refund);
+        }
+
+        emit DirectJobCancelled(marketId, refund);
+    }
+
+    function _releaseMilestone(
+        uint256 marketId,
+        uint256 index,
+        DirectJob storage j,
+        Milestone storage milestone,
+        bool autoReleased
+    ) internal {
+        milestone.status = MilestoneStatus.Released;
+        echoHook.settleMilestone(marketId, j.worker, j.workerAgentId, j.requesterAgentId, milestone.amount);
+
+        // A released milestone is an independent grade of the worker (confirms ARs, like Mode A).
+        if (address(attributionRegistry) != address(0)) {
+            attributionRegistry.recordGrade(j.workerAgentId, j.requester);
+        }
+
+        emit MilestoneReleased(marketId, index, milestone.amount, autoReleased);
+    }
+
+    function _getDirectJob(uint256 marketId) internal view returns (DirectJob storage j) {
+        if (marketMode[marketId] != Mode.DirectJob) revert NotDirectJob();
+        j = directJobs[marketId];
+    }
+
+    function _getMilestone(uint256 marketId, uint256 index) internal view returns (Milestone storage) {
+        Milestone[] storage ms = directJobMilestones[marketId];
+        if (index >= ms.length) revert BadMilestoneIndex();
+        return ms[index];
+    }
+
+    function getDirectJobMilestones(uint256 marketId) external view returns (Milestone[] memory) {
+        return directJobMilestones[marketId];
     }
 
     function _calculateMinEscrow(
