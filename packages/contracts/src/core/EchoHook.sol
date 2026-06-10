@@ -74,6 +74,12 @@ contract EchoHook is Initializable, OwnableUpgradeable, UUPSUpgradeable, IACPHoo
     mapping(uint256 => uint256) public poolDistributed;
     mapping(uint256 => uint16) public poolShareBps;
 
+    // --- Returnable applicant stake (P1: mode + entry foundations), appended storage, UUPS-safe ---
+    // The anti-bait-and-switch bond (spec §4). Custodied here alongside escrow but accounted
+    // SEPARATELY from escrowed/distributed — refunds/slashes draw only from stakeBalance, so
+    // remainingEscrow() math is untouched and applicant capital never commingles with the pool.
+    mapping(uint256 => mapping(address => uint256)) public stakeBalance; // marketId => participant => locked
+
     event TierPayout(
         uint256 indexed marketId,
         uint256 indexed jobId,
@@ -100,6 +106,9 @@ contract EchoHook is Initializable, OwnableUpgradeable, UUPSUpgradeable, IACPHoo
     event AttributionPaid(uint256 indexed marketId, uint256 indexed jobId, address indexed originator, uint256 amount);
     event PoolReward(uint256 indexed marketId, address indexed originator, uint256 amount);
     event EscrowReleased(uint256 indexed marketId, address indexed to, uint256 amount);
+    event StakeLocked(uint256 indexed marketId, address indexed participant, uint256 amount);
+    event StakeRefunded(uint256 indexed marketId, address indexed participant, uint256 amount);
+    event StakeSlashed(uint256 indexed marketId, address indexed participant, address indexed to, uint256 amount);
 
     error NotAgenticCommerce();
     error NotMarketRegistry();
@@ -199,6 +208,38 @@ contract EchoHook is Initializable, OwnableUpgradeable, UUPSUpgradeable, IACPHoo
         }
     }
 
+    // ──────────────────── Returnable applicant stake (spec §4) ────────────────────
+
+    /// @notice Record a participant's stake. The registry has already transferred the USDC here,
+    ///         so this only books the balance. Additive on re-apply (stake scales with engagement).
+    function lockStake(uint256 marketId, address participant, uint256 amount) external onlyRegistry {
+        stakeBalance[marketId][participant] += amount;
+        emit StakeLocked(marketId, participant, amount);
+    }
+
+    /// @notice Return a participant's stake in full (good-faith resolution: rejected-on-teaser,
+    ///         revealed-and-not-flagged, or market expired unrevealed). Idempotent: zero if none.
+    function refundStake(uint256 marketId, address participant) external onlyRegistry returns (uint256 amount) {
+        amount = stakeBalance[marketId][participant];
+        if (amount > 0) {
+            stakeBalance[marketId][participant] = 0;
+            usdc.safeTransfer(participant, amount);
+            emit StakeRefunded(marketId, participant, amount);
+        }
+    }
+
+    /// @notice Forfeit a participant's stake to `to` (the harmed party). The condition that
+    ///         JUSTIFIES a slash — a sustained bait-and-switch flag or a post-engagement no-show —
+    ///         is adjudicated upstream (P5 DisputeResolver / P6 engine); this is the settlement leg.
+    function slashStake(uint256 marketId, address participant, address to) external onlyRegistry returns (uint256 amount) {
+        amount = stakeBalance[marketId][participant];
+        if (amount > 0) {
+            stakeBalance[marketId][participant] = 0;
+            usdc.safeTransfer(to, amount);
+            emit StakeSlashed(marketId, participant, to, amount);
+        }
+    }
+
     // ──────────────────── ERC-8183 hook (IACPHook) ────────────────────
 
     /// @inheritdoc IERC165
@@ -226,34 +267,63 @@ contract EchoHook is Initializable, OwnableUpgradeable, UUPSUpgradeable, IACPHoo
     function _settleComplete(uint256 jobId, bytes32 reasonHash) internal {
         MarketContext storage c = ctx[jobId];
         if (c.marketId == 0) revert JobNotFound();
-
-        uint256 gross = c.tierAmount;
-        if (distributed[c.marketId] + gross > escrowed[c.marketId]) revert InsufficientEscrow();
-        distributed[c.marketId] += gross;
-
         IAgenticCommerce.Job memory job = agenticCommerce.getJob(jobId);
+        _settle(c.marketId, jobId, job.provider, c.participantAgentId, c.requesterAgentId, c.tier, c.tierAmount, reasonHash);
+    }
+
+    /// @notice Settle a Mode A reveal synchronously (spec §2.1) — no ERC-8183 job. The reveal is
+    ///         an ATOMIC exchange (looking IS the payment trigger), so the reveal fee is paid here
+    ///         in the same tx the registry refunds the stake. Runs the identical fee/attribution/
+    ///         pool/reputation path as a tier completion, so the AR overlay earns on reveals too
+    ///         (the §8 cross-cutting wiring).
+    function settleReveal(
+        uint256 marketId,
+        address worker,
+        uint256 participantAgentId,
+        uint256 requesterAgentId,
+        uint256 gross
+    ) external onlyRegistry {
+        _settle(marketId, 0, worker, participantAgentId, requesterAgentId, Tier.Substantive, gross, bytes32(0));
+    }
+
+    /// @dev Shared settlement leg for both the job-completion path and the reveal path. jobId == 0
+    ///      marks a reveal (no underlying Arc job). Pays the worker net of Echo's fee, skims the
+    ///      fee (attribution slice + treasury margin), pays the requester pool reward, and writes
+    ///      reputation.
+    function _settle(
+        uint256 marketId,
+        uint256 jobId,
+        address provider,
+        uint256 participantAgentId,
+        uint256 requesterAgentId,
+        Tier tier,
+        uint256 gross,
+        bytes32 reasonHash
+    ) internal {
+        if (distributed[marketId] + gross > escrowed[marketId]) revert InsufficientEscrow();
+        distributed[marketId] += gross;
 
         // Echo's fee is skimmed from the payout; the worker receives the remainder.
         uint256 fee = gross * protocolFeeBps / 10_000;
         uint256 net = gross - fee;
 
-        usdc.safeTransfer(job.provider, net);
+        usdc.safeTransfer(provider, net);
 
         if (fee > 0) {
-            uint256 attributed = _payAttribution(c.marketId, jobId, c.participantAgentId, fee);
+            uint256 attributed = _payAttribution(marketId, jobId, participantAgentId, fee);
             uint256 margin = fee - attributed;
             if (margin > 0 && protocolTreasury != address(0)) {
                 usdc.safeTransfer(protocolTreasury, margin);
             }
-            emit ProtocolFeeAccrued(c.marketId, jobId, margin);
+            emit ProtocolFeeAccrued(marketId, jobId, margin);
         }
 
         // Requester-funded pool rewards the worker's introducer, bounded by the pool balance.
-        _payPoolReward(c.marketId, c.participantAgentId, gross);
+        _payPoolReward(marketId, participantAgentId, gross);
 
-        _writeCompletionReputation(c, reasonHash);
+        _writeSettlementReputation(participantAgentId, requesterAgentId, tier, reasonHash);
 
-        emit TierPayout(c.marketId, jobId, job.provider, c.tier, net);
+        emit TierPayout(marketId, jobId, provider, tier, net);
     }
 
     function _ackSubmit(uint256 jobId) internal {
@@ -303,16 +373,21 @@ contract EchoHook is Initializable, OwnableUpgradeable, UUPSUpgradeable, IACPHoo
         emit PoolReward(marketId, originator, reward);
     }
 
-    function _writeCompletionReputation(MarketContext storage c, bytes32 reasonHash) internal {
+    function _writeSettlementReputation(
+        uint256 participantAgentId,
+        uint256 requesterAgentId,
+        Tier tier,
+        bytes32 reasonHash
+    ) internal {
         string memory tag;
-        if (c.tier == Tier.Substantive) tag = "tier_substantive";
-        else if (c.tier == Tier.Shortlist) tag = "tier_shortlist";
-        else if (c.tier == Tier.Final) tag = "tier_final";
+        if (tier == Tier.Substantive) tag = "tier_substantive";
+        else if (tier == Tier.Shortlist) tag = "tier_shortlist";
+        else if (tier == Tier.Final) tag = "tier_final";
         else tag = "tier_unknown";
 
-        // Echo vouches (as its own client identity) for both sides of a completed tier.
-        _feedback(c.participantAgentId, int128(1), tag, reasonHash);
-        _feedback(c.requesterAgentId, int128(1), "responded", reasonHash);
+        // Echo vouches (as its own client identity) for both sides of a settled tier / reveal.
+        _feedback(participantAgentId, int128(1), tag, reasonHash);
+        _feedback(requesterAgentId, int128(1), "responded", reasonHash);
     }
 
     /// @dev Write a single feedback to Arc's ReputationRegistry as EchoHook (the "client").

@@ -32,15 +32,18 @@ export const CONTRACTS = {
     participationReceipt: '0xb767dff0813840fcf1d58cf79b161ba198967da0' as Address,
     attributionRegistry: '0x8845b933C996EC7d15E6FC35276e9D360e9507dD' as Address,
     attributionPayout: '0x3240a70f4688afe0AB6294585982324FF4CbACD3' as Address,
+    // P1 (mode + entry foundations) — Echo's pluggable genesis filter (sibling UUPS proxy).
+    validationGate: '0x5590Fa35b3E75A9cC3b12Edb7858936Aca383E32' as Address,
   },
 } as const;
 
-// Implementations (for upgrade transactions only)
+// Implementations (for upgrade transactions only). Latest = P1 mode+entry foundations (2026-06-10).
 export const IMPLEMENTATIONS = {
   arcTestnet: {
-    marketRegistry: '0xad3CC8Da62Fb017A987635562AF86da1E83bC52A' as Address,
-    echoHook: '0x572355F2A3037352681f9D4f475E97b66aCe900B' as Address,
+    marketRegistry: '0x81c36c30fF5A8445153b653b0c95D7165C163913' as Address,
+    echoHook: '0xBb95Dd438a1aceADd4D45B31d5269900b1602303' as Address,
     participationReceipt: '0x2bA8ED70dEe63351d2fF739E36182972e9a695C4' as Address,
+    validationGate: '0x5590Fa35b3E75A9cC3b12Edb7858936Aca383E32' as Address,
   },
 } as const;
 
