@@ -94,6 +94,7 @@ contract EchoHook is Initializable, OwnableUpgradeable, UUPSUpgradeable, IACPHoo
         uint256 amount
     );
     event RegistrySet(address indexed registry);
+    event AgenticCommerceSet(address indexed agenticCommerce);
     event ProtocolConfigured(uint16 feeBps, address treasury);
     event ProtocolFeeAccrued(uint256 indexed marketId, uint256 indexed jobId, uint256 margin);
     event AttributionPaid(uint256 indexed marketId, uint256 indexed jobId, address indexed originator, uint256 amount);
@@ -136,6 +137,16 @@ contract EchoHook is Initializable, OwnableUpgradeable, UUPSUpgradeable, IACPHoo
         if (_marketRegistry == address(0)) revert NotMarketRegistry();
         marketRegistry = _marketRegistry;
         emit RegistrySet(_marketRegistry);
+    }
+
+    /// @notice Repoint the AgenticCommerce instance EchoHook trusts for hook callbacks.
+    ///         Used to switch between a self-hosted test instance and Arc's canonical
+    ///         AgenticCommerce (once Circle whitelists EchoHook). Owner-gated; the new
+    ///         address becomes the sole authorized caller of before/afterAction.
+    function setAgenticCommerce(address _agenticCommerce) external onlyOwner {
+        if (_agenticCommerce == address(0)) revert NotAgenticCommerce();
+        agenticCommerce = IAgenticCommerce(_agenticCommerce);
+        emit AgenticCommerceSet(_agenticCommerce);
     }
 
     function initJobContext(uint256 jobId, MarketContext calldata marketCtx) external onlyRegistry {

@@ -75,6 +75,7 @@ contract MarketRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         uint256[4] tierAmounts
     );
     event MarketFunded(uint256 indexed marketId, uint256 amount);
+    event AgenticCommerceSet(address indexed agenticCommerce);
     event MarketClosed(uint256 indexed marketId, uint256 refundAmount);
     event Applied(
         uint256 indexed marketId,
@@ -138,6 +139,16 @@ contract MarketRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         if (address(attributionRegistry) != address(0)) revert AlreadySet();
         if (_attributionRegistry == address(0)) revert ZeroAddress();
         attributionRegistry = AttributionRegistry(_attributionRegistry);
+    }
+
+    /// @notice Repoint the AgenticCommerce instance jobs are created on. Lets Echo run
+    ///         against a self-hosted test instance now and switch to Arc's canonical
+    ///         AgenticCommerce later (once Circle whitelists EchoHook) with no redeploy.
+    ///         Must match the instance EchoHook trusts (see EchoHook.setAgenticCommerce).
+    function setAgenticCommerce(address _agenticCommerce) external onlyOwner {
+        if (_agenticCommerce == address(0)) revert ZeroAddress();
+        agenticCommerce = IAgenticCommerce(_agenticCommerce);
+        emit AgenticCommerceSet(_agenticCommerce);
     }
 
     /// @notice Optional: a requester funds a pool that rewards the introducer of any applicant

@@ -5,10 +5,22 @@ import { Address } from '@echo/types';
 // Deployed: 2026-06-07 | Chain ID: 5042002
 // ═══════════════════════════════════════════════════════════
 
+// AgenticCommerce: Arc's canonical instance is admin-gated by Circle, so EchoHook can't be
+// whitelisted there without them. For testnet validation we run Echo's own self-hosted
+// instance (Path C — src/arc/AgenticCommerce.sol) and self-whitelist the hook. Set
+// ARC_AGENTIC_COMMERCE to that proxy address to target it; defaults to canonical otherwise.
+// Switch back to canonical (unset the env / restore the literal) once Circle whitelists Echo.
+const CANONICAL_AGENTIC_COMMERCE =
+  '0x0747EEf0706327138c69792bF28Cd525089e4583' as Address;
+// Read via globalThis so this is safe in the browser (no `process`) and clean under tsc.
+const AGENTIC_COMMERCE = (((globalThis as { process?: { env?: Record<string, string | undefined> } })
+  .process?.env?.ARC_AGENTIC_COMMERCE) || CANONICAL_AGENTIC_COMMERCE) as Address;
+
 export const CONTRACTS = {
   arcTestnet: {
-    // Arc Native Standards (pre-deployed)
-    agenticCommerce: '0x0747EEf0706327138c69792bF28Cd525089e4583' as Address,
+    // Arc Native Standards (pre-deployed; agenticCommerce overridable via ARC_AGENTIC_COMMERCE)
+    agenticCommerce: AGENTIC_COMMERCE,
+    canonicalAgenticCommerce: CANONICAL_AGENTIC_COMMERCE,
     identityRegistry: '0x8004A818BFB912233c491871b3d84c89A494BD9e' as Address,
     reputationRegistry: '0x8004B663056A597Dffe9eCcC1965A193B7388713' as Address,
     validationRegistry: '0x8004Cb1BF31DAf7788923b405b754f57acEB4272' as Address,

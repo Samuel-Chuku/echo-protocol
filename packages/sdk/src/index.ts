@@ -159,6 +159,23 @@ export class EchoSdk {
     });
   }
 
+  /**
+   * Send a simulated `request` via the wallet client.
+   *
+   * If the wallet client carries a LOCAL account (a private-key signer, e.g. scripts and
+   * the e2e), pass that account object so viem signs locally and broadcasts via
+   * `eth_sendRawTransaction`. Address-only accounts make viem fall back to
+   * `wallet_sendTransaction` (node-side signing), which Arc's public RPC rejects with
+   * "this request method is not supported". With an injected browser wallet there is no
+   * local account, so we leave the request as-is and let the wallet sign.
+   */
+  private send(request: any) {
+    const local = this.walletClient!.account;
+    return local
+      ? this.walletClient!.writeContract({ ...request, account: local })
+      : this.walletClient!.writeContract(request);
+  }
+
   // ── Market Read Operations ──────────────────────────────
 
   async getMarket(marketId: bigint) {
@@ -394,7 +411,7 @@ export class EchoSdk {
       ],
       account,
     });
-    return this.walletClient.writeContract(request);
+    return this.send(request);
   }
 
   async applyToMarket(
@@ -411,7 +428,7 @@ export class EchoSdk {
       args: [marketId, agentId, submissionHash],
       account,
     });
-    return this.walletClient.writeContract(request);
+    return this.send(request);
   }
 
   async gradeSubstantive(marketId: bigint, participant: Address, account: Address) {
@@ -423,7 +440,7 @@ export class EchoSdk {
       args: [marketId, participant],
       account,
     });
-    return this.walletClient.writeContract(request);
+    return this.send(request);
   }
 
   async gradeShortlist(marketId: bigint, participant: Address, account: Address) {
@@ -435,7 +452,7 @@ export class EchoSdk {
       args: [marketId, participant],
       account,
     });
-    return this.walletClient.writeContract(request);
+    return this.send(request);
   }
 
   async gradeFinal(marketId: bigint, participant: Address, account: Address) {
@@ -447,7 +464,7 @@ export class EchoSdk {
       args: [marketId, participant],
       account,
     });
-    return this.walletClient.writeContract(request);
+    return this.send(request);
   }
 
   async closeMarket(marketId: bigint, account: Address) {
@@ -459,7 +476,7 @@ export class EchoSdk {
       args: [marketId],
       account,
     });
-    return this.walletClient.writeContract(request);
+    return this.send(request);
   }
 
   /**
@@ -475,7 +492,7 @@ export class EchoSdk {
       args: [marketId, participant],
       account,
     });
-    return this.walletClient.writeContract(request);
+    return this.send(request);
   }
 
   // ── ERC-8004 Identity ───────────────────────────────────
@@ -496,7 +513,7 @@ export class EchoSdk {
       args: [uri],
       account,
     });
-    const hash = await this.walletClient.writeContract(request);
+    const hash = await this.send(request);
     const receipt = await this.publicClient.waitForTransactionReceipt({ hash });
     const logs = parseEventLogs({
       abi: IDENTITY_ABI,
@@ -581,7 +598,7 @@ export class EchoSdk {
       ],
       account,
     });
-    return this.walletClient.writeContract(request);
+    return this.send(request);
   }
 
   /**
@@ -598,7 +615,7 @@ export class EchoSdk {
       args: [arId, confirmingRequester],
       account,
     });
-    return this.walletClient.writeContract(request);
+    return this.send(request);
   }
 
   /**
@@ -613,7 +630,7 @@ export class EchoSdk {
       args: [arId],
       account,
     });
-    return this.walletClient.writeContract(request);
+    return this.send(request);
   }
 
   /**
@@ -638,7 +655,7 @@ export class EchoSdk {
       args: [marketId, amount, introducerShareBps],
       account,
     });
-    return this.walletClient.writeContract(request);
+    return this.send(request);
   }
 
   /**
@@ -654,6 +671,6 @@ export class EchoSdk {
       args: [spender, amount],
       account,
     });
-    return this.walletClient.writeContract(request);
+    return this.send(request);
   }
 }

@@ -71,6 +71,9 @@ loadEnvFile();
 
 const RPC = process.env.ARC_TESTNET_RPC_URL || 'https://rpc.testnet.arc.network';
 const C = CONTRACTS.arcTestnet;
+// AgenticCommerce override (Path C self-hosted instance). Read AFTER loadEnvFile so it works
+// from .env.e2e.local too — constants.ts captured its value at import time, before the file loaded.
+const AGENTIC = (process.env.ARC_AGENTIC_COMMERCE || C.agenticCommerce) as Address;
 const SLICE_BPS = Number(process.env.SLICE_BPS ?? 1000); // 10% of each payout
 const TIER1 = BigInt(process.env.TIER1_USDC ?? 1_000_000); // $1
 const ESCROW = BigInt(process.env.ESCROW_USDC ?? 10_000_000); // $10
@@ -229,16 +232,16 @@ async function main() {
   const introBefore = (await read.usdcBalanceOf(introducer.address)) as bigint;
   try {
     const { request } = await worker.sdk.publicClient.simulateContract({
-      address: C.agenticCommerce, abi: AGENTIC_ABI, functionName: 'submit',
-      args: [jobId, ('0x' + '33'.repeat(32)) as Hex, '0x'], account: worker.address,
+      address: AGENTIC, abi: AGENTIC_ABI, functionName: 'submit',
+      args: [jobId, ('0x' + '33'.repeat(32)) as Hex, '0x'], account: worker.wallet.account!,
     });
     await wait(worker.sdk, await worker.wallet.writeContract(request), 'submit');
   } catch (e) {
     console.log(`   (submit skipped: ${(e as Error).message.split('\n')[0]})`);
   }
   const { request: completeReq } = await requester.sdk.publicClient.simulateContract({
-    address: C.agenticCommerce, abi: AGENTIC_ABI, functionName: 'complete',
-    args: [jobId, ('0x' + '44'.repeat(32)) as Hex, '0x'], account: requester.address,
+    address: AGENTIC, abi: AGENTIC_ABI, functionName: 'complete',
+    args: [jobId, ('0x' + '44'.repeat(32)) as Hex, '0x'], account: requester.wallet.account!,
   });
   await wait(requester.sdk, await requester.wallet.writeContract(completeReq), 'complete');
 
