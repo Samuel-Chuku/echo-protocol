@@ -82,6 +82,32 @@ contract MarketRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         bytes32 deliverableHash;
     }
 
+    /// @notice Mode Bounty finding lifecycle (spec §2.3): Pending → Accepted (paid) or Rejected
+    ///         (free, disputable in P5). Ignored Pending findings auto-escalate past their deadline.
+    enum FindingStatus { Pending, Accepted, Rejected }
+
+    /// @notice An open bounty (Mode Bounty). Many submit exposed findings; many get paid in
+    ///         parallel. Pool custody reuses EchoHook (escrowed[marketId]).
+    struct Bounty {
+        address requester;
+        uint256 requesterAgentId;
+        bytes32 scopeHash;
+        string metadataURI;
+        uint256 requiredProofs;  // submitter genesis filter (reuses ValidationGate)
+        uint256 defaultAward;    // floor per accepted finding + the amount an auto-escalation pays
+        uint256 reviewWindow;    // seconds after submit before a finding may auto-escalate
+        bool closed;
+    }
+
+    struct Finding {
+        address submitter;
+        uint256 submitterAgentId;
+        bytes32 findingHash;     // commitment to the publicly-shared (exposed) result
+        uint64 submittedAt;
+        FindingStatus status;
+        uint256 award;           // paid amount once Accepted (0 otherwise)
+    }
+
     struct Application {
         uint256 marketId;
         address participant;
@@ -125,6 +151,11 @@ contract MarketRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     mapping(uint256 => DirectJob) public directJobs;
     mapping(uint256 => Milestone[]) public directJobMilestones;
 
+    // --- Mode Bounty (P4), appended storage (UUPS-safe). Shares the marketCount id space. ---
+    mapping(uint256 => Bounty) public bounties;
+    mapping(uint256 => Finding[]) public bountyFindings;
+    mapping(uint256 => uint256) public bountyPendingCount; // open (Pending) findings, for the no-reclaim guard
+
     event MarketCreated(
         uint256 indexed marketId,
         address indexed requester,
@@ -154,6 +185,11 @@ contract MarketRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     event MilestoneSubmitted(uint256 indexed marketId, uint256 indexed index, bytes32 deliverableHash);
     event MilestoneReleased(uint256 indexed marketId, uint256 indexed index, uint256 amount, bool autoReleased);
     event DirectJobCancelled(uint256 indexed marketId, uint256 refunded);
+    event BountyCreated(uint256 indexed marketId, address indexed requester, uint256 pool, uint256 defaultAward);
+    event FindingSubmitted(uint256 indexed marketId, uint256 indexed index, address indexed submitter, bytes32 findingHash);
+    event FindingAccepted(uint256 indexed marketId, uint256 indexed index, uint256 award, bool autoEscalated);
+    event FindingRejected(uint256 indexed marketId, uint256 indexed index);
+    event BountyClosed(uint256 indexed marketId, uint256 refunded);
 
     error InsufficientEscrow(uint256 provided, uint256 required);
     error MarketNotActive();
@@ -182,6 +218,13 @@ contract MarketRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     error MilestoneNotSubmitted();
     error ReviewWindowNotElapsed();
     error BadMilestoneIndex();
+    error NotBounty();
+    error BountyIsClosed();
+    error FindingNotPending();
+    error BadFindingIndex();
+    error AwardBelowFloor();
+    error AwardExceedsPool();
+    error FindingsStillPending();
 
     function initialize(
         address _usdc,
@@ -672,6 +715,175 @@ contract MarketRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable {
 
     function getDirectJobMilestones(uint256 marketId) external view returns (Milestone[] memory) {
         return directJobMilestones[marketId];
+    }
+
+    // ──────────────────── Mode Bounty — open submissions, parallel winners (spec §2.3) ────────────────────
+
+    /// @notice Create an open bounty. The requester escrows a pool; many submitters post exposed
+    ///         findings and many can be paid in parallel. Awards are bounded below by defaultAward
+    ///         (the floor + the amount an ignored finding auto-escalates to) and above by the
+    ///         remaining pool.
+    /// @param requiredProofs Submitter genesis-filter bitmask (reuses ValidationGate).
+    /// @param defaultAward Per-accepted-finding floor and the auto-escalation payout.
+    /// @param reviewWindow Seconds after a submission before it may auto-escalate on requester silence.
+    /// @param pool Total escrowed reward pool.
+    function createBounty(
+        uint256 requesterAgentId,
+        string calldata metadataURI,
+        bytes32 scopeHash,
+        uint256 requiredProofs,
+        uint256 defaultAward,
+        uint256 reviewWindow,
+        uint256 pool
+    ) external returns (uint256 marketId) {
+        if (defaultAward == 0 || pool < defaultAward) revert InsufficientEscrow(pool, defaultAward);
+        if (!identityRegistry.isAuthorizedOrOwner(msg.sender, requesterAgentId)) revert NotAgentOwner();
+
+        marketId = ++marketCount;
+        marketMode[marketId] = Mode.Bounty;
+
+        bounties[marketId] = Bounty({
+            requester: msg.sender,
+            requesterAgentId: requesterAgentId,
+            scopeHash: scopeHash,
+            metadataURI: metadataURI,
+            requiredProofs: requiredProofs | PROOF_IDENTITY,
+            defaultAward: defaultAward,
+            reviewWindow: reviewWindow,
+            closed: false
+        });
+
+        requesterMarkets[msg.sender].push(marketId);
+
+        usdc.safeTransferFrom(msg.sender, address(echoHook), pool);
+        echoHook.fundEscrow(marketId, pool);
+
+        emit BountyCreated(marketId, msg.sender, pool, defaultAward);
+    }
+
+    /// @notice Submit an exposed finding to a bounty. Open to anyone passing the genesis filter
+    ///         (the spam wall); one submitter may post many findings. The hash commits to a result
+    ///         shared openly off-chain (exposed, the opposite of Mode A's gated disclosure).
+    function submitFinding(uint256 marketId, uint256 submitterAgentId, bytes32 findingHash) external returns (uint256 index) {
+        Bounty storage b = _getBounty(marketId);
+        if (b.closed) revert BountyIsClosed();
+
+        // Genesis filter (spec §3): same gate as Mode A entry, validation not reputation.
+        if (address(validationGate) != address(0)) {
+            if (!validationGate.validate(submitterAgentId, msg.sender, b.requiredProofs)) revert ValidationFailed();
+        } else if (!identityRegistry.isAuthorizedOrOwner(msg.sender, submitterAgentId)) {
+            revert NotAgentOwner();
+        }
+
+        Finding[] storage fs = bountyFindings[marketId];
+        index = fs.length;
+        fs.push(Finding({
+            submitter: msg.sender,
+            submitterAgentId: submitterAgentId,
+            findingHash: findingHash,
+            submittedAt: uint64(block.timestamp),
+            status: FindingStatus.Pending,
+            award: 0
+        }));
+        bountyPendingCount[marketId] += 1;
+
+        emit FindingSubmitted(marketId, index, msg.sender, findingHash);
+    }
+
+    /// @notice Requester accepts a finding and pays `award` (>= defaultAward, <= remaining pool) to
+    ///         its submitter. Many findings can be accepted in parallel — multiple winners.
+    function acceptFinding(uint256 marketId, uint256 index, uint256 award) external {
+        Bounty storage b = _getBounty(marketId);
+        if (msg.sender != b.requester) revert NotRequester();
+        Finding storage f = _getFinding(marketId, index);
+        if (f.status != FindingStatus.Pending) revert FindingNotPending();
+        if (award < b.defaultAward) revert AwardBelowFloor();
+        if (award > echoHook.remainingEscrow(marketId)) revert AwardExceedsPool();
+        _acceptFinding(marketId, index, b, f, award, false);
+    }
+
+    /// @notice Requester rejects a finding (free, and disputable via the P5 adjudication ladder).
+    ///         The active alternative to accepting — so close never deadlocks on a bad finding.
+    ///         Auto-escalation guards against being IGNORED, not against an honest rejection.
+    function rejectFinding(uint256 marketId, uint256 index) external {
+        Bounty storage b = _getBounty(marketId);
+        if (msg.sender != b.requester) revert NotRequester();
+        Finding storage f = _getFinding(marketId, index);
+        if (f.status != FindingStatus.Pending) revert FindingNotPending();
+
+        f.status = FindingStatus.Rejected;
+        bountyPendingCount[marketId] -= 1;
+        emit FindingRejected(marketId, index);
+    }
+
+    /// @notice Anyone may force-accept a Pending finding for defaultAward once its review window has
+    ///         elapsed — the ignore-theft guard (spec §2.3): a requester cannot harvest exposed
+    ///         findings and sit on them. Echo-native (Arc fires no expiry hook). Capped at the
+    ///         remaining pool so it can never over-draw.
+    function autoEscalateFinding(uint256 marketId, uint256 index) external {
+        Bounty storage b = _getBounty(marketId);
+        Finding storage f = _getFinding(marketId, index);
+        if (f.status != FindingStatus.Pending) revert FindingNotPending();
+        if (block.timestamp < uint256(f.submittedAt) + b.reviewWindow) revert ReviewWindowNotElapsed();
+
+        uint256 award = b.defaultAward;
+        uint256 remaining = echoHook.remainingEscrow(marketId);
+        if (award > remaining) award = remaining;
+        _acceptFinding(marketId, index, b, f, award, true);
+    }
+
+    /// @notice Close a bounty and refund the unspent pool. Blocked while any finding is still
+    ///         Pending (no-reclaim-while-pending) — every finding must be accepted, rejected, or
+    ///         auto-escalated first, so a requester cannot reclaim over unjudged work.
+    function closeBounty(uint256 marketId) external {
+        Bounty storage b = _getBounty(marketId);
+        if (msg.sender != b.requester) revert NotRequester();
+        if (b.closed) revert BountyIsClosed();
+        if (bountyPendingCount[marketId] != 0) revert FindingsStillPending();
+
+        b.closed = true;
+        uint256 remaining = echoHook.remainingEscrow(marketId);
+        if (remaining > 0) {
+            echoHook.releaseEscrow(marketId, b.requester, remaining);
+        }
+        emit BountyClosed(marketId, remaining);
+    }
+
+    function _acceptFinding(
+        uint256 marketId,
+        uint256 index,
+        Bounty storage b,
+        Finding storage f,
+        uint256 award,
+        bool autoEscalated
+    ) internal {
+        f.status = FindingStatus.Accepted;
+        f.award = award;
+        bountyPendingCount[marketId] -= 1;
+
+        echoHook.settleFinding(marketId, f.submitter, f.submitterAgentId, b.requesterAgentId, award);
+
+        // An accepted finding is an independent grade of the submitter (confirms ARs, like Mode A/B).
+        if (address(attributionRegistry) != address(0)) {
+            attributionRegistry.recordGrade(f.submitterAgentId, b.requester);
+        }
+
+        emit FindingAccepted(marketId, index, award, autoEscalated);
+    }
+
+    function _getBounty(uint256 marketId) internal view returns (Bounty storage b) {
+        if (marketMode[marketId] != Mode.Bounty) revert NotBounty();
+        b = bounties[marketId];
+    }
+
+    function _getFinding(uint256 marketId, uint256 index) internal view returns (Finding storage) {
+        Finding[] storage fs = bountyFindings[marketId];
+        if (index >= fs.length) revert BadFindingIndex();
+        return fs[index];
+    }
+
+    function getBountyFindings(uint256 marketId) external view returns (Finding[] memory) {
+        return bountyFindings[marketId];
     }
 
     function _calculateMinEscrow(

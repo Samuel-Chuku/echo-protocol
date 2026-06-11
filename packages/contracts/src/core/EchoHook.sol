@@ -41,7 +41,8 @@ contract EchoHook is Initializable, OwnableUpgradeable, UUPSUpgradeable, IACPHoo
         Shortlist,
         Final,
         Ghost,
-        Milestone // Mode B direct-job milestone release (P3). Appended — enum is uint8, layout-safe.
+        Milestone, // Mode B direct-job milestone release (P3). Appended — enum is uint8, layout-safe.
+        Finding    // Bounty accepted-finding payout (P4). Appended — layout-safe.
     }
 
     struct MarketContext {
@@ -299,6 +300,19 @@ contract EchoHook is Initializable, OwnableUpgradeable, UUPSUpgradeable, IACPHoo
         _settle(marketId, 0, worker, workerAgentId, requesterAgentId, Tier.Milestone, amount, bytes32(0));
     }
 
+    /// @notice Settle a Bounty accepted finding (spec §2.3) — pays one of many parallel winners
+    ///         from the pool. Same synchronous settlement leg as reveal/milestone (fee skim + AR
+    ///         overlay + reputation), no ERC-8183 job.
+    function settleFinding(
+        uint256 marketId,
+        address submitter,
+        uint256 submitterAgentId,
+        uint256 requesterAgentId,
+        uint256 amount
+    ) external onlyRegistry {
+        _settle(marketId, 0, submitter, submitterAgentId, requesterAgentId, Tier.Finding, amount, bytes32(0));
+    }
+
     /// @dev Shared settlement leg for both the job-completion path and the reveal path. jobId == 0
     ///      marks a reveal (no underlying Arc job). Pays the worker net of Echo's fee, skims the
     ///      fee (attribution slice + treasury margin), pays the requester pool reward, and writes
@@ -397,6 +411,7 @@ contract EchoHook is Initializable, OwnableUpgradeable, UUPSUpgradeable, IACPHoo
         else if (tier == Tier.Shortlist) tag = "tier_shortlist";
         else if (tier == Tier.Final) tag = "tier_final";
         else if (tier == Tier.Milestone) tag = "milestone";
+        else if (tier == Tier.Finding) tag = "bounty_finding";
         else tag = "tier_unknown";
 
         // Echo vouches (as its own client identity) for both sides of a settled tier / reveal.
