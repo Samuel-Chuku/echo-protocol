@@ -30,6 +30,9 @@ contract ModeEntryTest is Test {
     address public owner;
     address public requester = makeAddr("requester");
     address public participant = makeAddr("participant");
+    // Stand-in for the DisputeResolver sibling — the only caller allowed to drive an adjudicated
+    // slash. P5 replaced the P1 owner-only adminSlashStake with this resolver-gated path.
+    address public disputeResolver = makeAddr("disputeResolver");
 
     uint256 constant REQ_AGENT = 100;
     uint256 constant PART_AGENT = 200;
@@ -61,6 +64,7 @@ contract ModeEntryTest is Test {
         echoHook.setMarketRegistry(address(registry));
         receipts.setMarketRegistry(address(registry));
         registry.setValidationGate(address(gate));
+        registry.setDisputeResolver(disputeResolver);
 
         identity.setAgent(requester, REQ_AGENT);
         identity.setAgent(participant, PART_AGENT);
@@ -221,9 +225,9 @@ contract ModeEntryTest is Test {
         assertGt(usdc.balanceOf(participant), partBefore, "worker paid reveal fee + stake");
     }
 
-    // ---- stake resolution: admin slash (placeholder for P5/P6) ----
+    // ---- stake resolution: adjudicated slash (P5 — resolver-gated) ----
 
-    function test_AdminSlashStake_RoutesToRequester() public {
+    function test_SlashStakeAdjudicated_RoutesToRequester() public {
         uint256 marketId = _createModeMarket(MarketRegistry.Mode.OpenMarket, 0, STAKE);
         vm.startPrank(participant);
         usdc.approve(address(registry), type(uint256).max);
@@ -231,21 +235,22 @@ contract ModeEntryTest is Test {
         vm.stopPrank();
 
         uint256 reqBefore = usdc.balanceOf(requester);
-        registry.adminSlashStake(marketId, participant); // owner == this test
+        vm.prank(disputeResolver); // only the wired resolver may drive an adjudicated slash
+        registry.slashStakeAdjudicated(marketId, participant);
         assertEq(usdc.balanceOf(requester) - reqBefore, STAKE, "slashed stake to requester");
         assertEq(echoHook.stakeBalance(marketId, participant), 0, "stake cleared");
     }
 
-    function test_RevertWhen_NonOwnerSlashes() public {
+    function test_RevertWhen_NonResolverSlashes() public {
         uint256 marketId = _createModeMarket(MarketRegistry.Mode.OpenMarket, 0, STAKE);
         vm.startPrank(participant);
         usdc.approve(address(registry), type(uint256).max);
         registry.applyToMarket(marketId, PART_AGENT, keccak256("sub"));
         vm.stopPrank();
 
-        vm.prank(requester); // not the protocol owner
-        vm.expectRevert();
-        registry.adminSlashStake(marketId, participant);
+        // Neither the owner nor the requester may slash directly — only the DisputeResolver.
+        vm.expectRevert(MarketRegistry.NotDisputeResolver.selector);
+        registry.slashStakeAdjudicated(marketId, participant); // owner == this test
     }
 
     // ---- stake-only EchoHook guards ----

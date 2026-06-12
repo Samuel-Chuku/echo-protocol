@@ -5,6 +5,7 @@ import "forge-std/Test.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
 import {MarketRegistry} from "../core/MarketRegistry.sol";
+import {EchoBounty} from "../core/EchoBounty.sol";
 import {EchoHook} from "../core/EchoHook.sol";
 import {ParticipationReceipt} from "../core/ParticipationReceipt.sol";
 import {ValidationGate} from "../core/ValidationGate.sol";
@@ -124,10 +125,10 @@ contract ModeBountyTest is Test {
         uint256 idx = _submit(marketId, s, id);
         assertEq(idx, 0);
 
-        MarketRegistry.Finding[] memory fs = registry.getBountyFindings(marketId);
+        EchoBounty.Finding[] memory fs = registry.getBountyFindings(marketId);
         assertEq(fs.length, 1);
         assertEq(fs[0].submitter, s);
-        assertEq(uint8(fs[0].status), uint8(MarketRegistry.FindingStatus.Pending));
+        assertEq(uint8(fs[0].status), uint8(EchoBounty.FindingStatus.Pending));
         assertEq(registry.bountyPendingCount(marketId), 1);
     }
 
@@ -208,8 +209,8 @@ contract ModeBountyTest is Test {
         assertEq(registry.bountyPendingCount(marketId), 0, "reject clears pending");
         assertEq(usdc.balanceOf(s), 0, "rejected finding pays nothing");
 
-        MarketRegistry.Finding[] memory fs = registry.getBountyFindings(marketId);
-        assertEq(uint8(fs[0].status), uint8(MarketRegistry.FindingStatus.Rejected));
+        EchoBounty.Finding[] memory fs = registry.getBountyFindings(marketId);
+        assertEq(uint8(fs[0].status), uint8(EchoBounty.FindingStatus.Rejected));
     }
 
     // ---- auto-escalation (ignore-theft guard) ----

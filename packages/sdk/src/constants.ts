@@ -34,16 +34,30 @@ export const CONTRACTS = {
     attributionPayout: '0x3240a70f4688afe0AB6294585982324FF4CbACD3' as Address,
     // P1 (mode + entry foundations) — Echo's pluggable genesis filter (sibling UUPS proxy).
     validationGate: '0x5590Fa35b3E75A9cC3b12Edb7858936Aca383E32' as Address,
+    // P5 (adjudication ladder) — staked-jury rung (sibling UUPS proxy).
+    disputeResolver: '0x8d04351F57C4BF2089B2F1E53dBe569e3AeF8EC8' as Address,
   },
 } as const;
 
-// Implementations (for upgrade transactions only). Latest = P3 Mode B direct job (2026-06-11).
+// P5 delegatecall libraries linked into the MarketRegistry impl (size relief, spec §8). Plain
+// libraries (not proxies); their addresses are baked into the linked impl bytecode and only matter
+// for verification / relinking a future impl. Broadcast 2026-06-13.
+export const LIBRARIES = {
+  arcTestnet: {
+    echoBounty: '0xe2f76863e70631c1bfc7b9ffd9aa6ba5674fa9a6' as Address,
+    echoDirectJob: '0x3cdded757c1de590232ce602bf5cd145c0ec7f9d' as Address,
+  },
+} as const;
+
+// Implementations (for upgrade transactions only). Latest = P5 Adjudication ladder (2026-06-13):
+// MarketRegistry impl is linked against the EchoBounty + EchoDirectJob libraries (see LIBRARIES).
 export const IMPLEMENTATIONS = {
   arcTestnet: {
-    marketRegistry: '0x22e867a274b1e3BDe96af693724C7c1448A4242e' as Address,
-    echoHook: '0xbd858eDfd716D7be0a6Fc0495E1f148a49033263' as Address,
+    marketRegistry: '0x42Bc611eB5491A4D2c8903150bf4d6436Ff0159f' as Address,
+    echoHook: '0x639674Cb5ce6F7D6e9b9Ba5025426D3a4F0cb283' as Address,
     participationReceipt: '0x2bA8ED70dEe63351d2fF739E36182972e9a695C4' as Address,
     validationGate: '0x5590Fa35b3E75A9cC3b12Edb7858936Aca383E32' as Address,
+    disputeResolver: '0x840d9BDa344c3ee1410f6D5e14C8fE8761a23D70' as Address,
   },
 } as const;
 

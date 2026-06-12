@@ -12,6 +12,9 @@ import {IValidationGate} from "../interfaces/IValidationGate.sol";
 import {EchoHook} from "./EchoHook.sol";
 import {ParticipationReceipt} from "./ParticipationReceipt.sol";
 import {AttributionRegistry} from "./AttributionRegistry.sol";
+import {EchoBounty} from "./EchoBounty.sol";
+import {EchoDirectJob} from "./EchoDirectJob.sol";
+import {IDisputeAdjudicable} from "../interfaces/IDisputeAdjudicable.sol";
 
 /**
  * @title MarketRegistry
@@ -19,7 +22,7 @@ import {AttributionRegistry} from "./AttributionRegistry.sol";
  *         and spawns ERC-8183 jobs per tier transition for each participant.
  * @dev Uses UUPS proxy pattern for upgradeability.
  */
-contract MarketRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable {
+contract MarketRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable, IDisputeAdjudicable {
     using SafeERC20 for IERC20;
 
     /// @notice Selectable market shape (spec §2). P1 builds the Open Market lifecycle; Direct Job
@@ -58,55 +61,15 @@ contract MarketRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         uint256 requesterAgentId;
     }
 
-    /// @notice Mode B milestone lifecycle (spec §2.2): Pending → Submitted → Released. A submitted
-    ///         milestone is protected by the auto-release clock; a released one cannot be clawed back.
-    enum MilestoneStatus { Pending, Submitted, Released }
+    /// @notice Mode B types (MilestoneStatus / DirectJob / Milestone) moved to the EchoDirectJob
+    ///         library in P5 (size relief, spec §8). Referenced here and in tests as
+    ///         EchoDirectJob.*. The Mode B STORAGE mappings still live in this contract (slots
+    ///         17/18, below) — only the lifecycle code + type defs relocated; layout is unchanged.
 
-    /// @notice A two-party direct job (Mode B). No applicant pool, teaser, reveal, or stake — the
-    ///         parties already chose each other. Escrow custody reuses EchoHook (escrowed[marketId]).
-    struct DirectJob {
-        address requester;
-        address worker;
-        uint256 workerAgentId;     // for reputation/attribution (supplied by requester, unverified)
-        uint256 requesterAgentId;
-        bytes32 scopeHash;
-        string metadataURI;
-        uint256 reviewWindow;      // seconds after submit before a milestone may auto-release
-        bool cancelled;
-    }
-
-    struct Milestone {
-        uint256 amount;
-        uint64 submittedAt;        // 0 until submitted; deadline = submittedAt + reviewWindow
-        MilestoneStatus status;
-        bytes32 deliverableHash;
-    }
-
-    /// @notice Mode Bounty finding lifecycle (spec §2.3): Pending → Accepted (paid) or Rejected
-    ///         (free, disputable in P5). Ignored Pending findings auto-escalate past their deadline.
-    enum FindingStatus { Pending, Accepted, Rejected }
-
-    /// @notice An open bounty (Mode Bounty). Many submit exposed findings; many get paid in
-    ///         parallel. Pool custody reuses EchoHook (escrowed[marketId]).
-    struct Bounty {
-        address requester;
-        uint256 requesterAgentId;
-        bytes32 scopeHash;
-        string metadataURI;
-        uint256 requiredProofs;  // submitter genesis filter (reuses ValidationGate)
-        uint256 defaultAward;    // floor per accepted finding + the amount an auto-escalation pays
-        uint256 reviewWindow;    // seconds after submit before a finding may auto-escalate
-        bool closed;
-    }
-
-    struct Finding {
-        address submitter;
-        uint256 submitterAgentId;
-        bytes32 findingHash;     // commitment to the publicly-shared (exposed) result
-        uint64 submittedAt;
-        FindingStatus status;
-        uint256 award;           // paid amount once Accepted (0 otherwise)
-    }
+    /// @notice Mode Bounty types (FindingStatus / Bounty / Finding) moved to the EchoBounty
+    ///         library in P5 (size relief, spec §8). Referenced here and in tests as EchoBounty.*.
+    ///         The bounty STORAGE mappings still live in this contract (slots 19–21, below) —
+    ///         only the lifecycle code + type defs relocated; storage layout is unchanged.
 
     struct Application {
         uint256 marketId;
@@ -148,13 +111,18 @@ contract MarketRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     mapping(uint256 => uint256) public revealCount; // market => reveals paid so far (for the floor guard)
 
     // --- Mode B direct job (P3), appended storage (UUPS-safe). Shares the marketCount id space. ---
-    mapping(uint256 => DirectJob) public directJobs;
-    mapping(uint256 => Milestone[]) public directJobMilestones;
+    mapping(uint256 => EchoDirectJob.DirectJob) public directJobs;
+    mapping(uint256 => EchoDirectJob.Milestone[]) public directJobMilestones;
 
-    // --- Mode Bounty (P4), appended storage (UUPS-safe). Shares the marketCount id space. ---
-    mapping(uint256 => Bounty) public bounties;
-    mapping(uint256 => Finding[]) public bountyFindings;
-    mapping(uint256 => uint256) public bountyPendingCount; // open (Pending) findings, for the no-reclaim guard
+    // --- Mode Bounty (P4), appended storage (UUPS-safe). Shares the marketCount id space.
+    //     Types live in EchoBounty (P5 extraction); these slots (19/20/21) are unchanged. ---
+    mapping(uint256 => EchoBounty.Bounty) public bounties;
+    mapping(uint256 => EchoBounty.Finding[]) public bountyFindings;
+    mapping(uint256 => uint256) public bountyPendingCount; // open (Pending+Disputed) findings, for the no-reclaim guard
+
+    // --- Adjudication ladder (P5), appended storage (UUPS-safe). Slot 22. ---
+    // The staked-jury rung (spec §5). Set once; drives the adjudicated finding/stake callbacks.
+    address public disputeResolver;
 
     event MarketCreated(
         uint256 indexed marketId,
@@ -190,6 +158,7 @@ contract MarketRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     event FindingAccepted(uint256 indexed marketId, uint256 indexed index, uint256 award, bool autoEscalated);
     event FindingRejected(uint256 indexed marketId, uint256 indexed index);
     event BountyClosed(uint256 indexed marketId, uint256 refunded);
+    event DisputeResolverSet(address indexed disputeResolver);
 
     error InsufficientEscrow(uint256 provided, uint256 required);
     error MarketNotActive();
@@ -225,6 +194,9 @@ contract MarketRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     error AwardBelowFloor();
     error AwardExceedsPool();
     error FindingsStillPending();
+    error FindingNotRejected();
+    error FindingNotDisputed();
+    error NotDisputeResolver();
 
     function initialize(
         address _usdc,
@@ -558,19 +530,17 @@ contract MarketRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         emit MarketClosed(marketId, remaining);
     }
 
-    /// @notice Forfeit an applicant's stake to the requester (the harmed party). PLACEHOLDER:
-    ///         a legitimate slash requires a sustained bait-and-switch flag (P5 DisputeResolver)
-    ///         or a post-engagement no-show (P6 engine), neither of which exists yet — so this is
-    ///         gated to the protocol owner and is NOT a live participant-facing action. P5/P6
-    ///         replace the caller with the adjudicated path; the EchoHook.slashStake settlement
-    ///         leg they call is already built.
-    function adminSlashStake(uint256 marketId, address participant) external onlyOwner {
-        address to = markets[marketId].requester;
-        echoHook.slashStake(marketId, participant, to);
-        emit StakeSlashed(marketId, participant, to);
-    }
+    // The P1 `adminSlashStake` owner-only placeholder was replaced in P5 by `slashStakeAdjudicated`
+    // (gated to the DisputeResolver, in the adjudication-ladder section below) — a stake slash now
+    // requires a real verdict, never a bare owner call. The EchoHook.slashStake settlement leg both
+    // used is unchanged.
 
     // ──────────────────── Mode B — Direct Job + milestones (spec §2.2) ────────────────────
+    //
+    // Thin forwarders over the EchoDirectJob delegatecall library (P5 size relief, spec §8). The
+    // registry owns the shared id space + marketMode tag + requesterMarkets index; the library
+    // owns validation / escrow / settlement / events, writing into the registry's own Mode B
+    // mappings (passed by storage reference). Behaviour is identical to P3.
 
     /// @notice Create a two-party direct job. No applicant pool, teaser, reveal, or stake — the
     ///         parties already chose each other. The requester escrows the full job up front; the
@@ -589,135 +559,70 @@ contract MarketRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         uint256[] calldata milestoneAmounts,
         uint256 reviewWindow
     ) external returns (uint256 marketId) {
-        if (milestoneAmounts.length == 0) revert NoMilestones();
-        if (worker == address(0)) revert ZeroAddress();
-        if (!identityRegistry.isAuthorizedOrOwner(msg.sender, requesterAgentId)) revert NotAgentOwner();
-
-        uint256 total;
-        for (uint256 i; i < milestoneAmounts.length; ++i) {
-            total += milestoneAmounts[i];
-        }
-
         marketId = ++marketCount;
         marketMode[marketId] = Mode.DirectJob;
-
-        directJobs[marketId] = DirectJob({
-            requester: msg.sender,
-            worker: worker,
-            workerAgentId: workerAgentId,
-            requesterAgentId: requesterAgentId,
-            scopeHash: scopeHash,
-            metadataURI: metadataURI,
-            reviewWindow: reviewWindow,
-            cancelled: false
-        });
-
-        Milestone[] storage ms = directJobMilestones[marketId];
-        for (uint256 i; i < milestoneAmounts.length; ++i) {
-            ms.push(Milestone({amount: milestoneAmounts[i], submittedAt: 0, status: MilestoneStatus.Pending, deliverableHash: bytes32(0)}));
-        }
-
         requesterMarkets[msg.sender].push(marketId);
 
-        usdc.safeTransferFrom(msg.sender, address(echoHook), total);
-        echoHook.fundEscrow(marketId, total);
-
-        emit DirectJobCreated(marketId, msg.sender, worker, total, milestoneAmounts.length);
+        EchoDirectJob.createDirectJob(
+            directJobs, directJobMilestones, _directJobDeps(), marketId,
+            worker, workerAgentId, requesterAgentId, metadataURI, scopeHash, milestoneAmounts, reviewWindow
+        );
     }
 
     /// @notice Worker delivers a milestone — starts that milestone's review/auto-release clock.
     function submitMilestone(uint256 marketId, uint256 index, bytes32 deliverableHash) external {
-        DirectJob storage j = _getDirectJob(marketId);
-        if (msg.sender != j.worker) revert NotWorker();
-        if (j.cancelled) revert JobCancelled();
-
-        Milestone storage milestone = _getMilestone(marketId, index);
-        if (milestone.status != MilestoneStatus.Pending) revert MilestoneNotPending();
-
-        milestone.status = MilestoneStatus.Submitted;
-        milestone.submittedAt = uint64(block.timestamp);
-        milestone.deliverableHash = deliverableHash;
-
-        emit MilestoneSubmitted(marketId, index, deliverableHash);
+        _requireDirectJob(marketId);
+        EchoDirectJob.submitMilestone(directJobs, directJobMilestones, marketId, index, deliverableHash);
     }
 
     /// @notice Requester accepts a submitted milestone — pays that slice to the worker now.
     function acceptMilestone(uint256 marketId, uint256 index) external {
-        DirectJob storage j = _getDirectJob(marketId);
-        if (msg.sender != j.requester) revert NotRequester();
-        Milestone storage milestone = _getMilestone(marketId, index);
-        if (milestone.status != MilestoneStatus.Submitted) revert MilestoneNotSubmitted();
-        _releaseMilestone(marketId, index, j, milestone, false);
+        _requireDirectJob(marketId);
+        EchoDirectJob.acceptMilestone(directJobs, directJobMilestones, _directJobDeps(), marketId, index);
     }
 
     /// @notice Anyone may release a submitted milestone once its review window has elapsed — the
     ///         exit-theft guard (accept-but-don't-pay): silence never profits the silent party.
     ///         Echo-native because Arc fires no expiry hook.
     function autoReleaseMilestone(uint256 marketId, uint256 index) external {
-        DirectJob storage j = _getDirectJob(marketId);
-        Milestone storage milestone = _getMilestone(marketId, index);
-        if (milestone.status != MilestoneStatus.Submitted) revert MilestoneNotSubmitted();
-        if (block.timestamp < uint256(milestone.submittedAt) + j.reviewWindow) revert ReviewWindowNotElapsed();
-        _releaseMilestone(marketId, index, j, milestone, true);
+        _requireDirectJob(marketId);
+        EchoDirectJob.autoReleaseMilestone(directJobs, directJobMilestones, _directJobDeps(), marketId, index);
     }
 
     /// @notice Requester stops the job. Refunds only PENDING (un-submitted) milestones; SUBMITTED
     ///         ones stay funded so the worker can still auto-release them (no clawback of delivered
     ///         work). Released milestones are already paid. Idempotent via the cancelled flag.
     function cancelDirectJob(uint256 marketId) external {
-        DirectJob storage j = _getDirectJob(marketId);
-        if (msg.sender != j.requester) revert NotRequester();
-        if (j.cancelled) revert JobCancelled();
-        j.cancelled = true;
-
-        uint256 refund;
-        Milestone[] storage ms = directJobMilestones[marketId];
-        for (uint256 i; i < ms.length; ++i) {
-            if (ms[i].status == MilestoneStatus.Pending) {
-                refund += ms[i].amount;
-            }
-        }
-        if (refund > 0) {
-            echoHook.releaseEscrow(marketId, j.requester, refund);
-        }
-
-        emit DirectJobCancelled(marketId, refund);
+        _requireDirectJob(marketId);
+        EchoDirectJob.cancelDirectJob(directJobs, directJobMilestones, _directJobDeps(), marketId);
     }
 
-    function _releaseMilestone(
-        uint256 marketId,
-        uint256 index,
-        DirectJob storage j,
-        Milestone storage milestone,
-        bool autoReleased
-    ) internal {
-        milestone.status = MilestoneStatus.Released;
-        echoHook.settleMilestone(marketId, j.worker, j.workerAgentId, j.requesterAgentId, milestone.amount);
-
-        // A released milestone is an independent grade of the worker (confirms ARs, like Mode A).
-        if (address(attributionRegistry) != address(0)) {
-            attributionRegistry.recordGrade(j.workerAgentId, j.requester);
-        }
-
-        emit MilestoneReleased(marketId, index, milestone.amount, autoReleased);
-    }
-
-    function _getDirectJob(uint256 marketId) internal view returns (DirectJob storage j) {
-        if (marketMode[marketId] != Mode.DirectJob) revert NotDirectJob();
-        j = directJobs[marketId];
-    }
-
-    function _getMilestone(uint256 marketId, uint256 index) internal view returns (Milestone storage) {
-        Milestone[] storage ms = directJobMilestones[marketId];
-        if (index >= ms.length) revert BadMilestoneIndex();
-        return ms[index];
-    }
-
-    function getDirectJobMilestones(uint256 marketId) external view returns (Milestone[] memory) {
+    function getDirectJobMilestones(uint256 marketId) external view returns (EchoDirectJob.Milestone[] memory) {
         return directJobMilestones[marketId];
     }
 
+    /// @dev Mode guard for the direct-job forwarders. Preserves the NotDirectJob selector of P3.
+    function _requireDirectJob(uint256 marketId) internal view {
+        if (marketMode[marketId] != Mode.DirectJob) revert NotDirectJob();
+    }
+
+    /// @dev Bundle the contract handles the EchoDirectJob library needs into one memory struct.
+    function _directJobDeps() internal view returns (EchoDirectJob.Deps memory) {
+        return EchoDirectJob.Deps({
+            echoHook: echoHook,
+            usdc: usdc,
+            identityRegistry: identityRegistry,
+            attributionRegistry: attributionRegistry
+        });
+    }
+
     // ──────────────────── Mode Bounty — open submissions, parallel winners (spec §2.3) ────────────────────
+    //
+    // The bounty lifecycle bodies live in the EchoBounty delegatecall library (P5 size relief, spec
+    // §8). These are thin forwarders: the registry owns the shared id space (marketCount), the
+    // marketMode tag, and the requesterMarkets index — all registry-private state — and delegates
+    // validation / escrow / settlement / events to the library, which writes directly into the
+    // registry's own bounty mappings (passed by storage reference). Behaviour is identical to P4.
 
     /// @notice Create an open bounty. The requester escrows a pool; many submitters post exposed
     ///         findings and many can be paid in parallel. Awards are bounded below by defaultAward
@@ -736,84 +641,39 @@ contract MarketRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         uint256 reviewWindow,
         uint256 pool
     ) external returns (uint256 marketId) {
-        if (defaultAward == 0 || pool < defaultAward) revert InsufficientEscrow(pool, defaultAward);
-        if (!identityRegistry.isAuthorizedOrOwner(msg.sender, requesterAgentId)) revert NotAgentOwner();
-
         marketId = ++marketCount;
         marketMode[marketId] = Mode.Bounty;
-
-        bounties[marketId] = Bounty({
-            requester: msg.sender,
-            requesterAgentId: requesterAgentId,
-            scopeHash: scopeHash,
-            metadataURI: metadataURI,
-            requiredProofs: requiredProofs | PROOF_IDENTITY,
-            defaultAward: defaultAward,
-            reviewWindow: reviewWindow,
-            closed: false
-        });
-
         requesterMarkets[msg.sender].push(marketId);
 
-        usdc.safeTransferFrom(msg.sender, address(echoHook), pool);
-        echoHook.fundEscrow(marketId, pool);
-
-        emit BountyCreated(marketId, msg.sender, pool, defaultAward);
+        EchoBounty.createBounty(
+            bounties, _bountyDeps(), marketId,
+            requesterAgentId, metadataURI, scopeHash, requiredProofs, defaultAward, reviewWindow, pool
+        );
     }
 
     /// @notice Submit an exposed finding to a bounty. Open to anyone passing the genesis filter
     ///         (the spam wall); one submitter may post many findings. The hash commits to a result
     ///         shared openly off-chain (exposed, the opposite of Mode A's gated disclosure).
     function submitFinding(uint256 marketId, uint256 submitterAgentId, bytes32 findingHash) external returns (uint256 index) {
-        Bounty storage b = _getBounty(marketId);
-        if (b.closed) revert BountyIsClosed();
-
-        // Genesis filter (spec §3): same gate as Mode A entry, validation not reputation.
-        if (address(validationGate) != address(0)) {
-            if (!validationGate.validate(submitterAgentId, msg.sender, b.requiredProofs)) revert ValidationFailed();
-        } else if (!identityRegistry.isAuthorizedOrOwner(msg.sender, submitterAgentId)) {
-            revert NotAgentOwner();
-        }
-
-        Finding[] storage fs = bountyFindings[marketId];
-        index = fs.length;
-        fs.push(Finding({
-            submitter: msg.sender,
-            submitterAgentId: submitterAgentId,
-            findingHash: findingHash,
-            submittedAt: uint64(block.timestamp),
-            status: FindingStatus.Pending,
-            award: 0
-        }));
-        bountyPendingCount[marketId] += 1;
-
-        emit FindingSubmitted(marketId, index, msg.sender, findingHash);
+        _requireBounty(marketId);
+        return EchoBounty.submitFinding(
+            bounties, bountyFindings, bountyPendingCount, _bountyDeps(), marketId, submitterAgentId, findingHash
+        );
     }
 
     /// @notice Requester accepts a finding and pays `award` (>= defaultAward, <= remaining pool) to
     ///         its submitter. Many findings can be accepted in parallel — multiple winners.
     function acceptFinding(uint256 marketId, uint256 index, uint256 award) external {
-        Bounty storage b = _getBounty(marketId);
-        if (msg.sender != b.requester) revert NotRequester();
-        Finding storage f = _getFinding(marketId, index);
-        if (f.status != FindingStatus.Pending) revert FindingNotPending();
-        if (award < b.defaultAward) revert AwardBelowFloor();
-        if (award > echoHook.remainingEscrow(marketId)) revert AwardExceedsPool();
-        _acceptFinding(marketId, index, b, f, award, false);
+        _requireBounty(marketId);
+        EchoBounty.acceptFinding(bounties, bountyFindings, bountyPendingCount, _bountyDeps(), marketId, index, award);
     }
 
     /// @notice Requester rejects a finding (free, and disputable via the P5 adjudication ladder).
     ///         The active alternative to accepting — so close never deadlocks on a bad finding.
     ///         Auto-escalation guards against being IGNORED, not against an honest rejection.
     function rejectFinding(uint256 marketId, uint256 index) external {
-        Bounty storage b = _getBounty(marketId);
-        if (msg.sender != b.requester) revert NotRequester();
-        Finding storage f = _getFinding(marketId, index);
-        if (f.status != FindingStatus.Pending) revert FindingNotPending();
-
-        f.status = FindingStatus.Rejected;
-        bountyPendingCount[marketId] -= 1;
-        emit FindingRejected(marketId, index);
+        _requireBounty(marketId);
+        EchoBounty.rejectFinding(bounties, bountyFindings, bountyPendingCount, marketId, index);
     }
 
     /// @notice Anyone may force-accept a Pending finding for defaultAward once its review window has
@@ -821,69 +681,84 @@ contract MarketRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     ///         findings and sit on them. Echo-native (Arc fires no expiry hook). Capped at the
     ///         remaining pool so it can never over-draw.
     function autoEscalateFinding(uint256 marketId, uint256 index) external {
-        Bounty storage b = _getBounty(marketId);
-        Finding storage f = _getFinding(marketId, index);
-        if (f.status != FindingStatus.Pending) revert FindingNotPending();
-        if (block.timestamp < uint256(f.submittedAt) + b.reviewWindow) revert ReviewWindowNotElapsed();
-
-        uint256 award = b.defaultAward;
-        uint256 remaining = echoHook.remainingEscrow(marketId);
-        if (award > remaining) award = remaining;
-        _acceptFinding(marketId, index, b, f, award, true);
+        _requireBounty(marketId);
+        EchoBounty.autoEscalateFinding(bounties, bountyFindings, bountyPendingCount, _bountyDeps(), marketId, index);
     }
 
     /// @notice Close a bounty and refund the unspent pool. Blocked while any finding is still
-    ///         Pending (no-reclaim-while-pending) — every finding must be accepted, rejected, or
-    ///         auto-escalated first, so a requester cannot reclaim over unjudged work.
+    ///         Pending or Disputed (no-reclaim-while-pending) — every finding must be accepted,
+    ///         rejected, or auto-escalated, and any dispute resolved, before reclaim.
     function closeBounty(uint256 marketId) external {
-        Bounty storage b = _getBounty(marketId);
-        if (msg.sender != b.requester) revert NotRequester();
-        if (b.closed) revert BountyIsClosed();
-        if (bountyPendingCount[marketId] != 0) revert FindingsStillPending();
-
-        b.closed = true;
-        uint256 remaining = echoHook.remainingEscrow(marketId);
-        if (remaining > 0) {
-            echoHook.releaseEscrow(marketId, b.requester, remaining);
-        }
-        emit BountyClosed(marketId, remaining);
+        _requireBounty(marketId);
+        EchoBounty.closeBounty(bounties, bountyPendingCount, _bountyDeps(), marketId);
     }
 
-    function _acceptFinding(
-        uint256 marketId,
-        uint256 index,
-        Bounty storage b,
-        Finding storage f,
-        uint256 award,
-        bool autoEscalated
-    ) internal {
-        f.status = FindingStatus.Accepted;
-        f.award = award;
-        bountyPendingCount[marketId] -= 1;
-
-        echoHook.settleFinding(marketId, f.submitter, f.submitterAgentId, b.requesterAgentId, award);
-
-        // An accepted finding is an independent grade of the submitter (confirms ARs, like Mode A/B).
-        if (address(attributionRegistry) != address(0)) {
-            attributionRegistry.recordGrade(f.submitterAgentId, b.requester);
-        }
-
-        emit FindingAccepted(marketId, index, award, autoEscalated);
-    }
-
-    function _getBounty(uint256 marketId) internal view returns (Bounty storage b) {
-        if (marketMode[marketId] != Mode.Bounty) revert NotBounty();
-        b = bounties[marketId];
-    }
-
-    function _getFinding(uint256 marketId, uint256 index) internal view returns (Finding storage) {
-        Finding[] storage fs = bountyFindings[marketId];
-        if (index >= fs.length) revert BadFindingIndex();
-        return fs[index];
-    }
-
-    function getBountyFindings(uint256 marketId) external view returns (Finding[] memory) {
+    function getBountyFindings(uint256 marketId) external view returns (EchoBounty.Finding[] memory) {
         return bountyFindings[marketId];
+    }
+
+    /// @dev Mode guard for the bounty forwarders. The library checks `b.requester != 0` too, but
+    ///      gating on marketMode here keeps the NotBounty selector semantics of P4 (a non-bounty
+    ///      id reverts NotBounty, not a library-internal error) and avoids the delegatecall.
+    function _requireBounty(uint256 marketId) internal view {
+        if (marketMode[marketId] != Mode.Bounty) revert NotBounty();
+    }
+
+    /// @dev Bundle the contract handles the EchoBounty library needs into one memory struct.
+    function _bountyDeps() internal view returns (EchoBounty.Deps memory) {
+        return EchoBounty.Deps({
+            echoHook: echoHook,
+            usdc: usdc,
+            identityRegistry: identityRegistry,
+            validationGate: validationGate,
+            attributionRegistry: attributionRegistry
+        });
+    }
+
+    // ──────────────────── P5 adjudication ladder wiring (spec §5) ────────────────────
+
+    modifier onlyDisputeResolver() {
+        if (msg.sender != disputeResolver) revert NotDisputeResolver();
+        _;
+    }
+
+    /// @notice Wire the staked-jury rung (DisputeResolver sibling). Set once; until then no
+    ///         dispute callback can fire, so this is additive and migration-free.
+    function setDisputeResolver(address _disputeResolver) external onlyOwner {
+        if (disputeResolver != address(0)) revert AlreadySet();
+        if (_disputeResolver == address(0)) revert ZeroAddress();
+        disputeResolver = _disputeResolver;
+        emit DisputeResolverSet(_disputeResolver);
+    }
+
+    /// @notice Move a Rejected bounty finding into Disputed (re-counts it as pending so close is
+    ///         blocked while contested). Driven by the DisputeResolver when a submitter opens a
+    ///         dispute against a rejection. Only the wired resolver may call this.
+    function markFindingDisputed(uint256 marketId, uint256 index) external onlyDisputeResolver {
+        _requireBounty(marketId);
+        EchoBounty.markFindingDisputed(bountyFindings, bountyPendingCount, marketId, index);
+    }
+
+    /// @notice Settle a disputed finding per the jury verdict: `findingValid == true` pays the
+    ///         submitter the floor (capped at the remaining pool) and marks it Accepted; `false`
+    ///         returns it to Rejected. Driven by the DisputeResolver on resolve. The reveal/accept
+    ///         money path is never clawed back — this only acts on the disputed finding.
+    function resolveDisputedFinding(uint256 marketId, uint256 index, bool findingValid) external onlyDisputeResolver {
+        _requireBounty(marketId);
+        EchoBounty.resolveDisputedFinding(
+            bounties, bountyFindings, bountyPendingCount, _bountyDeps(), marketId, index, findingValid
+        );
+    }
+
+    /// @notice Adjudicated stake slash — the P5 replacement for the P1 `adminSlashStake`
+    ///         placeholder. Forfeits a Mode-A applicant's stake to the requester (the harmed
+    ///         party) ONLY when the DisputeResolver has ruled a sustained bait-and-switch flag.
+    ///         Routes through the already-live EchoHook.slashStake settlement leg. (Mode-A's
+    ///         flag-window reveal rework is parked to P6; this entrypoint is ready for it.)
+    function slashStakeAdjudicated(uint256 marketId, address participant) external onlyDisputeResolver {
+        address to = markets[marketId].requester;
+        echoHook.slashStake(marketId, participant, to);
+        emit StakeSlashed(marketId, participant, to);
     }
 
     function _calculateMinEscrow(

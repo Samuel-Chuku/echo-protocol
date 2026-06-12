@@ -5,6 +5,7 @@ import "forge-std/Test.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
 import {MarketRegistry} from "../core/MarketRegistry.sol";
+import {EchoDirectJob} from "../core/EchoDirectJob.sol";
 import {EchoHook} from "../core/EchoHook.sol";
 import {ParticipationReceipt} from "../core/ParticipationReceipt.sol";
 import {AttributionRegistry} from "../core/AttributionRegistry.sol";
@@ -98,10 +99,10 @@ contract ModeDirectJobTest is Test {
         assertEq(usdc.balanceOf(address(echoHook)), 600e6, "full escrow held");
         assertEq(echoHook.remainingEscrow(marketId), 600e6);
 
-        MarketRegistry.Milestone[] memory ms = registry.getDirectJobMilestones(marketId);
+        EchoDirectJob.Milestone[] memory ms = registry.getDirectJobMilestones(marketId);
         assertEq(ms.length, 3);
         assertEq(ms[0].amount, 100e6);
-        assertEq(uint8(ms[0].status), uint8(MarketRegistry.MilestoneStatus.Pending));
+        assertEq(uint8(ms[0].status), uint8(EchoDirectJob.MilestoneStatus.Pending));
     }
 
     function test_RevertWhen_NoMilestones() public {
@@ -142,8 +143,8 @@ contract ModeDirectJobTest is Test {
         assertEq(usdc.balanceOf(treasury), 5e6, "fee margin to treasury");
         assertEq(echoHook.remainingEscrow(marketId), 500e6, "escrow reduced by milestone gross");
 
-        MarketRegistry.Milestone[] memory ms = registry.getDirectJobMilestones(marketId);
-        assertEq(uint8(ms[0].status), uint8(MarketRegistry.MilestoneStatus.Released));
+        EchoDirectJob.Milestone[] memory ms = registry.getDirectJobMilestones(marketId);
+        assertEq(uint8(ms[0].status), uint8(EchoDirectJob.MilestoneStatus.Released));
     }
 
     function test_MilestonesAreIndependent() public {
@@ -155,9 +156,9 @@ contract ModeDirectJobTest is Test {
         registry.acceptMilestone(marketId, 2);
 
         assertEq(usdc.balanceOf(worker), 285e6, "milestone 2 net (300 - 5%)");
-        MarketRegistry.Milestone[] memory ms = registry.getDirectJobMilestones(marketId);
-        assertEq(uint8(ms[0].status), uint8(MarketRegistry.MilestoneStatus.Pending), "others untouched");
-        assertEq(uint8(ms[2].status), uint8(MarketRegistry.MilestoneStatus.Released));
+        EchoDirectJob.Milestone[] memory ms = registry.getDirectJobMilestones(marketId);
+        assertEq(uint8(ms[0].status), uint8(EchoDirectJob.MilestoneStatus.Pending), "others untouched");
+        assertEq(uint8(ms[2].status), uint8(EchoDirectJob.MilestoneStatus.Released));
     }
 
     // ---- auto-release (exit-theft guard) ----
