@@ -7,6 +7,12 @@ evm_version = "paris"
 solc_version = "0.8.26"
 optimizer = true
 optimizer_runs = 200
+# via_ir enabled in P4: MarketRegistry crossed the 24576-byte EIP-170 limit once it carried all
+# four mode lifecycles (funnel + reveal + direct job + bounty). via_ir brings it to ~24028 bytes.
+# Safe for the live UUPS proxies — changing the compile pipeline does not move storage slots
+# (verified via `forge inspect storageLayout`). Headroom is tight (~548 bytes); P5 begins by
+# extracting a mode's logic into a sibling/library to keep MarketRegistry lean (spec §8).
+via_ir = true
 gas_reports = ["*"]
 
 [fuzz]
