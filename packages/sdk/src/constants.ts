@@ -39,25 +39,29 @@ export const CONTRACTS = {
   },
 } as const;
 
-// P5 delegatecall libraries linked into the MarketRegistry impl (size relief, spec §8). Plain
+// Delegatecall libraries linked into the MarketRegistry impl (size relief, spec §8). Plain
 // libraries (not proxies); their addresses are baked into the linked impl bytecode and only matter
-// for verification / relinking a future impl. Broadcast 2026-06-13.
+// for verification / relinking a future impl. Re-deployed (CREATE2) at P6 — EchoBounty/EchoDirectJob
+// changed (settle calls now carry the silent flag) and EchoReveal is new (reveal stake-hold).
+// Broadcast 2026-06-13.
 export const LIBRARIES = {
   arcTestnet: {
-    echoBounty: '0xe2f76863e70631c1bfc7b9ffd9aa6ba5674fa9a6' as Address,
-    echoDirectJob: '0x3cdded757c1de590232ce602bf5cd145c0ec7f9d' as Address,
+    echoBounty: '0xCA19CA3f2372ceF016Bb6730aB273B31FB927635' as Address,
+    echoDirectJob: '0x79D92167E501d56CD79242b64337e86D77e5D443' as Address,
+    echoReveal: '0xa57EDf77dbB86918225AaD84230BD0380Ff7ce78' as Address,
   },
 } as const;
 
-// Implementations (for upgrade transactions only). Latest = P5 Adjudication ladder (2026-06-13):
-// MarketRegistry impl is linked against the EchoBounty + EchoDirectJob libraries (see LIBRARIES).
+// Implementations (for upgrade transactions only). Latest = P6 Engine unification + reputation
+// (2026-06-13): MarketRegistry impl is linked against the EchoBounty + EchoDirectJob + EchoReveal
+// libraries (see LIBRARIES). Proxies in CONTRACTS are unchanged.
 export const IMPLEMENTATIONS = {
   arcTestnet: {
-    marketRegistry: '0x42Bc611eB5491A4D2c8903150bf4d6436Ff0159f' as Address,
-    echoHook: '0x639674Cb5ce6F7D6e9b9Ba5025426D3a4F0cb283' as Address,
+    marketRegistry: '0xe21A7E5227D983911f38CED379d8E7d5f8E9Df29' as Address,
+    echoHook: '0x35f6202e8c39ce7e70D87Ea2D008F5177F058A8A' as Address,
     participationReceipt: '0x2bA8ED70dEe63351d2fF739E36182972e9a695C4' as Address,
     validationGate: '0x5590Fa35b3E75A9cC3b12Edb7858936Aca383E32' as Address,
-    disputeResolver: '0x840d9BDa344c3ee1410f6D5e14C8fE8761a23D70' as Address,
+    disputeResolver: '0xF8F05Dc0Ae083754721419dA91C3A4FAD77d7061' as Address,
   },
 } as const;
 
