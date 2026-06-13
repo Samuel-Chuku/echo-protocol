@@ -175,6 +175,44 @@ contract ModeDirectJobTest is Test {
         assertEq(usdc.balanceOf(worker), 190e6, "milestone 1 auto-released net (200 - 5%)");
     }
 
+    // ---- reputation: neutral-on-silence (P6, spec §8) ----
+
+    function _countFeedback(Vm.Log[] memory logs, uint256 agentId) internal pure returns (uint256 n) {
+        bytes32 sig = keccak256("Feedback(uint256,int128,string,string,bytes32)");
+        for (uint256 i; i < logs.length; ++i) {
+            if (logs[i].topics.length >= 2 && logs[i].topics[0] == sig && uint256(logs[i].topics[1]) == agentId) n++;
+        }
+    }
+
+    function test_Reputation_AutoRelease_DoesNotCreditRequester() public {
+        uint256 marketId = _create();
+        vm.prank(worker);
+        registry.submitMilestone(marketId, 1, keccak256("d1"));
+        vm.warp(block.timestamp + REVIEW_WINDOW + 1);
+
+        vm.recordLogs();
+        registry.autoReleaseMilestone(marketId, 1);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+
+        // The worker is vouched for the delivered milestone; the silent requester earns nothing.
+        assertGe(_countFeedback(logs, WORKER_AGENT), 1, "worker still credited on auto-release");
+        assertEq(_countFeedback(logs, REQ_AGENT), 0, "silent requester NOT credited on auto-release");
+    }
+
+    function test_Reputation_Accept_CreditsRequester() public {
+        uint256 marketId = _create();
+        vm.prank(worker);
+        registry.submitMilestone(marketId, 1, keccak256("d1"));
+
+        vm.recordLogs();
+        vm.prank(requester);
+        registry.acceptMilestone(marketId, 1);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+
+        assertGe(_countFeedback(logs, WORKER_AGENT), 1, "worker credited on active accept");
+        assertGe(_countFeedback(logs, REQ_AGENT), 1, "active requester credited (responded)");
+    }
+
     function test_RevertWhen_AutoReleaseBeforeWindow() public {
         uint256 marketId = _create();
         vm.prank(worker);
@@ -284,7 +322,7 @@ contract ModeDirectJobTest is Test {
         usdc.approve(address(registry), type(uint256).max);
         uint256[4] memory tiers = [uint256(5e6), 50e6, 250e6, 1000e6];
         vm.expectRevert(MarketRegistry.UnsupportedMode.selector);
-        registry.createMarketWithMode("u", keccak256("s"), tiers, 0, 50, 7 days, 2000e6, REQ_AGENT, MarketRegistry.Mode.DirectJob, 0, 0);
+        registry.createMarketWithMode("u", keccak256("s"), tiers, 0, 50, 7 days, 2000e6, REQ_AGENT, MarketRegistry.ModeConfig({mode: MarketRegistry.Mode.DirectJob, requiredProofs: 0, stakeRequired: 0, flagWindow: 0}));
         vm.stopPrank();
     }
 }

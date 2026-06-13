@@ -46,8 +46,9 @@ import {IDisputeAdjudicable} from "../interfaces/IDisputeAdjudicable.sol";
 contract DisputeResolver is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     using SafeERC20 for IERC20;
 
-    /// @notice What a dispute is contesting. Bounty findings are the v1 wired subject; the
-    ///         Mode-A bait-flag subject is interface-ready (its reveal rework is parked to P6).
+    /// @notice What a dispute is contesting. Both subjects are live as of P6: BountyFinding (a
+    ///         submitter contests a rejection) and ModeAStake (a requester flags a revealed
+    ///         applicant's held stake as bait-and-switch).
     enum Subject { BountyFinding, ModeAStake }
 
     enum Status { Open, Resolved }
@@ -55,8 +56,9 @@ contract DisputeResolver is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     /// @notice One dispute. For a BountyFinding, `target` is the finding index and the question is
     ///         "is the finding valid?" — the opener (submitter) argues YES, the counter (requester)
     ///         argues NO. For a ModeAStake, `participant` is the staked applicant and the question
-    ///         is "was this a sustained bait-and-switch?" — opener defends (NO slash), counter
-    ///         seeks the slash. `forValid` always tallies votes siding with the OPENER.
+    ///         is "was this a sustained bait-and-switch?" — the opener (the requester) seeks the
+    ///         slash, the counter (the applicant) defends. `forOpener` always tallies votes siding
+    ///         with the OPENER (finding valid / slash sustained).
     struct Dispute {
         Subject subject;
         uint256 marketId;
@@ -66,8 +68,8 @@ contract DisputeResolver is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         address counter;         // posted the counter bond; argues it should lose
         uint256 bond;            // each side's bond (symmetric)
         uint64 votingEndsAt;
-        uint32 forOpener;        // jurors siding with the opener (finding valid / no slash)
-        uint32 against;          // jurors siding with the counter (finding invalid / slash)
+        uint32 forOpener;        // jurors siding with the opener (finding valid / slash sustained)
+        uint32 against;          // jurors siding with the counter (finding invalid / no slash)
         uint256 jurorShare;      // per-winning-voter reward, fixed at resolve (0 until then)
         Status status;
         bytes32 agentHint;       // rung-1 advisory record (non-binding); 0 if unset
@@ -78,7 +80,7 @@ contract DisputeResolver is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     uint256 public minBond;                // minimum opening/counter bond
     uint64 public votingPeriod;            // seconds jurors have to vote once a dispute is countered
     address public agentOracle;            // may record the rung-1 advisory hint
-    bool public modeAStakeEnabled;         // ModeAStake disputes gated off until P6 reveal rework
+    bool public modeAStakeEnabled;         // ModeAStake disputes gated off until the P6 reveal rework
 
     mapping(address => bool) public jurors;
     uint256 public jurorCount;
@@ -168,9 +170,9 @@ contract DisputeResolver is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         emit AgentOracleSet(_oracle);
     }
 
-    /// @notice Enable ModeAStake disputes. Off until P6 reworks reveal() to hold the stake behind a
-    ///         flag window; until then a Mode-A stake is already refunded at reveal, so there is
-    ///         nothing to slash and the subject must stay disabled.
+    /// @notice Enable ModeAStake disputes. The P6 reveal rework holds the applicant stake behind a
+    ///         flag window (instead of refunding it atomically at reveal), so there is now a live
+    ///         stake to flag and slash. Flip this on once the upgraded MarketRegistry is live.
     function setModeAStakeEnabled(bool enabled) external onlyOwner {
         modeAStakeEnabled = enabled;
         emit ModeAStakeEnabledSet(enabled);
@@ -206,10 +208,13 @@ contract DisputeResolver is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         emit DisputeOpened(disputeId, Subject.BountyFinding, marketId, findingIndex, msg.sender, bond);
     }
 
-    /// @notice Open a Mode-A bait-and-switch dispute over an applicant's returnable stake. PARKED
-    ///         path: reverts SubjectNotEnabled until P6 reworks reveal() to hold the stake behind a
-    ///         flag window (today the stake is refunded atomically at reveal, so there is nothing
-    ///         to slash). Interface-ready so wiring it later is config, not re-architecture.
+    /// @notice Open a Mode-A bait-and-switch dispute against a revealed applicant's held stake (P6).
+    ///         THIS IS THE FLAG: the requester (the slash-seeker) posts a bond and the resolver
+    ///         freezes the reveal hold to Flagged on the market — mirrors openFindingDispute. The
+    ///         applicant then counters with a matching bond to defend; jurors vote; resolve slashes
+    ///         the stake to the requester (sustained) or refunds the applicant (cleared). Reverts
+    ///         SubjectNotEnabled until the owner flips modeAStakeEnabled. The market call reverts (and
+    ///         unwinds the bond) if the reveal isn't a flaggable held stake within its flag window.
     function openStakeDispute(uint256 marketId, address participant, uint256 bond) external returns (uint256 disputeId) {
         if (address(market) == address(0)) revert NotConfigured();
         if (!modeAStakeEnabled) revert SubjectNotEnabled();
@@ -225,6 +230,10 @@ contract DisputeResolver is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         d.opener = msg.sender;
         d.bond = bond;
         d.status = Status.Open;
+
+        // Flag the reveal on the market — reverts (RevealNotHeld / FlagWindowElapsed) if it isn't a
+        // flaggable held stake, which also unwinds the bond transfer above.
+        market.markRevealFlagged(marketId, participant);
 
         emit DisputeOpened(disputeId, Subject.ModeAStake, marketId, 0, msg.sender, bond);
     }
@@ -283,16 +292,17 @@ contract DisputeResolver is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         uint256 cast = uint256(d.forOpener) + uint256(d.against);
         if (cast == 0) revert NoVotes();
 
-        bool openerWon = d.forOpener >= d.against; // tie → opener (item sustained)
+        bool openerWon = _openerWon(d);
         d.status = Status.Resolved;
 
         // Push the verdict into the market (de-risked: never claws back paid money).
         if (d.subject == Subject.BountyFinding) {
             market.resolveDisputedFinding(d.marketId, d.target, openerWon);
         } else {
-            // ModeAStake: openerWon == false ⇒ sustained bait verdict ⇒ slash the bond to the
-            // requester. openerWon == true ⇒ applicant cleared, no slash.
-            if (!openerWon) market.slashStakeAdjudicated(d.marketId, d.participant);
+            // ModeAStake: opener is the requester/slash-seeker. openerWon == true ⇒ sustained bait ⇒
+            // slash the stake to the requester; false ⇒ applicant cleared ⇒ stake refunded. Both
+            // outcomes resolve the hold so the stake is never stranded.
+            market.resolveStakeDispute(d.marketId, d.participant, openerWon);
         }
 
         // Refund the winner's own bond; fix the per-winning-voter share of the loser's bond.
@@ -301,9 +311,19 @@ contract DisputeResolver is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         emit BondPaid(disputeId, winner, d.bond);
 
         uint32 winningVotes = openerWon ? d.forOpener : d.against;
-        d.jurorShare = uint256(d.bond) / winningVotes; // winningVotes > 0 (tie favors opener, cast>0)
+        d.jurorShare = uint256(d.bond) / winningVotes; // winningVotes > 0 (cast>0 and the winner has the majority)
 
         emit DisputeResolved(disputeId, openerWon, d.forOpener, d.against);
+    }
+
+    /// @dev Whether the opener's side prevailed. The tie-break differs by subject: a BountyFinding
+    ///      tie favors the opener (the finding keeps the benefit of the doubt → valid), while a
+    ///      ModeAStake slash requires a STRICT majority so a tie favors the counter (no slash) —
+    ///      a flag must be SUSTAINED to bite (spec §5). Used by both resolve and claimJurorReward so
+    ///      the winning side is computed identically in both.
+    function _openerWon(Dispute storage d) internal view returns (bool) {
+        if (d.subject == Subject.ModeAStake) return d.forOpener > d.against;
+        return d.forOpener >= d.against;
     }
 
     /// @notice A juror who voted on the WINNING side claims their flat share of the loser's bond.
@@ -314,7 +334,7 @@ contract DisputeResolver is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         if (!hasVoted[disputeId][msg.sender]) revert NotJuror();
         if (jurorClaimed[disputeId][msg.sender]) revert AlreadyVoted();
 
-        bool openerWon = d.forOpener >= d.against;
+        bool openerWon = _openerWon(d);
         if (votedForOpener[disputeId][msg.sender] != openerWon) revert NotWinningVoter();
 
         uint256 share = d.jurorShare;

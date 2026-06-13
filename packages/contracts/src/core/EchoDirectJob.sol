@@ -223,7 +223,9 @@ library EchoDirectJob {
         bool autoReleased
     ) internal {
         milestone.status = MilestoneStatus.Released;
-        d.echoHook.settleMilestone(marketId, j.worker, j.workerAgentId, j.requesterAgentId, milestone.amount);
+        // autoReleased == true is the silence-driven default-resolve (requester never accepted) →
+        // EchoHook credits the worker but not the silent requester (spec §8).
+        d.echoHook.settleMilestone(marketId, j.worker, j.workerAgentId, j.requesterAgentId, milestone.amount, autoReleased);
 
         // A released milestone is an independent grade of the worker (confirms ARs, like Mode A).
         if (address(d.attributionRegistry) != address(0)) {

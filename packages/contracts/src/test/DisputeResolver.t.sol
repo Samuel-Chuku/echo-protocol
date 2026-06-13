@@ -383,7 +383,7 @@ contract DisputeResolverTest is Test {
         resolver.recordAgentHint(disputeId, keccak256("x"));
     }
 
-    // ---- parked Mode-A stake subject (disabled until P6) ----
+    // ---- parked Mode-A stake subject (disabled until enabled) ----
 
     function test_RevertWhen_StakeDisputeDisabled() public {
         uint256 marketId = _createBounty();
@@ -400,5 +400,153 @@ contract DisputeResolverTest is Test {
         vm.prank(makeAddr("stranger"));
         vm.expectRevert();
         resolver.setModeAStakeEnabled(false);
+    }
+
+    // ──────────────────── Mode-A stake dispute, end-to-end (P6) ────────────────────
+    //
+    // The requester (slash-seeker) opens a bonded ModeAStake dispute against a revealed applicant's
+    // held stake — opening flags the reveal on the market. The applicant counters to defend; jurors
+    // vote; resolve slashes the stake to the requester (sustained) or refunds the applicant (cleared).
+    // `submitter` doubles as the Mode-A applicant here (it already has an identity + funds).
+
+    uint256 constant STAKE_A = 10e6;
+    uint64 constant FLAG_WINDOW_A = 2 days;
+
+    /// @dev Create an OpenMarket reveal market with a held stake, have `submitter` apply, and have the
+    ///      requester reveal — leaving submitter's stake Held behind the flag window.
+    function _revealedHeldStake() internal returns (uint256 marketId) {
+        uint256[4] memory tiers = [uint256(5e6), 50e6, 250e6, 1000e6];
+        vm.startPrank(requester);
+        usdc.approve(address(registry), type(uint256).max);
+        marketId = registry.createMarketWithMode(
+            "ipfs://m", keccak256("scope"), tiers, 0, 50, 7 days, 2000e6, REQ_AGENT,
+            MarketRegistry.ModeConfig({mode: MarketRegistry.Mode.OpenMarket, requiredProofs: 0, stakeRequired: STAKE_A, flagWindow: FLAG_WINDOW_A})
+        );
+        vm.stopPrank();
+
+        vm.startPrank(submitter);
+        usdc.approve(address(registry), type(uint256).max);
+        registry.applyToMarket(marketId, SUB_AGENT, keccak256("sub"));
+        vm.stopPrank();
+
+        vm.prank(requester);
+        registry.reveal(marketId, submitter); // stake now Held
+    }
+
+    /// @dev Enable the subject, requester opens (flags), applicant counters → voting window open.
+    function _openStakeCounter(uint256 marketId) internal returns (uint256 disputeId) {
+        resolver.setModeAStakeEnabled(true); // owner == this test
+        vm.startPrank(requester); // the slash-seeker opens
+        usdc.approve(address(resolver), type(uint256).max);
+        disputeId = resolver.openStakeDispute(marketId, submitter, MIN_BOND);
+        vm.stopPrank();
+
+        vm.startPrank(submitter); // the applicant defends
+        usdc.approve(address(resolver), type(uint256).max);
+        resolver.counter(disputeId);
+        vm.stopPrank();
+    }
+
+    function _countFeedback(Vm.Log[] memory logs, uint256 agentId) internal pure returns (uint256 n) {
+        bytes32 sig = keccak256("Feedback(uint256,int128,string,string,bytes32)");
+        for (uint256 i; i < logs.length; ++i) {
+            if (logs[i].topics.length >= 2 && logs[i].topics[0] == sig && uint256(logs[i].topics[1]) == agentId) n++;
+        }
+    }
+
+    function test_StakeDispute_OpenFlagsHold_BlocksAutoSettleAndClose() public {
+        uint256 marketId = _revealedHeldStake();
+        _openStakeCounter(marketId); // flags the hold
+
+        // A flagged hold can't be auto-returned…
+        vm.warp(block.timestamp + FLAG_WINDOW_A);
+        vm.expectRevert(MarketRegistry.RevealNotHeld.selector);
+        registry.settleRevealStake(marketId, submitter);
+
+        // …nor closed over (floor=min(5,1)=1 is met by the single reveal, so only the flag blocks it).
+        vm.prank(requester);
+        vm.expectRevert(MarketRegistry.RevealStillFlagged.selector);
+        registry.closeMarket(marketId);
+    }
+
+    function test_StakeDispute_SlashSustained_RoutesToRequester_WritesNegRep() public {
+        uint256 marketId = _revealedHeldStake();
+        uint256 disputeId = _openStakeCounter(marketId);
+
+        // Strict majority for the opener (slash): 2 slash, 1 no-slash.
+        vm.prank(juror1);
+        resolver.vote(disputeId, true);
+        vm.prank(juror2);
+        resolver.vote(disputeId, true);
+        vm.prank(juror3);
+        resolver.vote(disputeId, false);
+
+        vm.warp(block.timestamp + VOTING_PERIOD);
+
+        uint256 reqBefore = usdc.balanceOf(requester);
+        vm.recordLogs();
+        resolver.resolve(disputeId);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+
+        // Requester gets their own bond back (MIN_BOND) + the slashed stake (STAKE_A).
+        assertEq(usdc.balanceOf(requester) - reqBefore, MIN_BOND + STAKE_A, "bond refund + slashed stake");
+        assertEq(echoHook.stakeBalance(marketId, submitter), 0, "stake slashed");
+        // The sustained bait writes a -1 P-Rep against the applicant.
+        assertGe(_countFeedback(logs, SUB_AGENT), 1, "applicant got bait_sustained feedback");
+    }
+
+    function test_StakeDispute_Cleared_RefundsApplicant() public {
+        uint256 marketId = _revealedHeldStake();
+        uint256 disputeId = _openStakeCounter(marketId);
+
+        // Majority for the counter (no slash): 2 no-slash, 1 slash.
+        vm.prank(juror1);
+        resolver.vote(disputeId, false);
+        vm.prank(juror2);
+        resolver.vote(disputeId, false);
+        vm.prank(juror3);
+        resolver.vote(disputeId, true);
+
+        vm.warp(block.timestamp + VOTING_PERIOD);
+
+        uint256 subBefore = usdc.balanceOf(submitter);
+        resolver.resolve(disputeId);
+
+        // Applicant (counter/winner) gets their own bond back (MIN_BOND) + the refunded stake.
+        assertEq(usdc.balanceOf(submitter) - subBefore, MIN_BOND + STAKE_A, "bond refund + stake returned");
+        assertEq(echoHook.stakeBalance(marketId, submitter), 0, "stake cleared");
+    }
+
+    function test_StakeDispute_TieFavorsNoSlash() public {
+        uint256 marketId = _revealedHeldStake();
+        uint256 disputeId = _openStakeCounter(marketId);
+
+        // 1-1 tie. For ModeAStake a slash needs a STRICT majority → tie favors the applicant.
+        vm.prank(juror1);
+        resolver.vote(disputeId, true); // slash
+        vm.prank(juror2);
+        resolver.vote(disputeId, false); // no slash
+
+        vm.warp(block.timestamp + VOTING_PERIOD);
+
+        uint256 subBefore = usdc.balanceOf(submitter);
+        resolver.resolve(disputeId);
+        assertEq(usdc.balanceOf(submitter) - subBefore, MIN_BOND + STAKE_A, "tie -> no slash -> applicant made whole");
+        assertEq(echoHook.stakeBalance(marketId, submitter), 0, "stake refunded on tie");
+    }
+
+    function test_StakeDispute_RevertWhen_OpenAfterFlagWindow() public {
+        uint256 marketId = _revealedHeldStake();
+        resolver.setModeAStakeEnabled(true);
+        vm.warp(block.timestamp + FLAG_WINDOW_A); // window closed before the flag
+
+        vm.startPrank(requester);
+        uint256 reqBefore = usdc.balanceOf(requester);
+        usdc.approve(address(resolver), type(uint256).max);
+        vm.expectRevert(MarketRegistry.FlagWindowElapsed.selector);
+        resolver.openStakeDispute(marketId, submitter, MIN_BOND);
+        vm.stopPrank();
+        // The bond transfer is unwound by the revert.
+        assertEq(usdc.balanceOf(requester), reqBefore, "bond unwound on a too-late flag");
     }
 }

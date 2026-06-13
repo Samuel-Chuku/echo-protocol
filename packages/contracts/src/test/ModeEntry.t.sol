@@ -42,6 +42,7 @@ contract ModeEntryTest is Test {
     uint256 constant GHOST_DEADLINE = 7 days;
     uint256 constant ESCROW = 2000e6;
     uint256 constant STAKE = 10e6;
+    uint256 constant FLAG_WINDOW = 2 days;
 
     function setUp() public {
         owner = address(this); // deployer owns the proxies
@@ -83,7 +84,8 @@ contract ModeEntryTest is Test {
         usdc.approve(address(registry), type(uint256).max);
         marketId = registry.createMarketWithMode(
             "ipfs://m", keccak256("scope"), tierAmounts, 0, MAX_APPLICANTS, GHOST_DEADLINE,
-            ESCROW, REQ_AGENT, mode, requiredProofs, stake
+            ESCROW, REQ_AGENT,
+            MarketRegistry.ModeConfig({mode: mode, requiredProofs: requiredProofs, stakeRequired: stake, flagWindow: FLAG_WINDOW})
         );
         vm.stopPrank();
     }
@@ -104,7 +106,8 @@ contract ModeEntryTest is Test {
         vm.expectRevert(MarketRegistry.UnsupportedMode.selector);
         registry.createMarketWithMode(
             "ipfs://m", keccak256("scope"), tierAmounts, 0, MAX_APPLICANTS, GHOST_DEADLINE,
-            ESCROW, REQ_AGENT, MarketRegistry.Mode.DirectJob, 0, 0
+            ESCROW, REQ_AGENT,
+            MarketRegistry.ModeConfig({mode: MarketRegistry.Mode.DirectJob, requiredProofs: 0, stakeRequired: 0, flagWindow: 0})
         );
         vm.stopPrank();
     }
@@ -115,7 +118,8 @@ contract ModeEntryTest is Test {
         vm.expectRevert(MarketRegistry.UnsupportedMode.selector);
         registry.createMarketWithMode(
             "ipfs://m", keccak256("scope"), tierAmounts, 0, MAX_APPLICANTS, GHOST_DEADLINE,
-            ESCROW, REQ_AGENT, MarketRegistry.Mode.Bounty, 0, 0
+            ESCROW, REQ_AGENT,
+            MarketRegistry.ModeConfig({mode: MarketRegistry.Mode.Bounty, requiredProofs: 0, stakeRequired: 0, flagWindow: 0})
         );
         vm.stopPrank();
     }
@@ -213,32 +217,102 @@ contract ModeEntryTest is Test {
         vm.expectRevert(MarketRegistry.RevealFloorNotMet.selector);
         registry.closeMarket(marketId);
 
-        // Revealing meets the floor AND refunds the stake atomically; then close succeeds.
+        // Revealing meets the floor; the stake is now HELD behind the flag window (P6), not refunded
+        // at reveal. closeMarket then returns the (unflagged) held stake good-faith on close.
         uint256 partBefore = usdc.balanceOf(participant);
         vm.prank(requester);
         registry.reveal(marketId, participant);
-        assertEq(echoHook.stakeBalance(marketId, participant), 0, "stake refunded at reveal");
+        assertEq(echoHook.stakeBalance(marketId, participant), STAKE, "stake held at reveal (not refunded)");
 
         vm.prank(requester);
         registry.closeMarket(marketId);
-        // Stake came back at reveal; reveal fee net of 0% fee (no protocol config wired here).
-        assertGt(usdc.balanceOf(participant), partBefore, "worker paid reveal fee + stake");
+        assertEq(echoHook.stakeBalance(marketId, participant), 0, "held stake returned on close");
+        // Stake returned on close + reveal fee net of 0% fee (no protocol config wired here).
+        assertGt(usdc.balanceOf(participant), partBefore, "worker paid reveal fee + stake returned");
     }
 
-    // ---- stake resolution: adjudicated slash (P5 — resolver-gated) ----
+    // ---- stake resolution: adjudicated slash over a FLAGGED reveal hold (P6 — resolver-gated) ----
 
-    function test_SlashStakeAdjudicated_RoutesToRequester() public {
-        uint256 marketId = _createModeMarket(MarketRegistry.Mode.OpenMarket, 0, STAKE);
+    /// @dev Drives the registry callbacks directly as the wired resolver stand-in (the full
+    ///      DisputeResolver open/counter/vote/resolve path is covered in DisputeResolver.t.sol).
+    function _revealAndFlag(uint256 marketId) internal {
         vm.startPrank(participant);
         usdc.approve(address(registry), type(uint256).max);
         registry.applyToMarket(marketId, PART_AGENT, keccak256("sub"));
         vm.stopPrank();
 
+        vm.prank(requester);
+        registry.reveal(marketId, participant); // stake now Held
+
+        vm.prank(disputeResolver);
+        registry.markRevealFlagged(marketId, participant); // Held → Flagged
+    }
+
+    function test_ResolveStakeDispute_Slash_RoutesToRequester() public {
+        uint256 marketId = _createModeMarket(MarketRegistry.Mode.OpenMarket, 0, STAKE);
+        _revealAndFlag(marketId);
+
         uint256 reqBefore = usdc.balanceOf(requester);
         vm.prank(disputeResolver); // only the wired resolver may drive an adjudicated slash
-        registry.slashStakeAdjudicated(marketId, participant);
+        registry.resolveStakeDispute(marketId, participant, true);
         assertEq(usdc.balanceOf(requester) - reqBefore, STAKE, "slashed stake to requester");
         assertEq(echoHook.stakeBalance(marketId, participant), 0, "stake cleared");
+    }
+
+    function test_ResolveStakeDispute_Cleared_RefundsApplicant() public {
+        uint256 marketId = _createModeMarket(MarketRegistry.Mode.OpenMarket, 0, STAKE);
+        _revealAndFlag(marketId);
+
+        uint256 partBefore = usdc.balanceOf(participant);
+        vm.prank(disputeResolver);
+        registry.resolveStakeDispute(marketId, participant, false);
+        assertEq(usdc.balanceOf(participant) - partBefore, STAKE, "cleared applicant refunded");
+        assertEq(echoHook.stakeBalance(marketId, participant), 0, "stake cleared");
+    }
+
+    function test_SettleRevealStake_ReturnsAfterWindow() public {
+        uint256 marketId = _createModeMarket(MarketRegistry.Mode.OpenMarket, 0, STAKE);
+        vm.startPrank(participant);
+        usdc.approve(address(registry), type(uint256).max);
+        registry.applyToMarket(marketId, PART_AGENT, keccak256("sub"));
+        vm.stopPrank();
+        vm.prank(requester);
+        registry.reveal(marketId, participant);
+
+        // Before the window elapses, the default-resolve is not yet available.
+        vm.expectRevert(MarketRegistry.FlagWindowNotElapsed.selector);
+        registry.settleRevealStake(marketId, participant);
+
+        // After the window, anyone may return the unflagged stake to the applicant.
+        vm.warp(block.timestamp + FLAG_WINDOW);
+        uint256 partBefore = usdc.balanceOf(participant);
+        registry.settleRevealStake(marketId, participant); // permissionless
+        assertEq(usdc.balanceOf(participant) - partBefore, STAKE, "unflagged stake auto-returned");
+        assertEq(echoHook.stakeBalance(marketId, participant), 0, "stake cleared");
+    }
+
+    function test_RevertWhen_FlagAfterWindow() public {
+        uint256 marketId = _createModeMarket(MarketRegistry.Mode.OpenMarket, 0, STAKE);
+        vm.startPrank(participant);
+        usdc.approve(address(registry), type(uint256).max);
+        registry.applyToMarket(marketId, PART_AGENT, keccak256("sub"));
+        vm.stopPrank();
+        vm.prank(requester);
+        registry.reveal(marketId, participant);
+
+        vm.warp(block.timestamp + FLAG_WINDOW); // window closed
+        vm.prank(disputeResolver);
+        vm.expectRevert(MarketRegistry.FlagWindowElapsed.selector);
+        registry.markRevealFlagged(marketId, participant);
+    }
+
+    function test_CloseMarket_BlockedWhileFlagged() public {
+        uint256 marketId = _createModeMarket(MarketRegistry.Mode.OpenMarket, 0, STAKE);
+        _revealAndFlag(marketId); // one reveal meets the floor=1, and it is Flagged
+
+        vm.prank(requester);
+        vm.expectRevert(MarketRegistry.RevealStillFlagged.selector);
+        registry.closeMarket(marketId);
     }
 
     function test_RevertWhen_NonResolverSlashes() public {
@@ -250,7 +324,7 @@ contract ModeEntryTest is Test {
 
         // Neither the owner nor the requester may slash directly — only the DisputeResolver.
         vm.expectRevert(MarketRegistry.NotDisputeResolver.selector);
-        registry.slashStakeAdjudicated(marketId, participant); // owner == this test
+        registry.resolveStakeDispute(marketId, participant, true); // owner == this test
     }
 
     // ---- stake-only EchoHook guards ----

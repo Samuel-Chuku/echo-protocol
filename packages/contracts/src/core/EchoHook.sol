@@ -232,12 +232,19 @@ contract EchoHook is Initializable, OwnableUpgradeable, UUPSUpgradeable, IACPHoo
 
     /// @notice Forfeit a participant's stake to `to` (the harmed party). The condition that
     ///         JUSTIFIES a slash — a sustained bait-and-switch flag or a post-engagement no-show —
-    ///         is adjudicated upstream (P5 DisputeResolver / P6 engine); this is the settlement leg.
-    function slashStake(uint256 marketId, address participant, address to) external onlyRegistry returns (uint256 amount) {
+    ///         is adjudicated upstream (P5/P6 DisputeResolver); this is the settlement leg. Writes
+    ///         the negative P-Rep that a sustained bait verdict earns the applicant (best-effort,
+    ///         like every other reputation write — never blocks the slash).
+    function slashStake(uint256 marketId, address participant, address to, uint256 participantAgentId)
+        external
+        onlyRegistry
+        returns (uint256 amount)
+    {
         amount = stakeBalance[marketId][participant];
         if (amount > 0) {
             stakeBalance[marketId][participant] = 0;
             usdc.safeTransfer(to, amount);
+            _feedback(participantAgentId, int128(-1), "bait_sustained", bytes32(0));
             emit StakeSlashed(marketId, participant, to, amount);
         }
     }
@@ -270,7 +277,8 @@ contract EchoHook is Initializable, OwnableUpgradeable, UUPSUpgradeable, IACPHoo
         MarketContext storage c = ctx[jobId];
         if (c.marketId == 0) revert JobNotFound();
         IAgenticCommerce.Job memory job = agenticCommerce.getJob(jobId);
-        _settle(c.marketId, jobId, job.provider, c.participantAgentId, c.requesterAgentId, c.tier, c.tierAmount, reasonHash);
+        // A worker completing a graded tier job is an active resolution → credit the requester.
+        _settle(c.marketId, jobId, job.provider, c.participantAgentId, c.requesterAgentId, c.tier, c.tierAmount, reasonHash, true);
     }
 
     /// @notice Settle a Mode A reveal synchronously (spec §2.1) — no ERC-8183 job. The reveal is
@@ -285,38 +293,46 @@ contract EchoHook is Initializable, OwnableUpgradeable, UUPSUpgradeable, IACPHoo
         uint256 requesterAgentId,
         uint256 gross
     ) external onlyRegistry {
-        _settle(marketId, 0, worker, participantAgentId, requesterAgentId, Tier.Substantive, gross, bytes32(0));
+        // A reveal is requester-initiated (they paid R to look), so the requester is credited.
+        _settle(marketId, 0, worker, participantAgentId, requesterAgentId, Tier.Substantive, gross, bytes32(0), true);
     }
 
     /// @notice Settle a Mode B milestone (spec §2.2) — accept or auto-release. Same synchronous
     ///         settlement leg as a reveal (fee skim + AR overlay + reputation), no ERC-8183 job.
+    ///         `autoReleased` marks a silence-driven default-resolve: the worker is still credited,
+    ///         but the requester earns NO "responded" R-Rep (spec §8 — reputation reflects HOW it
+    ///         resolved, not just that it paid).
     function settleMilestone(
         uint256 marketId,
         address worker,
         uint256 workerAgentId,
         uint256 requesterAgentId,
-        uint256 amount
+        uint256 amount,
+        bool autoReleased
     ) external onlyRegistry {
-        _settle(marketId, 0, worker, workerAgentId, requesterAgentId, Tier.Milestone, amount, bytes32(0));
+        _settle(marketId, 0, worker, workerAgentId, requesterAgentId, Tier.Milestone, amount, bytes32(0), !autoReleased);
     }
 
     /// @notice Settle a Bounty accepted finding (spec §2.3) — pays one of many parallel winners
     ///         from the pool. Same synchronous settlement leg as reveal/milestone (fee skim + AR
-    ///         overlay + reputation), no ERC-8183 job.
+    ///         overlay + reputation), no ERC-8183 job. `autoEscalated` marks a silence-driven (or
+    ///         dispute-overruled) default-resolve: the submitter is credited, the requester is not.
     function settleFinding(
         uint256 marketId,
         address submitter,
         uint256 submitterAgentId,
         uint256 requesterAgentId,
-        uint256 amount
+        uint256 amount,
+        bool autoEscalated
     ) external onlyRegistry {
-        _settle(marketId, 0, submitter, submitterAgentId, requesterAgentId, Tier.Finding, amount, bytes32(0));
+        _settle(marketId, 0, submitter, submitterAgentId, requesterAgentId, Tier.Finding, amount, bytes32(0), !autoEscalated);
     }
 
     /// @dev Shared settlement leg for both the job-completion path and the reveal path. jobId == 0
     ///      marks a reveal (no underlying Arc job). Pays the worker net of Echo's fee, skims the
     ///      fee (attribution slice + treasury margin), pays the requester pool reward, and writes
-    ///      reputation.
+    ///      reputation. `creditRequester` is false for silence-driven default-resolves so the
+    ///      requester is not vouched for an outcome they didn't actively reach (spec §8).
     function _settle(
         uint256 marketId,
         uint256 jobId,
@@ -325,7 +341,8 @@ contract EchoHook is Initializable, OwnableUpgradeable, UUPSUpgradeable, IACPHoo
         uint256 requesterAgentId,
         Tier tier,
         uint256 gross,
-        bytes32 reasonHash
+        bytes32 reasonHash,
+        bool creditRequester
     ) internal {
         if (distributed[marketId] + gross > escrowed[marketId]) revert InsufficientEscrow();
         distributed[marketId] += gross;
@@ -348,7 +365,7 @@ contract EchoHook is Initializable, OwnableUpgradeable, UUPSUpgradeable, IACPHoo
         // Requester-funded pool rewards the worker's introducer, bounded by the pool balance.
         _payPoolReward(marketId, participantAgentId, gross);
 
-        _writeSettlementReputation(participantAgentId, requesterAgentId, tier, reasonHash);
+        _writeSettlementReputation(participantAgentId, requesterAgentId, tier, reasonHash, creditRequester);
 
         emit TierPayout(marketId, jobId, provider, tier, net);
     }
@@ -404,7 +421,8 @@ contract EchoHook is Initializable, OwnableUpgradeable, UUPSUpgradeable, IACPHoo
         uint256 participantAgentId,
         uint256 requesterAgentId,
         Tier tier,
-        bytes32 reasonHash
+        bytes32 reasonHash,
+        bool creditRequester
     ) internal {
         string memory tag;
         if (tier == Tier.Substantive) tag = "tier_substantive";
@@ -414,9 +432,13 @@ contract EchoHook is Initializable, OwnableUpgradeable, UUPSUpgradeable, IACPHoo
         else if (tier == Tier.Finding) tag = "bounty_finding";
         else tag = "tier_unknown";
 
-        // Echo vouches (as its own client identity) for both sides of a settled tier / reveal.
+        // The worker is always vouched for the delivered work. The requester is only vouched when
+        // they actively reached this outcome — a silence-driven or dispute-overruled default-resolve
+        // pays the worker but earns the requester no "responded" R-Rep (spec §8 neutral-on-silence).
         _feedback(participantAgentId, int128(1), tag, reasonHash);
-        _feedback(requesterAgentId, int128(1), "responded", reasonHash);
+        if (creditRequester) {
+            _feedback(requesterAgentId, int128(1), "responded", reasonHash);
+        }
     }
 
     /// @dev Write a single feedback to Arc's ReputationRegistry as EchoHook (the "client").

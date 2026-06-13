@@ -11,8 +11,9 @@ pragma solidity ^0.8.20;
  *         The resolver is the only authorized caller (the market gates each function to its wired
  *         `disputeResolver`). De-risking property (spec §5): a verdict never claws back an
  *         already-paid reveal/finding — it only resolves the disputed item (pay the floor or
- *         confirm the rejection) and, for Mode A, slashes the bond. Bounded damage from a wrong
- *         verdict is what lets the minimal jury be lighter than a money-oracle would require.
+ *         confirm the rejection) and, for Mode A, slashes or refunds the returnable bond. Bounded
+ *         damage from a wrong verdict is what lets the minimal jury be lighter than a money-oracle
+ *         would require.
  */
 interface IDisputeAdjudicable {
     /// @notice Move a previously-Rejected bounty finding into the Disputed state (re-counts it as
@@ -25,9 +26,17 @@ interface IDisputeAdjudicable {
     ///         Accepted; `false` returns it to Rejected. Clears the pending re-count either way.
     function resolveDisputedFinding(uint256 marketId, uint256 index, bool findingValid) external;
 
-    /// @notice Forfeit a Mode-A applicant's returnable stake to the requester (the harmed party)
-    ///         after a sustained bait-and-switch verdict. Routes through EchoHook.slashStake. (The
-    ///         Mode-A flag-window reveal rework that makes a live stake available is parked to P6;
-    ///         this entrypoint is ready for it.)
-    function slashStakeAdjudicated(uint256 marketId, address participant) external;
+    /// @notice Flag a Mode-A reveal hold as contested (P6). Called when the requester opens a bonded
+    ///         ModeAStake dispute against a revealed applicant — mirrors `markFindingDisputed` for
+    ///         bounties. Moves the held stake into Flagged so it cannot be auto-returned while the
+    ///         dispute is live. Reverts (unwinding the opener's bond) if the reveal isn't Held or the
+    ///         flag window has elapsed.
+    function markRevealFlagged(uint256 marketId, address participant) external;
+
+    /// @notice Settle a flagged Mode-A reveal stake per the jury verdict (P6). `slash == true` is a
+    ///         sustained bait-and-switch — forfeits the returnable stake to the requester (the harmed
+    ///         party) via EchoHook.slashStake; `false` clears the applicant and refunds the stake.
+    ///         Replaces the slash-only `slashStakeAdjudicated`: both verdict outcomes resolve the
+    ///         hold so the stake is never stranded.
+    function resolveStakeDispute(uint256 marketId, address participant, bool slash) external;
 }

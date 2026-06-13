@@ -14,6 +14,7 @@ import {ParticipationReceipt} from "./ParticipationReceipt.sol";
 import {AttributionRegistry} from "./AttributionRegistry.sol";
 import {EchoBounty} from "./EchoBounty.sol";
 import {EchoDirectJob} from "./EchoDirectJob.sol";
+import {EchoReveal} from "./EchoReveal.sol";
 import {IDisputeAdjudicable} from "../interfaces/IDisputeAdjudicable.sol";
 
 /**
@@ -31,6 +32,16 @@ contract MarketRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable, I
         OpenMarket, // A — multi-stage funnel (the existing tiered flow)
         DirectJob,  // B — two known parties + milestones (P3)
         Bounty      // open submissions, parallel winners (P4)
+    }
+
+    /// @notice Mode + entry configuration for createMarketWithMode (P1 mode/entry params + the P6
+    ///         reveal flag window), bundled into one calldata struct so the external selector stays
+    ///         under the non-IR ABI-decoder stack limit (via_ir stays OFF — spec §8 size relief).
+    struct ModeConfig {
+        Mode mode;
+        uint256 requiredProofs;  // requester's accepted-proof bitmask (OR-ed with PROOF_IDENTITY)
+        uint256 stakeRequired;   // per-applicant returnable stake S (anti-bait bond; 0 = none)
+        uint256 flagWindow;      // reveal flag-window seconds (must be > 0 when stakeRequired > 0)
     }
 
     /// @notice The genesis proof every applicant must hold (control of the ERC-8004 NFT). Mirrors
@@ -84,6 +95,11 @@ contract MarketRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable, I
         uint256 agentId;
     }
 
+    /// @notice Mode-A reveal stake lifecycle types (RevealStatus / RevealHold) live in the EchoReveal
+    ///         delegatecall library (P6 size relief, spec §8). Referenced here and in tests as
+    ///         EchoReveal.*. The `revealHolds` STORAGE mapping still lives in this contract (slot 24,
+    ///         below) — only the type defs + lifecycle code relocated; layout is unchanged.
+
     IERC20 public usdc;
     IAgenticCommerce public agenticCommerce;
     IIdentityRegistry public identityRegistry;
@@ -123,6 +139,12 @@ contract MarketRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable, I
     // --- Adjudication ladder (P5), appended storage (UUPS-safe). Slot 22. ---
     // The staked-jury rung (spec §5). Set once; drives the adjudicated finding/stake callbacks.
     address public disputeResolver;
+
+    // --- Mode-A reveal stake-hold (P6, spec §4/§8), appended storage (UUPS-safe). Slots 23/24. ---
+    mapping(uint256 => uint256) public revealFlagWindow;                         // market => flag window seconds
+    // Internal (not public): the hold lifecycle is fully observable via the Reveal* events, and the
+    // struct-returning auto getter is bytecode the registry can't spare under EIP-170.
+    mapping(uint256 => mapping(address => EchoReveal.RevealHold)) internal revealHolds; // market => participant => hold
 
     event MarketCreated(
         uint256 indexed marketId,
@@ -197,6 +219,12 @@ contract MarketRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable, I
     error FindingNotRejected();
     error FindingNotDisputed();
     error NotDisputeResolver();
+    error FlagWindowRequired();
+    error RevealNotHeld();
+    error FlagWindowNotElapsed();
+    error FlagWindowElapsed();
+    error RevealNotFlagged();
+    error RevealStillFlagged();
 
     function initialize(
         address _usdc,
@@ -282,12 +310,12 @@ contract MarketRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable, I
         );
     }
 
-    /// @notice Create a market with an explicit mode + genesis filter (spec §2/§3/§4).
-    /// @param mode Market shape. P1 supports Open Market only; Direct Job / Bounty revert
-    ///        UnsupportedMode until their lifecycles land (P3 / P4) — no escrow into a mode with
-    ///        no exit path.
-    /// @param requiredProofs Requester's accepted-proof bitmask (must include PROOF_IDENTITY).
-    /// @param stakeRequired Per-applicant returnable stake S (anti-bait bond; 0 = none).
+    /// @notice Create a market with an explicit mode + genesis filter (spec §2/§3/§4). Mode/entry
+    ///         params are bundled in `cfg` (ModeConfig) for non-IR ABI-decoder stack relief.
+    /// @param cfg Mode shape, accepted-proof bitmask, returnable stake S, and reveal flag window.
+    ///        P1 supports Open Market only; Direct Job / Bounty revert UnsupportedMode until their
+    ///        lifecycles land (P3 / P4) — no escrow into a mode with no exit path. `cfg.flagWindow`
+    ///        must be > 0 when `cfg.stakeRequired > 0` (the held reveal stake needs a flag window).
     function createMarketWithMode(
         string calldata metadataURI,
         bytes32 scopeHash,
@@ -297,24 +325,33 @@ contract MarketRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable, I
         uint256 ghostDeadline,
         uint256 escrowTotal,
         uint256 requesterAgentId,
-        Mode mode,
-        uint256 requiredProofs,
-        uint256 stakeRequired
+        ModeConfig calldata cfg
     ) external returns (uint256 marketId) {
-        if (mode != Mode.OpenMarket) revert UnsupportedMode();
+        if (cfg.mode != Mode.OpenMarket) revert UnsupportedMode();
 
-        // Mode A is a reveal market: the first tier is the reveal, fee R = tierAmounts[0].
-        uint256 fee = tierAmounts[0];
+        // Mode A reveal-market bindings (spec §4/§6). Validated in a helper to keep this frame
+        // shallow — the external selector + the _create call sit at the non-IR stack limit.
+        _validateRevealParams(tierAmounts[0], escrowTotal, cfg.stakeRequired, cfg.flagWindow);
+
+        marketId = _create(
+            metadataURI, scopeHash, tierAmounts, minPRep, maxApplicants, ghostDeadline,
+            escrowTotal, requesterAgentId, cfg.mode, cfg.requiredProofs | PROOF_IDENTITY, cfg.stakeRequired
+        );
+        revealFee[marketId] = tierAmounts[0];
+        revealFlagWindow[marketId] = cfg.flagWindow;
+    }
+
+    /// @dev Reveal-market create-time bindings. `fee` is the reveal fee R = tierAmounts[0].
+    function _validateRevealParams(uint256 fee, uint256 escrowTotal, uint256 stakeRequired, uint256 flagWindow)
+        internal
+        pure
+    {
         // Min-reveal escrow binding (spec §6): fund at least MIN_REVEALS reveals.
         if (escrowTotal < fee * MIN_REVEALS) revert InsufficientEscrow(escrowTotal, fee * MIN_REVEALS);
         // Stake sizing S >= R (spec §4): a bad reveal at least refunds what the requester paid to look.
         if (stakeRequired > 0 && stakeRequired < fee) revert StakeTooSmall();
-
-        marketId = _create(
-            metadataURI, scopeHash, tierAmounts, minPRep, maxApplicants, ghostDeadline,
-            escrowTotal, requesterAgentId, mode, requiredProofs | PROOF_IDENTITY, stakeRequired
-        );
-        revealFee[marketId] = fee;
+        // A held stake needs a window the requester can flag within (P6, spec §4).
+        if (stakeRequired > 0 && flagWindow == 0) revert FlagWindowRequired();
     }
 
     function _create(
@@ -414,11 +451,13 @@ contract MarketRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable, I
 
     /// @notice Mode A entry payment (spec §2.1). Reframes the first tier as a REVEAL: the requester
     ///         pays the reveal fee R to unlock one applicant's full application, and in the SAME tx
-    ///         the applicant's stake is refunded and R is paid out — atomic exchange, so looking IS
-    ///         the payment trigger and harvest-before-pay is structurally impossible. Content
-    ///         delivery is app-mediated off-chain (to this requester only); the money is on-chain
-    ///         and trustless. Advances the applicant to tier 1, sitting below the existing
-    ///         shortlist/final tiers.
+    ///         R is paid out — atomic exchange, so looking IS the payment trigger and
+    ///         harvest-before-pay is structurally impossible. The applicant's anti-bait stake is now
+    ///         HELD (P6) behind a flag window instead of refunded here: if the requester finds the
+    ///         revealed work was a bait-and-switch they flag it (open a bonded dispute) within the
+    ///         window; otherwise the stake auto-returns via settleRevealStake. Content delivery is
+    ///         app-mediated off-chain (to this requester only); the money is on-chain and trustless.
+    ///         Advances the applicant to tier 1, sitting below the existing shortlist/final tiers.
     function reveal(uint256 marketId, address participant) external {
         Market storage m = markets[marketId];
         if (msg.sender != m.requester) revert NotRequester();
@@ -430,10 +469,17 @@ contract MarketRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable, I
 
         uint256 fee = revealFee[marketId];
 
-        // Atomic exchange: refund the stake and pay the reveal fee (net of protocol fee, with the
-        // AR overlay earning on the reveal) in one transaction.
-        echoHook.refundStake(marketId, participant);
+        // Pay the reveal fee (net of protocol fee, with the AR overlay earning on the reveal). The
+        // stake is NOT refunded here anymore — it is held behind the flag window (P6).
         echoHook.settleReveal(marketId, participant, app.agentId, m.requesterAgentId, fee);
+
+        // Open the flag window only when there is a stake to hold; stake-free reveal markets keep the
+        // legacy behavior (nothing held, nothing to settle later). The hold lifecycle then runs
+        // through the EchoReveal library (settleRevealStake / markRevealFlagged / resolveStakeDispute).
+        if (marketStakeRequired[marketId] > 0) {
+            revealHolds[marketId][participant] =
+                EchoReveal.RevealHold({revealedAt: uint64(block.timestamp), status: EchoReveal.RevealStatus.Held});
+        }
 
         app.tierReached = 1;
         revealCount[marketId] += 1;
@@ -445,6 +491,14 @@ contract MarketRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable, I
 
         emit Revealed(marketId, participant, fee);
         emit TierAdvanced(marketId, participant, 0, 1, 0);
+    }
+
+    /// @notice Default-resolve a held reveal stake (P6, spec §8). Permissionless: once the flag
+    ///         window elapses with no flag, anyone may return the applicant's stake — silence favors
+    ///         the applicant, mirroring the auto-release / auto-escalate timeouts of the other modes.
+    ///         Thin forwarder over the EchoReveal delegatecall library.
+    function settleRevealStake(uint256 marketId, address participant) external {
+        EchoReveal.settleRevealStake(revealHolds, revealFlagWindow, echoHook, marketId, participant);
     }
 
     function gradeSubstantive(uint256 marketId, address participant) external {
@@ -521,19 +575,23 @@ contract MarketRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable, I
         echoHook.releasePoolRemainder(marketId, m.requester);
 
         // Good-faith stake resolution (spec §4): a market that closes returns every outstanding
-        // applicant stake — "expired/closed unrevealed → returned". Bounded by maxApplicants.
+        // applicant stake — "expired/closed unrevealed → returned". A reveal hold that is still
+        // Flagged (a live bait dispute) blocks close, mirroring Bounty's no-close-while-pending; a
+        // Settled hold is already resolved (refundStake is a no-op). Bounded by maxApplicants.
         Application[] storage apps = marketApplications[marketId];
         for (uint256 i; i < apps.length; ++i) {
+            if (revealHolds[marketId][apps[i].participant].status == EchoReveal.RevealStatus.Flagged) revert RevealStillFlagged();
             echoHook.refundStake(marketId, apps[i].participant);
         }
 
         emit MarketClosed(marketId, remaining);
     }
 
-    // The P1 `adminSlashStake` owner-only placeholder was replaced in P5 by `slashStakeAdjudicated`
-    // (gated to the DisputeResolver, in the adjudication-ladder section below) — a stake slash now
-    // requires a real verdict, never a bare owner call. The EchoHook.slashStake settlement leg both
-    // used is unchanged.
+    // The P1 `adminSlashStake` owner-only placeholder became the P5 `slashStakeAdjudicated` and is
+    // now (P6) `resolveStakeDispute` (gated to the DisputeResolver, in the adjudication-ladder
+    // section below) — a stake slash now requires a real verdict against a FLAGGED reveal hold,
+    // never a bare owner call. The EchoHook.slashStake settlement leg it routes through is unchanged
+    // (it now also writes the applicant's -1 P-Rep).
 
     // ──────────────────── Mode B — Direct Job + milestones (spec §2.2) ────────────────────
     //
@@ -750,15 +808,26 @@ contract MarketRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable, I
         );
     }
 
-    /// @notice Adjudicated stake slash — the P5 replacement for the P1 `adminSlashStake`
-    ///         placeholder. Forfeits a Mode-A applicant's stake to the requester (the harmed
-    ///         party) ONLY when the DisputeResolver has ruled a sustained bait-and-switch flag.
-    ///         Routes through the already-live EchoHook.slashStake settlement leg. (Mode-A's
-    ///         flag-window reveal rework is parked to P6; this entrypoint is ready for it.)
-    function slashStakeAdjudicated(uint256 marketId, address participant) external onlyDisputeResolver {
-        address to = markets[marketId].requester;
-        echoHook.slashStake(marketId, participant, to);
-        emit StakeSlashed(marketId, participant, to);
+    /// @notice Flag a held Mode-A reveal as contested (P6). Driven by the DisputeResolver when the
+    ///         requester opens a bonded ModeAStake dispute — mirrors markFindingDisputed. Reverting
+    ///         in the library (RevealNotHeld / FlagWindowElapsed) unwinds the opener's bond. Freezing
+    ///         as Flagged blocks both the auto-return (settleRevealStake) and closeMarket until the
+    ///         jury rules. Thin forwarder over the EchoReveal library.
+    function markRevealFlagged(uint256 marketId, address participant) external onlyDisputeResolver {
+        EchoReveal.markRevealFlagged(revealHolds, revealFlagWindow, marketId, participant);
+    }
+
+    /// @notice Settle a flagged reveal stake per the jury verdict (P6) — the adjudicated replacement
+    ///         for the P1 adminSlashStake placeholder. `slash == true` is a sustained bait-and-switch:
+    ///         forfeit the stake to the requester (the harmed party); `false` clears the applicant and
+    ///         refunds the stake. Both outcomes resolve the hold so the stake is never stranded. The
+    ///         registry supplies the requester + applicant agentId (its own state); EchoHook.slashStake
+    ///         writes the -1 P-Rep. The reveal/accept money path is never clawed back.
+    function resolveStakeDispute(uint256 marketId, address participant, bool slash) external onlyDisputeResolver {
+        EchoReveal.resolveStakeDispute(
+            revealHolds, echoHook, marketId, participant,
+            markets[marketId].requester, _getApplication(marketId, participant).agentId, slash
+        );
     }
 
     function _calculateMinEscrow(

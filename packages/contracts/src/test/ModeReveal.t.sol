@@ -48,6 +48,7 @@ contract ModeRevealTest is Test {
     uint256 constant ESCROW = 2000e6;
     uint256 constant STAKE = 10e6;
     uint256 constant REVEAL = 5e6;
+    uint256 constant FLAG_WINDOW = 2 days;
 
     function setUp() public {
         usdc = new MockUSDC();
@@ -94,9 +95,17 @@ contract ModeRevealTest is Test {
         usdc.approve(address(registry), type(uint256).max);
         marketId = registry.createMarketWithMode(
             "ipfs://m", keccak256("scope"), tierAmounts, 0, MAX_APPLICANTS, GHOST_DEADLINE,
-            ESCROW, agentId, MarketRegistry.Mode.OpenMarket, 0, stake
+            ESCROW, agentId,
+            MarketRegistry.ModeConfig({mode: MarketRegistry.Mode.OpenMarket, requiredProofs: 0, stakeRequired: stake, flagWindow: stake > 0 ? FLAG_WINDOW : 0})
         );
         vm.stopPrank();
+    }
+
+    /// @dev After a reveal the stake is held behind the flag window; warp past it and settle to get
+    ///      the applicant's stake back (the P6 default-resolve). No-op for stake-free markets.
+    function _settleStake(uint256 marketId, address who) internal {
+        vm.warp(block.timestamp + FLAG_WINDOW);
+        registry.settleRevealStake(marketId, who);
     }
 
     function _apply(uint256 marketId, address who, uint256 agentId) internal {
@@ -115,7 +124,7 @@ contract ModeRevealTest is Test {
 
     // ---- reveal: atomic pay + stake refund ----
 
-    function test_Reveal_PaysNetFee_RefundsStake_ReducesEscrow() public {
+    function test_Reveal_PaysNetFee_HoldsStake_ReducesEscrow() public {
         uint256 marketId = _create(requester, REQ_AGENT, STAKE);
         _apply(marketId, participant, PART_AGENT);
 
@@ -123,15 +132,20 @@ contract ModeRevealTest is Test {
         vm.prank(requester);
         registry.reveal(marketId, participant);
 
-        // R = 5e6, fee 5% = 0.25e6, net 4.75e6; stake 10e6 returned. No confirmed AR ⇒ full fee margin.
-        assertEq(usdc.balanceOf(participant) - partBefore, 4.75e6 + STAKE, "net reveal fee + stake");
+        // R = 5e6, fee 5% = 0.25e6, net 4.75e6. The 10e6 stake is now HELD (P6), not refunded here.
+        assertEq(usdc.balanceOf(participant) - partBefore, 4.75e6, "net reveal fee only (stake held)");
         assertEq(usdc.balanceOf(treasury), 0.25e6, "fee margin to treasury (settle path runs on reveal)");
-        assertEq(echoHook.stakeBalance(marketId, participant), 0, "stake cleared");
+        assertEq(echoHook.stakeBalance(marketId, participant), STAKE, "stake held behind flag window");
         assertEq(echoHook.remainingEscrow(marketId), ESCROW - REVEAL, "escrow reduced by gross R");
         assertEq(registry.revealCount(marketId), 1, "reveal counted");
 
         MarketRegistry.Application memory app = registry.getApplication(marketId, participant);
         assertEq(app.tierReached, 1, "advanced to reveal tier");
+
+        // After the flag window elapses unflagged, the stake auto-returns to the applicant.
+        _settleStake(marketId, participant);
+        assertEq(usdc.balanceOf(participant) - partBefore, 4.75e6 + STAKE, "stake returned after window");
+        assertEq(echoHook.stakeBalance(marketId, participant), 0, "stake cleared");
     }
 
     function test_Reveal_ThenShortlistTierOnTop() public {
@@ -150,8 +164,9 @@ contract ModeRevealTest is Test {
 
         MarketRegistry.Application memory app = registry.getApplication(marketId, participant);
         assertEq(app.tierReached, 2, "reached shortlist on top of reveal");
-        // Net of fee: reveal 4.75 + shortlist 47.5; the 10e6 stake is deducted at apply and
-        // refunded at reveal, so it nets to zero across the delta.
+        // The 10e6 stake is deducted at apply and HELD through reveal (P6) — return it via the
+        // post-window default-resolve so the delta nets to reveal 4.75 + shortlist 47.5.
+        _settleStake(marketId, participant);
         assertEq(usdc.balanceOf(participant) - startBal, 4.75e6 + 47.5e6, "cumulative net payouts");
     }
 
@@ -200,7 +215,8 @@ contract ModeRevealTest is Test {
         vm.expectRevert(abi.encodeWithSelector(MarketRegistry.InsufficientEscrow.selector, 24e6, 25e6));
         registry.createMarketWithMode(
             "ipfs://m", keccak256("scope"), tierAmounts, 0, MAX_APPLICANTS, GHOST_DEADLINE,
-            24e6, REQ_AGENT, MarketRegistry.Mode.OpenMarket, 0, STAKE
+            24e6, REQ_AGENT,
+            MarketRegistry.ModeConfig({mode: MarketRegistry.Mode.OpenMarket, requiredProofs: 0, stakeRequired: STAKE, flagWindow: FLAG_WINDOW})
         );
         vm.stopPrank();
     }
@@ -212,7 +228,21 @@ contract ModeRevealTest is Test {
         vm.expectRevert(MarketRegistry.StakeTooSmall.selector);
         registry.createMarketWithMode(
             "ipfs://m", keccak256("scope"), tierAmounts, 0, MAX_APPLICANTS, GHOST_DEADLINE,
-            ESCROW, REQ_AGENT, MarketRegistry.Mode.OpenMarket, 0, 4e6
+            ESCROW, REQ_AGENT,
+            MarketRegistry.ModeConfig({mode: MarketRegistry.Mode.OpenMarket, requiredProofs: 0, stakeRequired: 4e6, flagWindow: FLAG_WINDOW})
+        );
+        vm.stopPrank();
+    }
+
+    function test_RevertWhen_StakeWithoutFlagWindow() public {
+        // A held stake needs a flag window the requester can flag within (P6, spec §4).
+        vm.startPrank(requester);
+        usdc.approve(address(registry), type(uint256).max);
+        vm.expectRevert(MarketRegistry.FlagWindowRequired.selector);
+        registry.createMarketWithMode(
+            "ipfs://m", keccak256("scope"), tierAmounts, 0, MAX_APPLICANTS, GHOST_DEADLINE,
+            ESCROW, REQ_AGENT,
+            MarketRegistry.ModeConfig({mode: MarketRegistry.Mode.OpenMarket, requiredProofs: 0, stakeRequired: STAKE, flagWindow: 0})
         );
         vm.stopPrank();
     }
@@ -248,8 +278,9 @@ contract ModeRevealTest is Test {
         // The unrevealed 6th worker gets their stake back on close (good-faith, spec §4).
         assertEq(usdc.balanceOf(ws[5]) - leftoverBefore, STAKE, "unrevealed stake refunded on close");
         assertEq(echoHook.stakeBalance(marketId, ws[5]), 0, "stake cleared");
-        // Revealed workers already had their stake refunded at reveal time.
-        assertEq(echoHook.stakeBalance(marketId, ws[0]), 0, "revealed stake already cleared");
+        // Revealed workers' stakes were HELD through reveal (P6) and returned by the same close loop
+        // (unflagged holds resolve good-faith on close).
+        assertEq(echoHook.stakeBalance(marketId, ws[0]), 0, "revealed held stake returned on close");
     }
 
     // ---- AR overlay earns on reveal (cross-cutting §8) ----

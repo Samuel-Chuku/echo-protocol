@@ -230,6 +230,45 @@ contract ModeBountyTest is Test {
         assertEq(registry.bountyPendingCount(marketId), 0);
     }
 
+    // ---- reputation: neutral-on-silence (P6, spec §8) ----
+
+    function _countFeedback(Vm.Log[] memory logs, uint256 agentId) internal pure returns (uint256 n) {
+        bytes32 sig = keccak256("Feedback(uint256,int128,string,string,bytes32)");
+        for (uint256 i; i < logs.length; ++i) {
+            if (logs[i].topics.length >= 2 && logs[i].topics[0] == sig && uint256(logs[i].topics[1]) == agentId) n++;
+        }
+    }
+
+    function test_Reputation_AutoEscalate_DoesNotCreditRequester() public {
+        uint256 marketId = _create();
+        (address s, uint256 id) = _submitter(1);
+        _submit(marketId, s, id);
+        vm.warp(block.timestamp + REVIEW_WINDOW + 1);
+
+        vm.recordLogs();
+        registry.autoEscalateFinding(marketId, 0);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+
+        // The submitter is still vouched for the finding, but the silent requester earns nothing.
+        assertGe(_countFeedback(logs, id), 1, "submitter still credited on auto-escalate");
+        assertEq(_countFeedback(logs, REQ_AGENT), 0, "silent requester NOT credited on auto-escalate");
+    }
+
+    function test_Reputation_Accept_CreditsRequester() public {
+        uint256 marketId = _create();
+        (address s, uint256 id) = _submitter(1);
+        _submit(marketId, s, id);
+
+        vm.recordLogs();
+        vm.prank(requester);
+        registry.acceptFinding(marketId, 0, DEFAULT_AWARD);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+
+        // An active acceptance vouches for both sides (the requester "responded").
+        assertGe(_countFeedback(logs, id), 1, "submitter credited on active accept");
+        assertGe(_countFeedback(logs, REQ_AGENT), 1, "active requester credited (responded)");
+    }
+
     function test_RevertWhen_AutoEscalateBeforeWindow() public {
         uint256 marketId = _create();
         (address s, uint256 id) = _submitter(1);
@@ -310,7 +349,7 @@ contract ModeBountyTest is Test {
         usdc.approve(address(registry), type(uint256).max);
         uint256[4] memory tiers = [uint256(5e6), 50e6, 250e6, 1000e6];
         vm.expectRevert(MarketRegistry.UnsupportedMode.selector);
-        registry.createMarketWithMode("u", keccak256("s"), tiers, 0, 50, 7 days, 2000e6, REQ_AGENT, MarketRegistry.Mode.Bounty, 0, 0);
+        registry.createMarketWithMode("u", keccak256("s"), tiers, 0, 50, 7 days, 2000e6, REQ_AGENT, MarketRegistry.ModeConfig({mode: MarketRegistry.Mode.Bounty, requiredProofs: 0, stakeRequired: 0, flagWindow: 0}));
         vm.stopPrank();
     }
 }

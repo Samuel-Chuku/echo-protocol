@@ -328,7 +328,9 @@ library EchoBounty {
         f.award = award;
         bountyPendingCount[marketId] -= 1;
 
-        d.echoHook.settleFinding(marketId, f.submitter, f.submitterAgentId, b.requesterAgentId, award);
+        // autoEscalated == true is a silence-driven (or dispute-overruled) default-resolve → EchoHook
+        // credits the submitter but not the requester who ignored / lost on it (spec §8).
+        d.echoHook.settleFinding(marketId, f.submitter, f.submitterAgentId, b.requesterAgentId, award, autoEscalated);
 
         // An accepted finding is an independent grade of the submitter (confirms ARs, like Mode A/B).
         if (address(d.attributionRegistry) != address(0)) {
