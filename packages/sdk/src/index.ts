@@ -16,16 +16,18 @@ import {
   ParticipationReceiptABI,
   AttributionRegistryABI,
   AttributionPayoutABI,
+  DisputeResolverABI,
 } from './abis';
 
 export { arcTestnet, publicClient } from './chain';
-export { CONTRACTS, IMPLEMENTATIONS, API, DEFAULT_TIERS } from './constants';
+export { CONTRACTS, IMPLEMENTATIONS, LIBRARIES, API, DEFAULT_TIERS } from './constants';
 export {
   MarketRegistryABI,
   EchoHookABI,
   ParticipationReceiptABI,
   AttributionRegistryABI,
   AttributionPayoutABI,
+  DisputeResolverABI,
 } from './abis';
 export * from '@echo/types';
 
@@ -52,6 +54,23 @@ export enum CurveType {
 
 /** Max attribution slice an AR may claim, in basis points (5000 = 50%). */
 export const MAX_SLICE_BPS = 5000;
+
+/** Market shape (mirrors MarketRegistry.Mode on-chain order). P1 supports OpenMarket via
+ *  createMarketWithMode; DirectJob/Bounty have their own create* entrypoints. */
+export enum EchoMode {
+  OpenMarket = 0,
+  DirectJob = 1,
+  Bounty = 2,
+}
+
+/** Mode + entry config for createMarketWithMode (mirrors MarketRegistry.ModeConfig). `flagWindow`
+ *  must be > 0 when `stakeRequired` > 0 (the held reveal stake needs a flag window). */
+export interface ModeConfig {
+  mode: EchoMode;
+  requiredProofs: bigint;
+  stakeRequired: bigint;
+  flagWindow: bigint;
+}
 
 /** Minimal ERC-20 ABI — just what the SDK needs to approve/read USDC. */
 const ERC20_ABI = [
@@ -672,5 +691,367 @@ export class EchoSdk {
       account,
     });
     return this.send(request);
+  }
+
+  // ── Mode + entry reads (P1/P6) ──────────────────────────
+
+  /** Selected market shape (see {@link EchoMode}). */
+  async marketMode(marketId: bigint) {
+    return this.publicClient.readContract({
+      address: this.contracts.marketRegistry, abi: MarketRegistryABI,
+      functionName: 'marketMode', args: [marketId],
+    }) as Promise<number>;
+  }
+
+  /** Per-applicant returnable stake S (base units; 0 = none). */
+  async marketStakeRequired(marketId: bigint) {
+    return this.publicClient.readContract({
+      address: this.contracts.marketRegistry, abi: MarketRegistryABI,
+      functionName: 'marketStakeRequired', args: [marketId],
+    }) as Promise<bigint>;
+  }
+
+  /** Requester's accepted-proof bitmask for entry. */
+  async marketRequiredProofs(marketId: bigint) {
+    return this.publicClient.readContract({
+      address: this.contracts.marketRegistry, abi: MarketRegistryABI,
+      functionName: 'marketRequiredProofs', args: [marketId],
+    }) as Promise<bigint>;
+  }
+
+  /** Reveal fee R for a reveal market (0 = not a reveal market). */
+  async revealFee(marketId: bigint) {
+    return this.publicClient.readContract({
+      address: this.contracts.marketRegistry, abi: MarketRegistryABI,
+      functionName: 'revealFee', args: [marketId],
+    }) as Promise<bigint>;
+  }
+
+  /** Seconds the requester has to flag a reveal as bait-and-switch (P6). */
+  async revealFlagWindow(marketId: bigint) {
+    return this.publicClient.readContract({
+      address: this.contracts.marketRegistry, abi: MarketRegistryABI,
+      functionName: 'revealFlagWindow', args: [marketId],
+    }) as Promise<bigint>;
+  }
+
+  // ── Requester: mode market create + Mode-A reveal (P1/P6) ─
+
+  /**
+   * Create a market with an explicit mode + genesis filter. P1 supports OpenMarket (a reveal market
+   * when `cfg.stakeRequired`/`flagWindow` are set); DirectJob/Bounty have their own create* methods.
+   * Escrow is pulled from `account` — approve MarketRegistry for `escrowTotal` first.
+   */
+  async createMarketWithMode(
+    args: {
+      metadataURI: string;
+      scopeHash: `0x${string}`;
+      tierAmounts: [bigint, bigint, bigint, bigint];
+      minPRep: bigint;
+      maxApplicants: bigint;
+      ghostDeadline: bigint;
+      escrowTotal: bigint;
+      requesterAgentId: bigint;
+      cfg: ModeConfig;
+    },
+    account: Address
+  ) {
+    if (!this.walletClient) throw new Error('Wallet not connected');
+    const { request } = await this.publicClient.simulateContract({
+      address: this.contracts.marketRegistry,
+      abi: MarketRegistryABI,
+      functionName: 'createMarketWithMode',
+      args: [
+        args.metadataURI, args.scopeHash, args.tierAmounts, args.minPRep, args.maxApplicants,
+        args.ghostDeadline, args.escrowTotal, args.requesterAgentId,
+        {
+          mode: args.cfg.mode,
+          requiredProofs: args.cfg.requiredProofs,
+          stakeRequired: args.cfg.stakeRequired,
+          flagWindow: args.cfg.flagWindow,
+        },
+      ],
+      account,
+    });
+    return this.send(request);
+  }
+
+  /** Pay the reveal fee R to unlock an applicant's submission (advances them to tier 1; the
+   *  applicant's stake is now HELD behind the flag window — P6). Requester only. */
+  async reveal(marketId: bigint, participant: Address, account: Address) {
+    if (!this.walletClient) throw new Error('Wallet not connected');
+    const { request } = await this.publicClient.simulateContract({
+      address: this.contracts.marketRegistry, abi: MarketRegistryABI,
+      functionName: 'reveal', args: [marketId, participant], account,
+    });
+    return this.send(request);
+  }
+
+  /** Permissionless: once the flag window elapses unflagged, return the held reveal stake to the
+   *  applicant (P6 default-resolve). */
+  async settleRevealStake(marketId: bigint, participant: Address, account: Address) {
+    if (!this.walletClient) throw new Error('Wallet not connected');
+    const { request } = await this.publicClient.simulateContract({
+      address: this.contracts.marketRegistry, abi: MarketRegistryABI,
+      functionName: 'settleRevealStake', args: [marketId, participant], account,
+    });
+    return this.send(request);
+  }
+
+  // ── Mode B: Direct Job + milestones (P3) ────────────────
+
+  async createDirectJob(
+    args: {
+      worker: Address;
+      workerAgentId: bigint;
+      requesterAgentId: bigint;
+      metadataURI: string;
+      scopeHash: `0x${string}`;
+      milestoneAmounts: bigint[];
+      reviewWindow: bigint;
+    },
+    account: Address
+  ) {
+    if (!this.walletClient) throw new Error('Wallet not connected');
+    const { request } = await this.publicClient.simulateContract({
+      address: this.contracts.marketRegistry, abi: MarketRegistryABI,
+      functionName: 'createDirectJob',
+      args: [
+        args.worker, args.workerAgentId, args.requesterAgentId, args.metadataURI,
+        args.scopeHash, args.milestoneAmounts, args.reviewWindow,
+      ],
+      account,
+    });
+    return this.send(request);
+  }
+
+  async submitMilestone(marketId: bigint, index: bigint, deliverableHash: `0x${string}`, account: Address) {
+    if (!this.walletClient) throw new Error('Wallet not connected');
+    const { request } = await this.publicClient.simulateContract({
+      address: this.contracts.marketRegistry, abi: MarketRegistryABI,
+      functionName: 'submitMilestone', args: [marketId, index, deliverableHash], account,
+    });
+    return this.send(request);
+  }
+
+  async acceptMilestone(marketId: bigint, index: bigint, account: Address) {
+    if (!this.walletClient) throw new Error('Wallet not connected');
+    const { request } = await this.publicClient.simulateContract({
+      address: this.contracts.marketRegistry, abi: MarketRegistryABI,
+      functionName: 'acceptMilestone', args: [marketId, index], account,
+    });
+    return this.send(request);
+  }
+
+  async autoReleaseMilestone(marketId: bigint, index: bigint, account: Address) {
+    if (!this.walletClient) throw new Error('Wallet not connected');
+    const { request } = await this.publicClient.simulateContract({
+      address: this.contracts.marketRegistry, abi: MarketRegistryABI,
+      functionName: 'autoReleaseMilestone', args: [marketId, index], account,
+    });
+    return this.send(request);
+  }
+
+  async cancelDirectJob(marketId: bigint, account: Address) {
+    if (!this.walletClient) throw new Error('Wallet not connected');
+    const { request } = await this.publicClient.simulateContract({
+      address: this.contracts.marketRegistry, abi: MarketRegistryABI,
+      functionName: 'cancelDirectJob', args: [marketId], account,
+    });
+    return this.send(request);
+  }
+
+  async getDirectJobMilestones(marketId: bigint) {
+    return this.publicClient.readContract({
+      address: this.contracts.marketRegistry, abi: MarketRegistryABI,
+      functionName: 'getDirectJobMilestones', args: [marketId],
+    });
+  }
+
+  // ── Mode Bounty: open submissions, parallel winners (P4) ─
+
+  async createBounty(
+    args: {
+      requesterAgentId: bigint;
+      metadataURI: string;
+      scopeHash: `0x${string}`;
+      requiredProofs: bigint;
+      defaultAward: bigint;
+      reviewWindow: bigint;
+      pool: bigint;
+    },
+    account: Address
+  ) {
+    if (!this.walletClient) throw new Error('Wallet not connected');
+    const { request } = await this.publicClient.simulateContract({
+      address: this.contracts.marketRegistry, abi: MarketRegistryABI,
+      functionName: 'createBounty',
+      args: [
+        args.requesterAgentId, args.metadataURI, args.scopeHash, args.requiredProofs,
+        args.defaultAward, args.reviewWindow, args.pool,
+      ],
+      account,
+    });
+    return this.send(request);
+  }
+
+  async submitFinding(marketId: bigint, submitterAgentId: bigint, findingHash: `0x${string}`, account: Address) {
+    if (!this.walletClient) throw new Error('Wallet not connected');
+    const { request } = await this.publicClient.simulateContract({
+      address: this.contracts.marketRegistry, abi: MarketRegistryABI,
+      functionName: 'submitFinding', args: [marketId, submitterAgentId, findingHash], account,
+    });
+    return this.send(request);
+  }
+
+  async acceptFinding(marketId: bigint, index: bigint, award: bigint, account: Address) {
+    if (!this.walletClient) throw new Error('Wallet not connected');
+    const { request } = await this.publicClient.simulateContract({
+      address: this.contracts.marketRegistry, abi: MarketRegistryABI,
+      functionName: 'acceptFinding', args: [marketId, index, award], account,
+    });
+    return this.send(request);
+  }
+
+  async rejectFinding(marketId: bigint, index: bigint, account: Address) {
+    if (!this.walletClient) throw new Error('Wallet not connected');
+    const { request } = await this.publicClient.simulateContract({
+      address: this.contracts.marketRegistry, abi: MarketRegistryABI,
+      functionName: 'rejectFinding', args: [marketId, index], account,
+    });
+    return this.send(request);
+  }
+
+  async autoEscalateFinding(marketId: bigint, index: bigint, account: Address) {
+    if (!this.walletClient) throw new Error('Wallet not connected');
+    const { request } = await this.publicClient.simulateContract({
+      address: this.contracts.marketRegistry, abi: MarketRegistryABI,
+      functionName: 'autoEscalateFinding', args: [marketId, index], account,
+    });
+    return this.send(request);
+  }
+
+  async closeBounty(marketId: bigint, account: Address) {
+    if (!this.walletClient) throw new Error('Wallet not connected');
+    const { request } = await this.publicClient.simulateContract({
+      address: this.contracts.marketRegistry, abi: MarketRegistryABI,
+      functionName: 'closeBounty', args: [marketId], account,
+    });
+    return this.send(request);
+  }
+
+  async getBountyFindings(marketId: bigint) {
+    return this.publicClient.readContract({
+      address: this.contracts.marketRegistry, abi: MarketRegistryABI,
+      functionName: 'getBountyFindings', args: [marketId],
+    });
+  }
+
+  // ── Adjudication ladder: DisputeResolver (P5/P6) ────────
+  // The staked-jury rung. Bonds are in the bond token (USDC) — approve the DisputeResolver for the
+  // bond before openFindingDispute / openStakeDispute / counter.
+
+  /** Submitter contests a REJECTED bounty finding. Flips it to Disputed; requester then counters. */
+  async openFindingDispute(marketId: bigint, findingIndex: bigint, bond: bigint, account: Address) {
+    if (!this.walletClient) throw new Error('Wallet not connected');
+    const { request } = await this.publicClient.simulateContract({
+      address: this.contracts.disputeResolver, abi: DisputeResolverABI,
+      functionName: 'openFindingDispute', args: [marketId, findingIndex, bond], account,
+    });
+    return this.send(request);
+  }
+
+  /** Requester flags a revealed applicant's HELD stake as bait-and-switch (opens + flags, P6).
+   *  Reverts if the subject is disabled or the flag window has elapsed. */
+  async openStakeDispute(marketId: bigint, participant: Address, bond: bigint, account: Address) {
+    if (!this.walletClient) throw new Error('Wallet not connected');
+    const { request } = await this.publicClient.simulateContract({
+      address: this.contracts.disputeResolver, abi: DisputeResolverABI,
+      functionName: 'openStakeDispute', args: [marketId, participant, bond], account,
+    });
+    return this.send(request);
+  }
+
+  /** The defending side posts the matching counter bond, opening the voting window. */
+  async counterDispute(disputeId: bigint, account: Address) {
+    if (!this.walletClient) throw new Error('Wallet not connected');
+    const { request } = await this.publicClient.simulateContract({
+      address: this.contracts.disputeResolver, abi: DisputeResolverABI,
+      functionName: 'counter', args: [disputeId], account,
+    });
+    return this.send(request);
+  }
+
+  /** Panel juror votes. `forOpener` sides with the opener (finding valid / slash sustained). */
+  async voteDispute(disputeId: bigint, forOpener: boolean, account: Address) {
+    if (!this.walletClient) throw new Error('Wallet not connected');
+    const { request } = await this.publicClient.simulateContract({
+      address: this.contracts.disputeResolver, abi: DisputeResolverABI,
+      functionName: 'vote', args: [disputeId, forOpener], account,
+    });
+    return this.send(request);
+  }
+
+  /** Tally + settle after the voting window. Callable by anyone. */
+  async resolveDispute(disputeId: bigint, account: Address) {
+    if (!this.walletClient) throw new Error('Wallet not connected');
+    const { request } = await this.publicClient.simulateContract({
+      address: this.contracts.disputeResolver, abi: DisputeResolverABI,
+      functionName: 'resolve', args: [disputeId], account,
+    });
+    return this.send(request);
+  }
+
+  /** A winning-side juror claims their flat share of the loser's bond (pull-based). */
+  async claimJurorReward(disputeId: bigint, account: Address) {
+    if (!this.walletClient) throw new Error('Wallet not connected');
+    const { request } = await this.publicClient.simulateContract({
+      address: this.contracts.disputeResolver, abi: DisputeResolverABI,
+      functionName: 'claimJurorReward', args: [disputeId], account,
+    });
+    return this.send(request);
+  }
+
+  /** Authorized oracle records the rung-1 advisory hint (non-binding). */
+  async recordAgentHint(disputeId: bigint, hint: `0x${string}`, account: Address) {
+    if (!this.walletClient) throw new Error('Wallet not connected');
+    const { request } = await this.publicClient.simulateContract({
+      address: this.contracts.disputeResolver, abi: DisputeResolverABI,
+      functionName: 'recordAgentHint', args: [disputeId, hint], account,
+    });
+    return this.send(request);
+  }
+
+  async getDispute(disputeId: bigint) {
+    return this.publicClient.readContract({
+      address: this.contracts.disputeResolver, abi: DisputeResolverABI,
+      functionName: 'getDispute', args: [disputeId],
+    });
+  }
+
+  async disputeCount() {
+    return this.publicClient.readContract({
+      address: this.contracts.disputeResolver, abi: DisputeResolverABI,
+      functionName: 'disputeCount',
+    }) as Promise<bigint>;
+  }
+
+  /** Whether `addr` is an appointed panel juror. */
+  async isJuror(addr: Address) {
+    return this.publicClient.readContract({
+      address: this.contracts.disputeResolver, abi: DisputeResolverABI,
+      functionName: 'jurors', args: [addr],
+    }) as Promise<boolean>;
+  }
+
+  /** Dispute panel config: min bond, voting period (s), and whether Mode-A stake disputes are on. */
+  async disputeConfig() {
+    const [minBond, votingPeriod, modeAStakeEnabled, jurorCount] = await Promise.all([
+      this.publicClient.readContract({ address: this.contracts.disputeResolver, abi: DisputeResolverABI, functionName: 'minBond' }) as Promise<bigint>,
+      this.publicClient.readContract({ address: this.contracts.disputeResolver, abi: DisputeResolverABI, functionName: 'votingPeriod' }) as Promise<bigint>,
+      this.publicClient.readContract({ address: this.contracts.disputeResolver, abi: DisputeResolverABI, functionName: 'modeAStakeEnabled' }) as Promise<boolean>,
+      this.publicClient.readContract({ address: this.contracts.disputeResolver, abi: DisputeResolverABI, functionName: 'jurorCount' }) as Promise<bigint>,
+    ]);
+    return { minBond, votingPeriod, modeAStakeEnabled, jurorCount };
   }
 }

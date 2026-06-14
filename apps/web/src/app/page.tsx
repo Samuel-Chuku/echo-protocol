@@ -1,124 +1,86 @@
 'use client';
 
-import { useAccount } from 'wagmi';
-import { ConnectButton } from '@/components/ConnectButton';
+import { useState } from 'react';
+import Link from 'next/link';
+import { ExternalLink } from 'lucide-react';
+import { CONTRACTS, MarketRegistryABI, DisputeResolverABI } from '@echo/sdk';
+import { useEcho } from '@/lib/sdk';
+import { Card } from '@/components/ui';
+import { Command } from '@/components/Command';
+import { short, txLink } from '@/lib/format';
 
-/**
- * Echo Protocol — Main Dashboard
- *
- * This is the handoff skeleton for the frontend developer.
- * Key integration points:
- *   - wagmi hooks for wallet connection
- *   - @echo/sdk for contract interactions
- *   - @echo/types for shared type definitions
- *
- * TODO (frontend branch):
- *   1. Market list: use useEchoSdk() -> getMarketCount() + getMarket()
- *   2. Create market form: calls sdk.createMarket() after USDC approve
- *   3. Apply form: calls sdk.applyToMarket() with submission hash
- *   4. Grading UI: requester-only buttons for gradeSubstantive/Shortlist/Final
- *   5. Profile page: read reputation from indexer + participation receipts
- *   6. Real-time updates: subscribe to contract events via viem watchContractEvent
- */
+const C = CONTRACTS.arcTestnet;
 
-export default function Home() {
-  const { isConnected, address } = useAccount();
+type Row = { block: bigint; name: string; summary: string; tx: string };
+
+/** Pull a compact human summary out of an event's decoded args (bigints → strings). */
+function summarize(args: Record<string, unknown>): string {
+  const parts: string[] = [];
+  for (const k of ['marketId', 'disputeId', 'index', 'tier', 'toTier', 'award', 'amount', 'revealFee', 'bond']) {
+    if (args[k] !== undefined) parts.push(`${k}=${String(args[k])}`);
+  }
+  for (const k of ['participant', 'submitter', 'requester', 'opener', 'worker', 'originator']) {
+    if (typeof args[k] === 'string') parts.push(`${k}=${short(args[k] as string)}`);
+  }
+  return parts.slice(0, 3).join(' · ') || '';
+}
+
+export default function Landing() {
+  const { sdk } = useEcho();
+  const [rows, setRows] = useState<Row[]>([]);
+  const [err, setErr] = useState('');
+
+  async function load() {
+    setErr('');
+    try {
+      const latest = await sdk.publicClient.getBlockNumber();
+      const fromBlock = latest > 50_000n ? latest - 50_000n : 0n;
+      const [mr, dr] = await Promise.all([
+        sdk.publicClient.getContractEvents({ address: C.marketRegistry, abi: MarketRegistryABI, fromBlock, toBlock: latest }),
+        sdk.publicClient.getContractEvents({ address: C.disputeResolver, abi: DisputeResolverABI, fromBlock, toBlock: latest }),
+      ]);
+      const all: Row[] = [...mr, ...dr].map((l: any) => ({
+        block: l.blockNumber as bigint,
+        name: l.eventName as string,
+        summary: summarize((l.args ?? {}) as Record<string, unknown>),
+        tx: l.transactionHash as string,
+      }));
+      all.sort((a, b) => Number(b.block - a.block));
+      setRows(all.slice(0, 30));
+    } catch (e: any) {
+      setErr(e?.shortMessage || e?.message || String(e));
+    }
+  }
 
   return (
-    <main className="min-h-screen p-8 max-w-5xl mx-auto">
-      {/* Header */}
-      <header className="flex items-center justify-between mb-12">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">Echo Protocol</h1>
-          <p className="text-gray-500 mt-1">Reputation-gated agent marketplace</p>
-        </div>
-        <ConnectButton />
-      </header>
-
-      {/* Wallet Status */}
-      <section className="mb-8 p-4 bg-gray-50 rounded-xl border border-gray-200">
-        <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-2">
-          Wallet Status
-        </h2>
-        {isConnected ? (
-          <div className="space-y-1">
-            <p className="text-sm">
-              <span className="text-gray-500">Connected:</span>{' '}
-              <code className="bg-gray-100 px-1.5 py-0.5 rounded text-xs">{address}</code>
-            </p>
-            <p className="text-sm text-gray-500">
-              Chain: Arc Testnet (5042002)
-            </p>
-          </div>
-        ) : (
-          <p className="text-sm text-gray-500">
-            Connect your MetaMask wallet to interact with Echo markets.
-          </p>
-        )}
-      </section>
-
-      {/* Market Dashboard */}
+    <div>
       <section className="mb-8">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-xl font-semibold">Markets</h2>
-          <button className="px-3 py-1.5 text-sm bg-green-600 text-white rounded-md hover:bg-green-500 transition opacity-50 cursor-not-allowed" disabled>
-            + Create Market
-          </button>
-        </div>
-
-        <div className="grid gap-4">
-          <div className="p-6 bg-gray-50 rounded-xl border border-dashed border-gray-300 text-center text-gray-400">
-            <p className="text-sm">No markets to display.</p>
-            <p className="text-xs mt-1">Implement market fetching here.</p>
-          </div>
-        </div>
-      </section>
-
-      {/* Integration Guide for Frontend Dev */}
-      <section className="p-6 bg-blue-50 rounded-xl border border-blue-100">
-        <h2 className="text-sm font-semibold text-blue-800 uppercase tracking-wider mb-3">
-          Frontend Handoff — Next Steps
-        </h2>
-        <ul className="space-y-2 text-sm text-blue-700">
-          <li className="flex gap-2">
-            <span className="font-mono text-xs bg-blue-100 px-1.5 rounded">1</span>
-            <span><strong>Install deps:</strong> <code>cd apps/web && pnpm install</code></span>
-          </li>
-          <li className="flex gap-2">
-            <span className="font-mono text-xs bg-blue-100 px-1.5 rounded">2</span>
-            <span><strong>Run dev:</strong> <code>pnpm dev</code> (Next.js on localhost:3000)</span>
-          </li>
-          <li className="flex gap-2">
-            <span className="font-mono text-xs bg-blue-100 px-1.5 rounded">3</span>
-            <span><strong>Read markets:</strong> Use <code>useEchoSdk()</code> hook → <code>sdk.getMarket(id)</code></span>
-          </li>
-          <li className="flex gap-2">
-            <span className="font-mono text-xs bg-blue-100 px-1.5 rounded">4</span>
-            <span><strong>Create market:</strong> USDC approve → <code>sdk.createMarket(args, account)</code></span>
-          </li>
-          <li className="flex gap-2">
-            <span className="font-mono text-xs bg-blue-100 px-1.5 rounded">5</span>
-            <span><strong>Apply:</strong> <code>sdk.applyToMarket(marketId, hash, account)</code></span>
-          </li>
-          <li className="flex gap-2">
-            <span className="font-mono text-xs bg-blue-100 px-1.5 rounded">6</span>
-            <span><strong>Grade:</strong> Requester calls <code>sdk.gradeSubstantive/Shortlist/Final</code></span>
-          </li>
-          <li className="flex gap-2">
-            <span className="font-mono text-xs bg-blue-100 px-1.5 rounded">7</span>
-            <span><strong>Indexer:</strong> GraphQL at <code>{process.env.NEXT_PUBLIC_INDEXER_URL || 'http://localhost:4000/graphql'}</code></span>
-          </li>
-        </ul>
-        <p className="text-xs text-blue-500 mt-4">
-          See <code>apps/web/src/hooks/useEchoSdk.ts</code> and <code>packages/sdk/src/index.ts</code> for full API.
+        <h1 className="text-3xl font-bold tracking-tight">Echo Protocol — reference console</h1>
+        <p className="text-gray-500 mt-1 max-w-2xl">
+          A functional, click-through guide to every on-chain command. Each role tab wires real SDK
+          calls to buttons. Reads come straight from the chain (no indexer yet).
         </p>
+        <div className="flex gap-2 mt-4 text-sm">
+          {[['/hire', 'Requester'], ['/apply', 'Worker'], ['/attribution', 'Introducer'], ['/disputes', 'Disputes']].map(([href, label]) => (
+            <Link key={href} href={href} className="px-3 py-1.5 rounded-md bg-gray-100 hover:bg-gray-200">{label} →</Link>
+          ))}
+        </div>
       </section>
 
-      {/* Contract Addresses */}
-      <footer className="mt-12 pt-6 border-t border-gray-200 text-xs text-gray-400 space-y-1">
-        <p>Arc Testnet Contracts:</p>
-        <p>MarketRegistry: 0x6ce0...e333dc | EchoHook: 0x6333...84866 | Receipt: 0xb767...7da0</p>
-      </footer>
-    </main>
+      <Card title="Live activity" hint="Recent MarketRegistry + DisputeResolver events over the last ~50k blocks (what the real ticker will index).">
+        <Command label="Load activity" tone="neutral" run={load} />
+        {err && <p className="text-xs text-red-600 break-all">{err}</p>}
+        <ul className="text-sm divide-y divide-gray-100">
+          {rows.map((r, i) => (
+            <li key={i} className="flex items-center justify-between gap-3 py-1.5">
+              <span><b className="font-medium">{r.name}</b> <span className="text-gray-500 font-mono text-xs">{r.summary}</span></span>
+              <a href={txLink(r.tx)} target="_blank" rel="noreferrer" className="text-xs text-gray-400 hover:text-gray-700 inline-flex items-center gap-1 shrink-0">
+                #{String(r.block)} <ExternalLink className="w-3 h-3" />
+              </a>
+            </li>
+          ))}
+        </ul>
+      </Card>
+    </div>
   );
 }
