@@ -45,6 +45,13 @@ export const MODE_TAG_CLASS = [
 export const modeTagClass = (m: number | bigint) =>
   MODE_TAG_CLASS[Number(m)] ?? 'bg-gray-100 text-gray-600';
 
+/** One-line "when to use this" blurb for the create type-picker (index = EchoMode). */
+export const MODE_BLURBS = [
+  'Open call — many applicants compete through reveal + tiers. You fund one escrow.',
+  'One known worker, paid per milestone. Best when you already picked who.',
+  'Open submissions, pay each accepted finding from a pool. Best for bug bounties.',
+] as const;
+
 /** Bounty FindingStatus / Milestone status / RevealStatus label helpers (enum order = contract). */
 export const FINDING_STATUS = ['Pending', 'Accepted', 'Rejected', 'Disputed'] as const;
 export const MILESTONE_STATUS = ['Pending', 'Submitted', 'Released'] as const;

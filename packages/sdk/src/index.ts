@@ -723,6 +723,20 @@ export class EchoSdk {
     return this.send(request);
   }
 
+  /**
+   * Per-action approve: if `account`'s allowance to `spender` is below `amount`, approve **exactly**
+   * `amount` and wait for the approve to mine; otherwise do nothing. Returns the approve tx hash (or
+   * null when the existing allowance already covers it). Lets a create/fund flow pull only what it
+   * needs — no large standing allowance.
+   */
+  async ensureUsdcAllowance(spender: Address, amount: bigint, account: Address): Promise<`0x${string}` | null> {
+    const current = (await this.usdcAllowance(account, spender)) as bigint;
+    if (current >= amount) return null;
+    const hash = (await this.approveUSDC(spender, amount, account)) as `0x${string}`;
+    await this.publicClient.waitForTransactionReceipt({ hash });
+    return hash;
+  }
+
   // ── Mode + entry reads (P1/P6) ──────────────────────────
 
   /** Selected market shape (see {@link EchoMode}). */

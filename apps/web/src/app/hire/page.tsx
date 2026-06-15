@@ -1,17 +1,22 @@
 'use client';
 
 import { useState } from 'react';
-import { EchoMode, buildMetadata } from '@echo/sdk';
+import Link from 'next/link';
+import { useQuery, gql } from 'urql';
+import { useAccount } from 'wagmi';
+import { EchoMode, buildMetadata, CONTRACTS } from '@echo/sdk';
 import { useEcho } from '@/lib/sdk';
 import { useAgent } from '@/lib/agent';
-import { Section, Card, Field, KV } from '@/components/ui';
+import { Section, Card, Field } from '@/components/ui';
 import { Command } from '@/components/Command';
-import { usdc, toUnits, scope, short, modeName, FINDING_STATUS, MILESTONE_STATUS } from '@/lib/format';
+import { toUnits, scope, modeName, modeTagClass, MODE_BLURBS } from '@/lib/format';
+
+const C = CONTRACTS.arcTestnet;
 
 /**
- * Requester console. Create every market shape, then manage one by id: fund attribution, reveal
- * applicants + resolve their held stake (P6), grade tiers, drive Mode-B milestones / Bounty findings,
- * close, and trigger ghost. Every button is a live SDK call. Approve USDC in the top bar first.
+ * Requester home. Create work in two steps — pick a type (#8), then fill its fund form (each create
+ * auto-approves the exact USDC it needs, #3) — and a "My markets" list (#12) linking into per-market
+ * management at /hire/[id].
  */
 export default function HirePage() {
   const { sdk, account } = useEcho();
@@ -19,260 +24,231 @@ export default function HirePage() {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold mb-1">Requester</h1>
-      <p className="text-sm text-gray-500 mb-6">Create markets and run their lifecycle. requesterAgentId defaults to your registered agentId ({agentId || '—'}).</p>
-      <CreateMarkets sdk={sdk} account={account} agentId={agentId} />
-      <ManageMarket sdk={sdk} account={account} />
+      <h1 className="text-2xl font-bold mb-1">Post a job</h1>
+      <p className="text-sm text-gray-500 mb-6">Create work, then manage it. requesterAgentId is your registered agentId ({agentId || '—'}).</p>
+      <CreateMarket sdk={sdk} account={account} agentId={agentId} />
+      <MyMarkets account={account} />
     </div>
   );
 }
 
-/* ──────────────────────────── create ──────────────────────────── */
+/* ──────────────────────────── create: type picker → form ──────────────────────────── */
 
-function CreateMarkets({ sdk, account, agentId }: { sdk: ReturnType<typeof useEcho>['sdk']; account?: `0x${string}`; agentId: string }) {
-  // shared market knobs
-  const [tiers, setTiers] = useState(['5', '50', '250', '1000']); // USDC: reveal/substantive, shortlist, final, ghost
+function CreateMarket({ sdk, account, agentId }: { sdk: ReturnType<typeof useEcho>['sdk']; account?: `0x${string}`; agentId: string }) {
+  const [type, setType] = useState<EchoMode | null>(null);
+  const need = !account || !agentId;
+
+  if (type === null) {
+    return (
+      <Section title="Create work" desc="Pick the shape that fits. You can manage it below once it's live.">
+        {[EchoMode.OpenMarket, EchoMode.DirectJob, EchoMode.Bounty].map((m) => (
+          <button key={m} onClick={() => setType(m)} className="text-left p-5 rounded-2xl border border-gray-200 bg-white hover:border-gray-900 hover:shadow-sm transition">
+            <span className={`inline-block rounded px-2 py-0.5 text-xs font-medium ${modeTagClass(m)}`}>{modeName(m)}</span>
+            <p className="mt-3 text-sm text-gray-600">{MODE_BLURBS[m]}</p>
+            <span className="mt-3 inline-block text-sm font-medium text-gray-900">Choose →</span>
+          </button>
+        ))}
+      </Section>
+    );
+  }
+
+  return (
+    <Section title={`Create — ${modeName(type)}`} desc="Each create approves the exact USDC it needs, then funds the escrow in one go.">
+      <div className="sm:col-span-2">
+        <button onClick={() => setType(null)} className="text-xs text-gray-500 hover:text-gray-900 mb-3">← pick a different type</button>
+        {need && <p className="text-xs text-amber-600 mb-2">Connect a wallet + register an agentId (top bar) first.</p>}
+        {type === EchoMode.OpenMarket && <OpenForm sdk={sdk} account={account} agentId={agentId} disabled={need} />}
+        {type === EchoMode.DirectJob && <DirectForm sdk={sdk} account={account} agentId={agentId} disabled={need} />}
+        {type === EchoMode.Bounty && <BountyForm sdk={sdk} account={account} agentId={agentId} disabled={need} />}
+      </div>
+    </Section>
+  );
+}
+
+type FormProps = { sdk: ReturnType<typeof useEcho>['sdk']; account?: `0x${string}`; agentId: string; disabled: boolean };
+
+function OpenForm({ sdk, account, agentId, disabled }: FormProps) {
+  const [subject, setSubject] = useState('');
+  const [desc, setDesc] = useState('');
+  const [tiers, setTiers] = useState(['5', '50', '250', '1000']);
   const [escrow, setEscrow] = useState('2000');
   const [maxApplicants, setMax] = useState('50');
   const [ghostDays, setGhostDays] = useState('7');
-  // reveal/stake
   const [stake, setStake] = useState('10');
   const [flagDays, setFlagDays] = useState('2');
   const [requiredProofs, setProofs] = useState('0');
-  // direct job
-  const [worker, setWorker] = useState('');
-  const [workerAgentId, setWorkerAgentId] = useState('');
-  const [milestones, setMilestones] = useState('100,200,300');
-  const [reviewDays, setReviewDays] = useState('3');
-  // bounty
-  const [pool, setPool] = useState('1000');
-  const [defaultAward, setDefaultAward] = useState('50');
-  // job metadata ({subject, description}) → metadataURI, parsed by the indexer for browse cards
-  const [mSubject, setMSubject] = useState('');
-  const [mDesc, setMDesc] = useState('');
-  const [jSubject, setJSubject] = useState('');
-  const [jDesc, setJDesc] = useState('');
-  const [bSubject, setBSubject] = useState('');
-  const [bDesc, setBDesc] = useState('');
-
-  const tierAmounts = () => tiers.map(toUnits) as unknown as [bigint, bigint, bigint, bigint];
-  const reqId = () => BigInt(agentId || '0');
-  const need = !account || !agentId;
 
   return (
-    <Section title="Create market" desc="Pick a shape. Open/Reveal and DirectJob/Bounty have distinct entrypoints.">
-      <Card title="Open / Reveal market" hint="createMarketWithMode — tier[0] is the reveal fee R; set stake+flag window for a reveal market.">
-        <Field label="subject" value={mSubject} onChange={(e) => setMSubject(e.target.value)} placeholder="What workers see in browse" />
-        <Field label="description" value={mDesc} onChange={(e) => setMDesc(e.target.value)} placeholder="Scope / terms" />
-        <div className="grid grid-cols-4 gap-1">
-          {tiers.map((t, i) => (
-            <Field key={i} label={['reveal/R', 'shortlist', 'final', 'ghost'][i]} value={t}
-              onChange={(e) => setTiers(tiers.map((x, j) => (j === i ? e.target.value : x)))} />
-          ))}
-        </div>
-        <div className="grid grid-cols-3 gap-1">
-          <Field label="escrow USDC" value={escrow} onChange={(e) => setEscrow(e.target.value)} />
-          <Field label="max applicants" value={maxApplicants} onChange={(e) => setMax(e.target.value)} />
-          <Field label="ghost (days)" value={ghostDays} onChange={(e) => setGhostDays(e.target.value)} />
-        </div>
-        <div className="grid grid-cols-3 gap-1">
-          <Field label="stake USDC (0=none)" value={stake} onChange={(e) => setStake(e.target.value)} />
-          <Field label="flag window (days)" value={flagDays} onChange={(e) => setFlagDays(e.target.value)} />
-          <Field label="requiredProofs" value={requiredProofs} onChange={(e) => setProofs(e.target.value)} />
-        </div>
-        <Command label="Create market" disabled={need}
-          run={() => sdk.createMarketWithMode({
-            metadataURI: buildMetadata({ subject: mSubject, description: mDesc }),
-            scopeHash: scope('console-scope'),
-            tierAmounts: tierAmounts(),
+    <Card title="Open / Reveal market" hint="tier[0] is the reveal fee R; set stake + flag window for a reveal market.">
+      <Field label="subject" value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="What workers see in browse" />
+      <Field label="description" value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="Scope / terms" />
+      <div className="grid grid-cols-4 gap-1">
+        {tiers.map((t, i) => (
+          <Field key={i} label={['reveal/R', 'shortlist', 'final', 'ghost'][i]} value={t}
+            onChange={(e) => setTiers(tiers.map((x, j) => (j === i ? e.target.value : x)))} />
+        ))}
+      </div>
+      <div className="grid grid-cols-3 gap-1">
+        <Field label="escrow USDC" value={escrow} onChange={(e) => setEscrow(e.target.value)} />
+        <Field label="max applicants" value={maxApplicants} onChange={(e) => setMax(e.target.value)} />
+        <Field label="ghost (days)" value={ghostDays} onChange={(e) => setGhostDays(e.target.value)} />
+      </div>
+      <div className="grid grid-cols-3 gap-1">
+        <Field label="stake USDC (0=none)" value={stake} onChange={(e) => setStake(e.target.value)} />
+        <Field label="flag window (days)" value={flagDays} onChange={(e) => setFlagDays(e.target.value)} />
+        <Field label="requiredProofs" value={requiredProofs} onChange={(e) => setProofs(e.target.value)} />
+      </div>
+      <p className="text-xs text-gray-400">Approves {escrow} USDC to the market, then creates.</p>
+      <Command label={`Approve ${escrow} + create`} disabled={disabled}
+        run={async () => {
+          await sdk.ensureUsdcAllowance(C.marketRegistry, toUnits(escrow), account!);
+          return sdk.createMarketWithMode({
+            metadataURI: buildMetadata({ subject, description: desc }),
+            scopeHash: scope(subject || 'console-scope'),
+            tierAmounts: tiers.map(toUnits) as unknown as [bigint, bigint, bigint, bigint],
             minPRep: 0n,
             maxApplicants: BigInt(maxApplicants),
             ghostDeadline: BigInt(Number(ghostDays) * 86400),
             escrowTotal: toUnits(escrow),
-            requesterAgentId: reqId(),
+            requesterAgentId: BigInt(agentId || '0'),
             cfg: {
               mode: EchoMode.OpenMarket,
               requiredProofs: BigInt(requiredProofs),
               stakeRequired: toUnits(stake),
               flagWindow: BigInt(Number(flagDays) * 86400),
             },
-          }, account!)} />
-        {need && <p className="text-xs text-amber-600">Connect + register an agentId first.</p>}
-      </Card>
+          }, account!);
+        }} />
+    </Card>
+  );
+}
 
-      <Card title="Direct Job (Mode B)" hint="createDirectJob — two known parties, milestone escrow.">
-        <Field label="subject" value={jSubject} onChange={(e) => setJSubject(e.target.value)} placeholder="Job title" />
-        <Field label="description" value={jDesc} onChange={(e) => setJDesc(e.target.value)} placeholder="Scope / terms" />
-        <Field label="worker address" value={worker} onChange={(e) => setWorker(e.target.value)} placeholder="0x…" />
-        <div className="grid grid-cols-2 gap-1">
-          <Field label="worker agentId" value={workerAgentId} onChange={(e) => setWorkerAgentId(e.target.value)} />
-          <Field label="review (days)" value={reviewDays} onChange={(e) => setReviewDays(e.target.value)} />
-        </div>
-        <Field label="milestone amounts (USDC, comma)" value={milestones} onChange={(e) => setMilestones(e.target.value)} />
-        <Command label="Create direct job" disabled={need || !worker}
-          run={() => sdk.createDirectJob({
+function DirectForm({ sdk, account, agentId, disabled }: FormProps) {
+  const [subject, setSubject] = useState('');
+  const [desc, setDesc] = useState('');
+  const [worker, setWorker] = useState('');
+  const [workerAgentId, setWorkerAgentId] = useState('');
+  const [milestones, setMilestones] = useState('100,200,300');
+  const [reviewDays, setReviewDays] = useState('3');
+
+  const amounts = () => milestones.split(',').map((s) => toUnits(s.trim()));
+  const total = () => amounts().reduce((a, b) => a + b, 0n);
+
+  return (
+    <Card title="Direct Job (Mode B)" hint="Two known parties, milestone escrow. Approves the milestone total, then creates.">
+      <Field label="subject" value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="Job title" />
+      <Field label="description" value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="Scope / terms" />
+      <Field label="worker address" value={worker} onChange={(e) => setWorker(e.target.value)} placeholder="0x…" />
+      <div className="grid grid-cols-2 gap-1">
+        <Field label="worker agentId" value={workerAgentId} onChange={(e) => setWorkerAgentId(e.target.value)} />
+        <Field label="review (days)" value={reviewDays} onChange={(e) => setReviewDays(e.target.value)} />
+      </div>
+      <Field label="milestone amounts (USDC, comma)" value={milestones} onChange={(e) => setMilestones(e.target.value)} />
+      <Command label="Approve total + create" disabled={disabled || !worker}
+        run={async () => {
+          await sdk.ensureUsdcAllowance(C.marketRegistry, total(), account!);
+          return sdk.createDirectJob({
             worker: worker as `0x${string}`,
             workerAgentId: BigInt(workerAgentId || '0'),
-            requesterAgentId: reqId(),
-            metadataURI: buildMetadata({ subject: jSubject, description: jDesc }),
-            scopeHash: scope('console-job'),
-            milestoneAmounts: milestones.split(',').map((s) => toUnits(s.trim())),
+            requesterAgentId: BigInt(agentId || '0'),
+            metadataURI: buildMetadata({ subject, description: desc }),
+            scopeHash: scope(subject || 'console-job'),
+            milestoneAmounts: amounts(),
             reviewWindow: BigInt(Number(reviewDays) * 86400),
-          }, account!)} />
-      </Card>
+          }, account!);
+        }} />
+    </Card>
+  );
+}
 
-      <Card title="Bounty" hint="createBounty — open submissions, parallel winners.">
-        <Field label="subject" value={bSubject} onChange={(e) => setBSubject(e.target.value)} placeholder="Bounty title" />
-        <Field label="description" value={bDesc} onChange={(e) => setBDesc(e.target.value)} placeholder="Scope / terms" />
-        <div className="grid grid-cols-2 gap-1">
-          <Field label="pool USDC" value={pool} onChange={(e) => setPool(e.target.value)} />
-          <Field label="default award USDC" value={defaultAward} onChange={(e) => setDefaultAward(e.target.value)} />
-        </div>
-        <div className="grid grid-cols-2 gap-1">
-          <Field label="review (days)" value={reviewDays} onChange={(e) => setReviewDays(e.target.value)} />
-          <Field label="requiredProofs" value={requiredProofs} onChange={(e) => setProofs(e.target.value)} />
-        </div>
-        <Command label="Create bounty" disabled={need}
-          run={() => sdk.createBounty({
-            requesterAgentId: reqId(),
-            metadataURI: buildMetadata({ subject: bSubject, description: bDesc }),
-            scopeHash: scope('console-bounty'),
+function BountyForm({ sdk, account, agentId, disabled }: FormProps) {
+  const [subject, setSubject] = useState('');
+  const [desc, setDesc] = useState('');
+  const [pool, setPool] = useState('1000');
+  const [defaultAward, setDefaultAward] = useState('50');
+  const [reviewDays, setReviewDays] = useState('3');
+  const [requiredProofs, setProofs] = useState('0');
+
+  return (
+    <Card title="Bounty" hint="Open submissions, parallel winners. Approves the pool, then creates.">
+      <Field label="subject" value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="Bounty title" />
+      <Field label="description" value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="Scope / terms" />
+      <div className="grid grid-cols-2 gap-1">
+        <Field label="pool USDC" value={pool} onChange={(e) => setPool(e.target.value)} />
+        <Field label="default award USDC" value={defaultAward} onChange={(e) => setDefaultAward(e.target.value)} />
+      </div>
+      <div className="grid grid-cols-2 gap-1">
+        <Field label="review (days)" value={reviewDays} onChange={(e) => setReviewDays(e.target.value)} />
+        <Field label="requiredProofs" value={requiredProofs} onChange={(e) => setProofs(e.target.value)} />
+      </div>
+      <p className="text-xs text-gray-400">Approves {pool} USDC to the market, then creates.</p>
+      <Command label={`Approve ${pool} + create`} disabled={disabled}
+        run={async () => {
+          await sdk.ensureUsdcAllowance(C.marketRegistry, toUnits(pool), account!);
+          return sdk.createBounty({
+            requesterAgentId: BigInt(agentId || '0'),
+            metadataURI: buildMetadata({ subject, description: desc }),
+            scopeHash: scope(subject || 'console-bounty'),
             requiredProofs: BigInt(requiredProofs),
             defaultAward: toUnits(defaultAward),
             reviewWindow: BigInt(Number(reviewDays) * 86400),
             pool: toUnits(pool),
-          }, account!)} />
-      </Card>
-    </Section>
+          }, account!);
+        }} />
+    </Card>
   );
 }
 
-/* ──────────────────────────── manage ──────────────────────────── */
+/* ──────────────────────────── my markets (#12) ──────────────────────────── */
 
-type Loaded = {
-  mode: number;
-  market: any;
-  remaining: bigint;
-  apps: any[];
-  findings: any[];
-  milestones: any[];
-  revealFee: bigint;
-  flagWindow: bigint;
-};
-
-function ManageMarket({ sdk, account }: { sdk: ReturnType<typeof useEcho>['sdk']; account?: `0x${string}` }) {
-  const [id, setId] = useState('1');
-  const [participant, setParticipant] = useState('');
-  const [idx, setIdx] = useState('0');
-  const [award, setAward] = useState('50');
-  const [data, setData] = useState<Loaded | null>(null);
-  const [err, setErr] = useState('');
-
-  const marketId = () => BigInt(id || '0');
-
-  async function load() {
-    setErr('');
-    try {
-      const mid = marketId();
-      const mode = Number(await sdk.marketMode(mid));
-      const [market, remaining, revealFee, flagWindow] = await Promise.all([
-        sdk.getMarket(mid),
-        sdk.remainingEscrow(mid).catch(() => 0n),
-        sdk.revealFee(mid).catch(() => 0n),
-        sdk.revealFlagWindow(mid).catch(() => 0n),
-      ]);
-      const apps = mode === EchoMode.OpenMarket ? ((await sdk.getMarketApplications(mid)) as any[]) : [];
-      const findings = mode === EchoMode.Bounty ? ((await sdk.getBountyFindings(mid)) as any[]) : [];
-      const milestones = mode === EchoMode.DirectJob ? ((await sdk.getDirectJobMilestones(mid)) as any[]) : [];
-      setData({ mode, market, remaining: remaining as bigint, apps, findings, milestones, revealFee: revealFee as bigint, flagWindow: flagWindow as bigint });
-    } catch (e: any) {
-      setData(null);
-      setErr(e?.shortMessage || e?.message || String(e));
+const MY_MARKETS = gql`
+  query MyMarkets($requester: String!) {
+    markets(requester: $requester, limit: 100) {
+      id
+      mode
+      subject
+      status
+      applicantCount
     }
   }
+`;
+
+type MyRow = { id: number; mode: number; subject: string | null; status: string; applicantCount: number };
+
+function MyMarkets({ account }: { account?: `0x${string}` }) {
+  const { isConnected } = useAccount();
+  const [{ data, fetching, error }] = useQuery<{ markets: MyRow[] }>({
+    query: MY_MARKETS,
+    variables: { requester: account ?? '' },
+    pause: !account,
+  });
+  const rows = data?.markets ?? [];
 
   return (
-    <Section title="Manage a market" desc="Load by id, then drive its lifecycle. Actions are gated by the market's mode.">
-      <Card title="Load market">
-        <Field label="marketId" value={id} onChange={(e) => setId(e.target.value)} />
-        <Command label="Load" tone="neutral" run={load} onDone={() => {}} />
-        {err && <p className="text-xs text-red-600 break-all">{err}</p>}
-        {data && (
-          <KV rows={[
-            ['mode', modeName(data.mode)],
-            ['requester', short(data.market?.requester)],
-            ['escrow remaining', usdc(data.remaining)],
-            ['reveal fee R', data.revealFee ? usdc(data.revealFee) : '—'],
-            ['flag window', data.flagWindow ? `${Number(data.flagWindow) / 86400}d` : '—'],
-            ['applicants', String(data.market?.applicantCount ?? '—')],
-            ['closed', String(data.market?.closed ?? '—')],
-          ]} />
-        )}
-      </Card>
-
-      {/* Open/Reveal actions */}
-      {data?.mode === EchoMode.OpenMarket && (
-        <Card title="Open / Reveal actions" hint="reveal pays R + holds the stake; grade walks tiers; settle/flag resolve the held stake.">
-          <Field label="participant address" value={participant} onChange={(e) => setParticipant(e.target.value)} placeholder="0x…" />
-          <div className="flex flex-wrap gap-2">
-            <Command label="Reveal" disabled={!account || !participant} onDone={load} run={() => sdk.reveal(marketId(), participant as `0x${string}`, account!)} />
-            <Command label="Settle stake" tone="neutral" disabled={!account || !participant} onDone={load} run={() => sdk.settleRevealStake(marketId(), participant as `0x${string}`, account!)} />
-          </div>
-          <p className="text-xs text-gray-400">To flag a reveal as bait-and-switch, open a bonded stake dispute on the Disputes tab.</p>
-          <div className="flex flex-wrap gap-2">
-            <Command label="Grade Substantive" disabled={!account || !participant} onDone={load} run={() => sdk.gradeSubstantive(marketId(), participant as `0x${string}`, account!)} />
-            <Command label="Grade Shortlist" disabled={!account || !participant} onDone={load} run={() => sdk.gradeShortlist(marketId(), participant as `0x${string}`, account!)} />
-            <Command label="Grade Final" disabled={!account || !participant} onDone={load} run={() => sdk.gradeFinal(marketId(), participant as `0x${string}`, account!)} />
-            <Command label="Trigger ghost" tone="neutral" disabled={!account || !participant} run={() => sdk.triggerGhost(marketId(), participant as `0x${string}`, account!)} />
-          </div>
-          {data.apps?.length > 0 && (
-            <KV rows={data.apps.map((a: any) => [short(a.participant), `tier ${a.tierReached}`])} />
-          )}
-          <Command label="Close market" tone="neutral" disabled={!account} onDone={load} run={() => sdk.closeMarket(marketId(), account!)} />
-        </Card>
-      )}
-
-      {/* Direct Job actions */}
-      {data?.mode === EchoMode.DirectJob && (
-        <Card title="Direct Job actions" hint="accept pays the milestone; auto-release after the review window; cancel refunds pending.">
-          <Field label="milestone index" value={idx} onChange={(e) => setIdx(e.target.value)} />
-          <div className="flex flex-wrap gap-2">
-            <Command label="Accept milestone" disabled={!account} onDone={load} run={() => sdk.acceptMilestone(marketId(), BigInt(idx), account!)} />
-            <Command label="Auto-release" tone="neutral" disabled={!account} onDone={load} run={() => sdk.autoReleaseMilestone(marketId(), BigInt(idx), account!)} />
-            <Command label="Cancel job" tone="danger" disabled={!account} onDone={load} run={() => sdk.cancelDirectJob(marketId(), account!)} />
-          </div>
-          {data.milestones?.length > 0 && (
-            <KV rows={data.milestones.map((m: any, i: number) => [`#${i} ${usdc(m.amount)}`, MILESTONE_STATUS[Number(m.status)] ?? String(m.status)])} />
+    <Section title="My markets" desc="Markets you created (from the indexer). Click one to manage its lifecycle.">
+      <div className="sm:col-span-2">
+        <Card title="Your markets">
+          {!isConnected && <p className="text-xs text-gray-400">Connect a wallet to see your markets.</p>}
+          {isConnected && fetching && rows.length === 0 && <p className="text-xs text-gray-400">Loading…</p>}
+          {error && <p className="text-xs text-red-600 break-all">{error.message} — is the indexer running on :4000?</p>}
+          {isConnected && !fetching && !error && rows.length === 0 && <p className="text-xs text-gray-400">You haven't created any markets yet.</p>}
+          {rows.length > 0 && (
+            <ul className="divide-y divide-gray-100">
+              {rows.map((m) => (
+                <li key={m.id}>
+                  <Link href={`/hire/${m.id}`} className="flex items-center gap-3 py-2 hover:bg-gray-50 -mx-1 px-1 rounded">
+                    <span className="font-mono text-sm text-gray-500 w-10">#{m.id}</span>
+                    <span className={`rounded px-2 py-0.5 text-xs font-medium ${modeTagClass(m.mode)}`}>{modeName(m.mode)}</span>
+                    <span className="flex-1 text-sm font-medium truncate">{m.subject || <span className="text-gray-400 italic">untitled</span>}</span>
+                    <span className="text-xs text-gray-400">{m.status} · {m.applicantCount} appl.</span>
+                    <span className="text-gray-300 text-sm">→</span>
+                  </Link>
+                </li>
+              ))}
+            </ul>
           )}
         </Card>
-      )}
-
-      {/* Bounty actions */}
-      {data?.mode === EchoMode.Bounty && (
-        <Card title="Bounty actions" hint="accept pays ≥ defaultAward; reject is free; auto-escalate force-pays an ignored finding after the window.">
-          <div className="grid grid-cols-2 gap-1">
-            <Field label="finding index" value={idx} onChange={(e) => setIdx(e.target.value)} />
-            <Field label="award USDC" value={award} onChange={(e) => setAward(e.target.value)} />
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <Command label="Accept finding" disabled={!account} onDone={load} run={() => sdk.acceptFinding(marketId(), BigInt(idx), toUnits(award), account!)} />
-            <Command label="Reject" tone="neutral" disabled={!account} onDone={load} run={() => sdk.rejectFinding(marketId(), BigInt(idx), account!)} />
-            <Command label="Auto-escalate" tone="neutral" disabled={!account} onDone={load} run={() => sdk.autoEscalateFinding(marketId(), BigInt(idx), account!)} />
-            <Command label="Close bounty" tone="danger" disabled={!account} onDone={load} run={() => sdk.closeBounty(marketId(), account!)} />
-          </div>
-          {data.findings?.length > 0 && (
-            <KV rows={data.findings.map((f: any, i: number) => [`#${i} ${short(f.submitter)}`, `${FINDING_STATUS[Number(f.status)] ?? f.status}${f.award ? ' · ' + usdc(f.award) : ''}`])} />
-          )}
-        </Card>
-      )}
-
-      <Card title="Fund attribution pool" hint="fundAttributionPool — rewards introducers of advancing workers from your escrow.">
-        <div className="grid grid-cols-2 gap-1">
-          <Field label="amount USDC" value={award} onChange={(e) => setAward(e.target.value)} />
-          <Field label="introducer share bps" value={idx} onChange={(e) => setIdx(e.target.value)} />
-        </div>
-        <Command label="Fund pool" tone="neutral" disabled={!account} run={() => sdk.fundAttributionPool(marketId(), toUnits(award), Number(idx), account!)} />
-      </Card>
+      </div>
     </Section>
   );
 }
