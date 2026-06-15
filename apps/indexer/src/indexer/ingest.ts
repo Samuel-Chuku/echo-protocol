@@ -1,0 +1,77 @@
+import { eq } from 'drizzle-orm';
+import { db } from '../db/client.js';
+import { cursor, events } from '../db/schema.js';
+import { publicClient } from '../chain.js';
+import { MarketRegistryABI, DisputeResolverABI } from '../abis.js';
+import { config } from '../config.js';
+import { applyEvent } from './reducers.js';
+
+const SOURCES = [
+  { address: config.contracts.marketRegistry as `0x${string}`, abi: MarketRegistryABI },
+  { address: config.contracts.disputeResolver as `0x${string}`, abi: DisputeResolverABI },
+];
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+async function getCursor(): Promise<bigint> {
+  const row = await db.select().from(cursor).where(eq(cursor.id, 'head')).get();
+  if (row) return BigInt(row.lastBlock);
+  // First run: index from startBlock (so lastBlock = startBlock - 1).
+  const last = config.startBlock > 0n ? config.startBlock - 1n : 0n;
+  await db.insert(cursor).values({ id: 'head', lastBlock: Number(last) }).onConflictDoNothing();
+  return last;
+}
+
+async function setCursor(block: bigint): Promise<void> {
+  await db.insert(cursor).values({ id: 'head', lastBlock: Number(block) })
+    .onConflictDoUpdate({ target: cursor.id, set: { lastBlock: Number(block) } });
+}
+
+/** Decode every event from both contracts over [fromBlock, toBlock], reduce, persist. */
+async function indexRange(fromBlock: bigint, toBlock: bigint): Promise<void> {
+  const logs: any[] = [];
+  for (const src of SOURCES) {
+    const part = await publicClient.getContractEvents({ address: src.address, abi: src.abi, fromBlock, toBlock } as never);
+    logs.push(...(part as any[]));
+  }
+  logs.sort((a, b) => (a.blockNumber === b.blockNumber ? a.logIndex - b.logIndex : Number(a.blockNumber - b.blockNumber)));
+
+  const now = Math.floor(Date.now() / 1000);
+  for (const log of logs) {
+    const eventName = log.eventName as string;
+    const args = (log.args ?? {}) as Record<string, any>;
+    let res: { marketId: number | null; actor: string | null };
+    try {
+      res = await applyEvent(eventName, args, { block: Number(log.blockNumber), now });
+    } catch (e) {
+      console.error('[reduce]', eventName, (e as Error).message);
+      res = { marketId: args.marketId !== undefined ? Number(args.marketId) : null, actor: null };
+    }
+    await db.insert(events).values({
+      blockNumber: Number(log.blockNumber), txHash: log.transactionHash, logIndex: log.logIndex,
+      address: log.address, eventName, marketId: res.marketId, actor: res.actor ? res.actor.toLowerCase() : null,
+      args: JSON.stringify(args, (_k, v) => (typeof v === 'bigint' ? v.toString() : v)), createdAt: now,
+    }).onConflictDoNothing();
+  }
+  if (logs.length) console.log(`[ingest] blocks ${fromBlock}-${toBlock}: ${logs.length} events`);
+}
+
+/** Backfill from the cursor to head, then poll head forever. */
+export async function runIngestLoop(): Promise<void> {
+  let from = (await getCursor()) + 1n;
+  console.log(`[ingest] starting from block ${from}`);
+  for (;;) {
+    try {
+      const head = await publicClient.getBlockNumber();
+      while (from <= head) {
+        const to = from + config.batchSize - 1n > head ? head : from + config.batchSize - 1n;
+        await indexRange(from, to);
+        await setCursor(to);
+        from = to + 1n;
+      }
+    } catch (e) {
+      console.error('[ingest] error:', (e as Error).message);
+    }
+    await sleep(config.pollIntervalMs);
+  }
+}
