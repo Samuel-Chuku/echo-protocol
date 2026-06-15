@@ -65,9 +65,10 @@ export const IMPLEMENTATIONS = {
   },
 } as const;
 
-// GraphQL API endpoint
+// GraphQL API endpoint. Read env without depending on @types/node (isomorphic SDK).
+const env = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env ?? {};
 export const API = {
-  indexer: process.env.NEXT_PUBLIC_INDEXER_URL || 'http://localhost:4000/graphql',
+  indexer: env.NEXT_PUBLIC_INDEXER_URL || 'http://localhost:4000/graphql',
 } as const;
 
 // Default tier amounts (in USDC base units = cents, 6 decimals)

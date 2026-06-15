@@ -63,6 +63,36 @@ export enum EchoMode {
   Bounty = 2,
 }
 
+// ═══════════════════════════════════════════════════════════
+// Job metadata — `{subject, description}` JSON carried in the on-chain
+// `metadataURI` (a free string; contracts unchanged). The indexer parses
+// the same shape in apps/indexer/src/indexer/reducers.ts — keep them in sync.
+// ═══════════════════════════════════════════════════════════
+
+/** Human-readable job metadata stored in `metadataURI`. */
+export interface JobMetadata {
+  subject?: string;
+  description?: string;
+}
+
+/** Encode `{subject, description}` into the string passed as `metadataURI` on any create* method. */
+export function buildMetadata(meta: JobMetadata): string {
+  return JSON.stringify({ subject: meta.subject ?? '', description: meta.description ?? '' });
+}
+
+/** Decode a `metadataURI` back into `{subject, description}`. Tolerates `data:` URIs and
+ *  non-JSON legacy values (returns `{}`). Mirrors the indexer's `parseMetadata`. */
+export function parseMetadata(uri: unknown): JobMetadata {
+  if (typeof uri !== 'string' || !uri) return {};
+  try {
+    const raw = uri.startsWith('data:') ? decodeURIComponent(uri.slice(uri.indexOf(',') + 1)) : uri;
+    const j = JSON.parse(raw);
+    return { subject: j.subject, description: j.description };
+  } catch {
+    return {};
+  }
+}
+
 /** Mode + entry config for createMarketWithMode (mirrors MarketRegistry.ModeConfig). `flagWindow`
  *  must be > 0 when `stakeRequired` > 0 (the held reveal stake needs a flag window). */
 export interface ModeConfig {

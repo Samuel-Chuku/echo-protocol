@@ -119,6 +119,8 @@ export const circleWallet = (): Wallet => ({
         onDisconnect() {
           config.emitter.emit('disconnect');
         },
-      };
+        // Cast: wagmi's CreateConnectorFn return type churns across versions (the `withCapabilities`
+        // generic on connect()); this parked Circle scaffold connects with a fixed shape.
+      } as any;
     }),
 });

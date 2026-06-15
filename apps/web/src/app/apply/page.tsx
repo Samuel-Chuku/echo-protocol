@@ -1,12 +1,12 @@
 'use client';
 
 import { useState } from 'react';
-import { EchoMode } from '@echo/sdk';
+import { useQuery, gql } from 'urql';
 import { useEcho } from '@/lib/sdk';
 import { useAgent } from '@/lib/agent';
 import { Section, Card, Field, KV } from '@/components/ui';
 import { Command } from '@/components/Command';
-import { usdc, scope, short, modeName } from '@/lib/format';
+import { scope, short, modeName, modeTagClass } from '@/lib/format';
 
 /**
  * Worker console. Browse markets, apply (approve stake first in the top bar if the market requires
@@ -19,45 +19,60 @@ export default function ApplyPage() {
     <div>
       <h1 className="text-2xl font-bold mb-1">Worker</h1>
       <p className="text-sm text-gray-500 mb-6">Apply with your agentId ({agentId || '—'}). If a market requires a stake, approve USDC → Market in the top bar first.</p>
-      <Browse sdk={sdk} />
+      <Browse />
       <ApplyAndDeliver sdk={sdk} account={account} agentId={agentId} />
     </div>
   );
 }
 
-function Browse({ sdk }: { sdk: ReturnType<typeof useEcho>['sdk'] }) {
-  const [rows, setRows] = useState<{ id: number; mode: number; requester: string; applicants: string; closed: boolean }[]>([]);
-  const [err, setErr] = useState('');
-
-  async function load() {
-    setErr('');
-    try {
-      const count = Number(await sdk.marketCount());
-      const out: typeof rows = [];
-      for (let i = 1; i <= count; i++) {
-        const id = BigInt(i);
-        const [mode, m] = await Promise.all([sdk.marketMode(id).catch(() => 0), sdk.getMarket(id).catch(() => null)]);
-        out.push({
-          id: i,
-          mode: Number(mode),
-          requester: (m as any)?.requester ?? '0x0',
-          applicants: String((m as any)?.applicantCount ?? '—'),
-          closed: Boolean((m as any)?.closed),
-        });
-      }
-      setRows(out.reverse());
-    } catch (e: any) {
-      setErr(e?.shortMessage || e?.message || String(e));
+const OPEN_MARKETS = gql`
+  query OpenMarkets {
+    markets(openOnly: true, limit: 100) {
+      id
+      mode
+      requester
+      subject
+      description
+      status
+      applicantCount
     }
   }
+`;
+
+type MarketRow = {
+  id: number;
+  mode: number;
+  requester: string;
+  subject: string | null;
+  description: string | null;
+  status: string;
+  applicantCount: number;
+};
+
+/** Reads open markets from the GraphQL indexer (no per-market RPC loop). Each row shows its subject
+ *  and a mode tag/color. Markets created before the metadata convention surface with no subject. */
+function Browse() {
+  const [{ data, fetching, error }, refetch] = useQuery<{ markets: MarketRow[] }>({ query: OPEN_MARKETS });
+  const rows = data?.markets ?? [];
 
   return (
-    <Section title="Browse markets" desc="Reads marketCount then each market directly (no indexer yet).">
-      <Card title="All markets">
-        <Command label="Load markets" tone="neutral" run={load} />
-        {err && <p className="text-xs text-red-600">{err}</p>}
+    <Section title="Browse markets" desc="Open markets from the Echo indexer (GraphQL). Apply to one below by id.">
+      <Card title="Open markets">
+        <Command label="Refresh" tone="neutral" run={async () => { refetch({ requestPolicy: 'network-only' }); return 'refreshed'; }} />
+        {fetching && rows.length === 0 && <p className="text-xs text-gray-400">Loading…</p>}
+        {error && <p className="text-xs text-red-600 break-all">{error.message} — is the indexer running on :4000?</p>}
+        {!fetching && !error && rows.length === 0 && <p className="text-xs text-gray-400">No open markets yet.</p>}
         {rows.length > 0 && (
-          <KV rows={rows.map((r) => [`#${r.id} · ${modeName(r.mode)}`, `${short(r.requester)} · ${r.applicants} appl.${r.closed ? ' · closed' : ''}`])} />
+          <ul className="divide-y divide-gray-100">
+            {rows.map((m) => (
+              <li key={m.id} className="flex items-center gap-3 py-2">
+                <span className="font-mono text-sm text-gray-500 w-10">#{m.id}</span>
+                <span className={`rounded px-2 py-0.5 text-xs font-medium ${modeTagClass(m.mode)}`}>{modeName(m.mode)}</span>
+                <span className="flex-1 text-sm font-medium truncate">{m.subject || <span className="text-gray-400 italic">untitled market</span>}</span>
+                <span className="text-xs text-gray-400">{short(m.requester)} · {m.applicantCount} appl.</span>
+              </li>
+            ))}
+          </ul>
         )}
       </Card>
     </Section>

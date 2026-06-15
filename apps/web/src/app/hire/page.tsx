@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { EchoMode } from '@echo/sdk';
+import { EchoMode, buildMetadata } from '@echo/sdk';
 import { useEcho } from '@/lib/sdk';
 import { useAgent } from '@/lib/agent';
 import { Section, Card, Field, KV } from '@/components/ui';
@@ -47,6 +47,13 @@ function CreateMarkets({ sdk, account, agentId }: { sdk: ReturnType<typeof useEc
   // bounty
   const [pool, setPool] = useState('1000');
   const [defaultAward, setDefaultAward] = useState('50');
+  // job metadata ({subject, description}) → metadataURI, parsed by the indexer for browse cards
+  const [mSubject, setMSubject] = useState('');
+  const [mDesc, setMDesc] = useState('');
+  const [jSubject, setJSubject] = useState('');
+  const [jDesc, setJDesc] = useState('');
+  const [bSubject, setBSubject] = useState('');
+  const [bDesc, setBDesc] = useState('');
 
   const tierAmounts = () => tiers.map(toUnits) as unknown as [bigint, bigint, bigint, bigint];
   const reqId = () => BigInt(agentId || '0');
@@ -55,6 +62,8 @@ function CreateMarkets({ sdk, account, agentId }: { sdk: ReturnType<typeof useEc
   return (
     <Section title="Create market" desc="Pick a shape. Open/Reveal and DirectJob/Bounty have distinct entrypoints.">
       <Card title="Open / Reveal market" hint="createMarketWithMode — tier[0] is the reveal fee R; set stake+flag window for a reveal market.">
+        <Field label="subject" value={mSubject} onChange={(e) => setMSubject(e.target.value)} placeholder="What workers see in browse" />
+        <Field label="description" value={mDesc} onChange={(e) => setMDesc(e.target.value)} placeholder="Scope / terms" />
         <div className="grid grid-cols-4 gap-1">
           {tiers.map((t, i) => (
             <Field key={i} label={['reveal/R', 'shortlist', 'final', 'ghost'][i]} value={t}
@@ -73,7 +82,7 @@ function CreateMarkets({ sdk, account, agentId }: { sdk: ReturnType<typeof useEc
         </div>
         <Command label="Create market" disabled={need}
           run={() => sdk.createMarketWithMode({
-            metadataURI: 'ipfs://console-market',
+            metadataURI: buildMetadata({ subject: mSubject, description: mDesc }),
             scopeHash: scope('console-scope'),
             tierAmounts: tierAmounts(),
             minPRep: 0n,
@@ -92,6 +101,8 @@ function CreateMarkets({ sdk, account, agentId }: { sdk: ReturnType<typeof useEc
       </Card>
 
       <Card title="Direct Job (Mode B)" hint="createDirectJob — two known parties, milestone escrow.">
+        <Field label="subject" value={jSubject} onChange={(e) => setJSubject(e.target.value)} placeholder="Job title" />
+        <Field label="description" value={jDesc} onChange={(e) => setJDesc(e.target.value)} placeholder="Scope / terms" />
         <Field label="worker address" value={worker} onChange={(e) => setWorker(e.target.value)} placeholder="0x…" />
         <div className="grid grid-cols-2 gap-1">
           <Field label="worker agentId" value={workerAgentId} onChange={(e) => setWorkerAgentId(e.target.value)} />
@@ -103,7 +114,7 @@ function CreateMarkets({ sdk, account, agentId }: { sdk: ReturnType<typeof useEc
             worker: worker as `0x${string}`,
             workerAgentId: BigInt(workerAgentId || '0'),
             requesterAgentId: reqId(),
-            metadataURI: 'ipfs://console-job',
+            metadataURI: buildMetadata({ subject: jSubject, description: jDesc }),
             scopeHash: scope('console-job'),
             milestoneAmounts: milestones.split(',').map((s) => toUnits(s.trim())),
             reviewWindow: BigInt(Number(reviewDays) * 86400),
@@ -111,6 +122,8 @@ function CreateMarkets({ sdk, account, agentId }: { sdk: ReturnType<typeof useEc
       </Card>
 
       <Card title="Bounty" hint="createBounty — open submissions, parallel winners.">
+        <Field label="subject" value={bSubject} onChange={(e) => setBSubject(e.target.value)} placeholder="Bounty title" />
+        <Field label="description" value={bDesc} onChange={(e) => setBDesc(e.target.value)} placeholder="Scope / terms" />
         <div className="grid grid-cols-2 gap-1">
           <Field label="pool USDC" value={pool} onChange={(e) => setPool(e.target.value)} />
           <Field label="default award USDC" value={defaultAward} onChange={(e) => setDefaultAward(e.target.value)} />
@@ -122,7 +135,7 @@ function CreateMarkets({ sdk, account, agentId }: { sdk: ReturnType<typeof useEc
         <Command label="Create bounty" disabled={need}
           run={() => sdk.createBounty({
             requesterAgentId: reqId(),
-            metadataURI: 'ipfs://console-bounty',
+            metadataURI: buildMetadata({ subject: bSubject, description: bDesc }),
             scopeHash: scope('console-bounty'),
             requiredProofs: BigInt(requiredProofs),
             defaultAward: toUnits(defaultAward),
