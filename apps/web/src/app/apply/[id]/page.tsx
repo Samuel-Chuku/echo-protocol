@@ -1,6 +1,6 @@
 'use client';
 
-import { use, useEffect, useState } from 'react';
+import { use, useEffect, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useQuery, gql } from 'urql';
 import { EchoMode } from '@echo/sdk';
@@ -36,10 +36,10 @@ type MarketDetail = {
 const u = (s: string | null | undefined) => (s ? usdc(BigInt(s)) : '—');
 
 /** Mode-specific terms rows for the KV panel. */
-function termsRows(m: MarketDetail): [string, string][] {
-  const rows: [string, string][] = [
+function termsRows(m: MarketDetail): [string, ReactNode][] {
+  const rows: [string, ReactNode][] = [
     ['status', m.status],
-    ['requester', short(m.requester)],
+    ['requester', <Link key="req" href={`/u/${m.requester}`} className="hover:underline">{short(m.requester)}</Link>],
   ];
   if (m.mode === EchoMode.OpenMarket) {
     rows.push(['escrow', u(m.escrowTotal)]);

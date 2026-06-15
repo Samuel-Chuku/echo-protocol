@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { Bell as BellIcon } from 'lucide-react';
 import { useAccount } from 'wagmi';
 import { useQuery } from 'urql';
-import { ACTIVITY_QUERY, eventLabel, summarizeArgs, timeAgo, type ActivityRow } from '@/lib/activity';
+import { ACTIVITY_QUERY, eventLabel, summarizeArgs, timeAgo, marketHref, type ActivityRow } from '@/lib/activity';
 
 /**
  * Notification bell. Reads the connected wallet's PENDING activity from the indexer (#10) and badges
@@ -60,17 +60,29 @@ export function Bell() {
             <p className="px-4 py-6 text-sm text-gray-400 text-center">Nothing pending.</p>
           ) : (
             <ul className="max-h-80 overflow-auto divide-y divide-gray-100">
-              {rows.map((r) => (
-                <li key={r.id} className="px-4 py-2.5">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-sm font-medium">{eventLabel(r.eventName)}</span>
-                    <span className="text-xs text-gray-400 shrink-0">{timeAgo(r.createdAt, now)}</span>
-                  </div>
-                  <div className="text-xs text-gray-500 font-mono mt-0.5">
-                    {r.marketId !== null && `#${r.marketId} `}{summarizeArgs(r.args)}
-                  </div>
-                </li>
-              ))}
+              {rows.map((r) => {
+                const href = marketHref(r, address);
+                const body = (
+                  <>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-sm font-medium">{eventLabel(r.eventName)}</span>
+                      <span className="text-xs text-gray-400 shrink-0">{timeAgo(r.createdAt, now)}</span>
+                    </div>
+                    <div className="text-xs text-gray-500 font-mono mt-0.5">
+                      {r.marketId !== null && `#${r.marketId} `}{summarizeArgs(r.args)}
+                    </div>
+                  </>
+                );
+                return (
+                  <li key={r.id}>
+                    {href ? (
+                      <Link href={href} onClick={() => setOpen(false)} className="block px-4 py-2.5 hover:bg-gray-50">{body}</Link>
+                    ) : (
+                      <div className="px-4 py-2.5">{body}</div>
+                    )}
+                  </li>
+                );
+              })}
             </ul>
           )}
         </div>

@@ -76,6 +76,20 @@ export function summarizeArgs(json: string): string {
   return parts.slice(0, 2).join(' · ');
 }
 
+/**
+ * Deep link for an activity row. The feed mixes both sides of a market, so we route by whether the
+ * connected wallet was the actor: your own actions → the worker job page (/apply/[id]); actions on a
+ * market you own → the requester manage page (/hire/[id]). Returns null when there's no market to open.
+ */
+export function marketHref(
+  row: { eventName: string; marketId: number | null; actor: string | null },
+  myAddress?: string,
+): string | null {
+  if (row.marketId === null) return null;
+  const mine = !!myAddress && !!row.actor && row.actor.toLowerCase() === myAddress.toLowerCase();
+  return mine ? `/apply/${row.marketId}` : `/hire/${row.marketId}`;
+}
+
 /** "just now" / "5m ago" / "3h ago" / "2d ago" from a unix-seconds timestamp. */
 export function timeAgo(unixSecs: number, now: number): string {
   const s = Math.max(0, now - unixSecs);

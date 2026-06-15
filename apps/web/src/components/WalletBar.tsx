@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import Link from 'next/link';
 import { CONTRACTS } from '@echo/sdk';
 import { useEcho } from '@/lib/sdk';
 import { useAgent } from '@/lib/agent';
@@ -39,6 +40,8 @@ export function WalletBar() {
     <div className="border-b border-gray-200 bg-gray-50">
       <div className="max-w-6xl mx-auto px-6 py-3 flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
         <span className="text-gray-500">USDC <b className="text-gray-900 font-mono">{usdc(bal)}</b></span>
+
+        <Link href={`/u/${account}`} className="text-gray-500 hover:text-gray-900 underline-offset-2 hover:underline">Profile →</Link>
 
         {/* identity */}
         <div className="flex items-center gap-2">
