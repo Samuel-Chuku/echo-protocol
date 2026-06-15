@@ -1,86 +1,47 @@
 'use client';
 
-import { useState } from 'react';
 import Link from 'next/link';
-import { ExternalLink } from 'lucide-react';
-import { CONTRACTS, MarketRegistryABI, DisputeResolverABI } from '@echo/sdk';
-import { useEcho } from '@/lib/sdk';
-import { Card } from '@/components/ui';
-import { Command } from '@/components/Command';
-import { short, txLink } from '@/lib/format';
+import { Briefcase, Search, Activity } from 'lucide-react';
 
-const C = CONTRACTS.arcTestnet;
-
-type Row = { block: bigint; name: string; summary: string; tx: string };
-
-/** Pull a compact human summary out of an event's decoded args (bigints → strings). */
-function summarize(args: Record<string, unknown>): string {
-  const parts: string[] = [];
-  for (const k of ['marketId', 'disputeId', 'index', 'tier', 'toTier', 'award', 'amount', 'revealFee', 'bond']) {
-    if (args[k] !== undefined) parts.push(`${k}=${String(args[k])}`);
-  }
-  for (const k of ['participant', 'submitter', 'requester', 'opener', 'worker', 'originator']) {
-    if (typeof args[k] === 'string') parts.push(`${k}=${short(args[k] as string)}`);
-  }
-  return parts.slice(0, 3).join(' · ') || '';
-}
+/**
+ * Role router. The old landing dumped a raw event ticker on everyone; this asks the one question that
+ * matters first — what are you here to do — and routes to that flow (#1, #6). The live feed moved to
+ * its own /activity tab (indexer-backed).
+ */
+const ROLES = [
+  { href: '/hire', icon: Briefcase, title: 'Post a job', desc: 'Create an open market, direct job, or bounty and fund it in USDC.' },
+  { href: '/apply', icon: Search, title: 'Find work', desc: 'Browse open markets, apply with your agent identity, and deliver.' },
+  { href: '/activity', icon: Activity, title: 'Activity', desc: 'Track what is pending and completed across your markets and jobs.' },
+];
 
 export default function Landing() {
-  const { sdk } = useEcho();
-  const [rows, setRows] = useState<Row[]>([]);
-  const [err, setErr] = useState('');
-
-  async function load() {
-    setErr('');
-    try {
-      const latest = await sdk.publicClient.getBlockNumber();
-      const fromBlock = latest > 50_000n ? latest - 50_000n : 0n;
-      const [mr, dr] = await Promise.all([
-        sdk.publicClient.getContractEvents({ address: C.marketRegistry, abi: MarketRegistryABI, fromBlock, toBlock: latest }),
-        sdk.publicClient.getContractEvents({ address: C.disputeResolver, abi: DisputeResolverABI, fromBlock, toBlock: latest }),
-      ]);
-      const all: Row[] = [...mr, ...dr].map((l: any) => ({
-        block: l.blockNumber as bigint,
-        name: l.eventName as string,
-        summary: summarize((l.args ?? {}) as Record<string, unknown>),
-        tx: l.transactionHash as string,
-      }));
-      all.sort((a, b) => Number(b.block - a.block));
-      setRows(all.slice(0, 30));
-    } catch (e: any) {
-      setErr(e?.shortMessage || e?.message || String(e));
-    }
-  }
-
   return (
     <div>
-      <section className="mb-8">
-        <h1 className="text-3xl font-bold tracking-tight">Echo Protocol — reference console</h1>
+      <section className="mb-10">
+        <h1 className="text-3xl font-bold tracking-tight">Echo Protocol</h1>
         <p className="text-gray-500 mt-1 max-w-2xl">
-          A functional, click-through guide to every on-chain command. Each role tab wires real SDK
-          calls to buttons. Reads come straight from the chain (no indexer yet).
+          The LP layer for human markets on Arc. Post work, find work, and settle it on-chain in USDC.
         </p>
-        <div className="flex gap-2 mt-4 text-sm">
-          {[['/hire', 'Requester'], ['/apply', 'Worker'], ['/attribution', 'Introducer'], ['/disputes', 'Disputes']].map(([href, label]) => (
-            <Link key={href} href={href} className="px-3 py-1.5 rounded-md bg-gray-100 hover:bg-gray-200">{label} →</Link>
-          ))}
-        </div>
       </section>
 
-      <Card title="Live activity" hint="Recent MarketRegistry + DisputeResolver events over the last ~50k blocks (what the real ticker will index).">
-        <Command label="Load activity" tone="neutral" run={load} />
-        {err && <p className="text-xs text-red-600 break-all">{err}</p>}
-        <ul className="text-sm divide-y divide-gray-100">
-          {rows.map((r, i) => (
-            <li key={i} className="flex items-center justify-between gap-3 py-1.5">
-              <span><b className="font-medium">{r.name}</b> <span className="text-gray-500 font-mono text-xs">{r.summary}</span></span>
-              <a href={txLink(r.tx)} target="_blank" rel="noreferrer" className="text-xs text-gray-400 hover:text-gray-700 inline-flex items-center gap-1 shrink-0">
-                #{String(r.block)} <ExternalLink className="w-3 h-3" />
-              </a>
-            </li>
-          ))}
-        </ul>
-      </Card>
+      <div className="grid gap-4 sm:grid-cols-3">
+        {ROLES.map(({ href, icon: Icon, title, desc }) => (
+          <Link
+            key={href}
+            href={href}
+            className="group p-6 rounded-2xl border border-gray-200 bg-white hover:border-gray-900 hover:shadow-sm transition"
+          >
+            <Icon className="w-6 h-6 text-gray-400 group-hover:text-gray-900 transition" />
+            <h2 className="mt-4 text-lg font-semibold">{title}</h2>
+            <p className="mt-1 text-sm text-gray-500">{desc}</p>
+            <span className="mt-4 inline-block text-sm font-medium text-gray-900">Continue →</span>
+          </Link>
+        ))}
+      </div>
+
+      <p className="mt-8 text-xs text-gray-400">
+        Introducer attribution and dispute resolution live in their own tabs above.
+      </p>
     </div>
   );
 }
