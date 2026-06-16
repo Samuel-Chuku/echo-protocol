@@ -51,40 +51,49 @@ export function Bell() {
       </button>
 
       {open && (
-        <div className="absolute right-0 mt-2 w-80 rounded-xl border border-gray-200 bg-white shadow-lg z-20 overflow-hidden">
-          <div className="px-4 py-2.5 border-b border-gray-100 flex items-center justify-between">
+        <div className="absolute right-0 mt-2 w-80 rounded-xl border border-gray-200 bg-white shadow-lg z-20 overflow-hidden flex flex-col max-h-96">
+          <div className="px-4 py-2.5 border-b border-gray-100 shrink-0">
             <span className="text-sm font-semibold">Pending</span>
-            <Link href="/activity" onClick={() => setOpen(false)} className="text-xs text-gray-400 hover:text-gray-700">View all →</Link>
           </div>
-          {rows.length === 0 ? (
-            <p className="px-4 py-6 text-sm text-gray-400 text-center">Nothing pending.</p>
-          ) : (
-            <ul className="max-h-80 overflow-auto divide-y divide-gray-100">
-              {rows.map((r) => {
-                const href = marketHref(r, address);
-                const body = (
-                  <>
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-sm font-medium">{eventLabel(r.eventName)}</span>
-                      <span className="text-xs text-gray-400 shrink-0">{timeAgo(r.createdAt, now)}</span>
-                    </div>
-                    <div className="text-xs text-gray-500 font-mono mt-0.5">
-                      {r.marketId !== null && `#${r.marketId} `}{summarizeArgs(r.args)}
-                    </div>
-                  </>
-                );
-                return (
-                  <li key={r.id}>
-                    {href ? (
-                      <Link href={href} onClick={() => setOpen(false)} className="block px-4 py-2.5 hover:bg-gray-50">{body}</Link>
-                    ) : (
-                      <div className="px-4 py-2.5">{body}</div>
-                    )}
-                  </li>
-                );
-              })}
-            </ul>
-          )}
+          <div className="flex-1 overflow-auto">
+            {rows.length === 0 ? (
+              <p className="px-4 py-6 text-sm text-gray-400 text-center">Nothing pending.</p>
+            ) : (
+              <ul className="divide-y divide-gray-100">
+                {rows.map((r) => {
+                  const href = marketHref(r, address);
+                  const body = (
+                    <>
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-sm font-medium">{eventLabel(r.eventName)}</span>
+                        <span className="text-xs text-gray-400 shrink-0">{timeAgo(r.createdAt, now)}</span>
+                      </div>
+                      <div className="text-xs text-gray-500 font-mono mt-0.5">
+                        {r.marketId !== null && `#${r.marketId} `}{summarizeArgs(r.args)}
+                      </div>
+                    </>
+                  );
+                  return (
+                    <li key={r.id}>
+                      {href ? (
+                        <Link href={href} onClick={() => setOpen(false)} className="block px-4 py-2.5 hover:bg-gray-50">{body}</Link>
+                      ) : (
+                        <div className="px-4 py-2.5">{body}</div>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+          {/* Sticky footer — always visible regardless of scroll */}
+          <Link
+            href="/activity"
+            onClick={() => setOpen(false)}
+            className="shrink-0 border-t border-gray-100 px-4 py-2.5 text-center text-sm font-medium text-gray-700 hover:bg-gray-50"
+          >
+            View all activity →
+          </Link>
         </div>
       )}
     </div>

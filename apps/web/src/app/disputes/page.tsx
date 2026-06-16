@@ -1,11 +1,13 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { CONTRACTS } from '@echo/sdk';
 import { useEcho } from '@/lib/sdk';
 import { Section, Card, Field, KV } from '@/components/ui';
 import { Command } from '@/components/Command';
 import { usdc, toUnits, short, scope } from '@/lib/format';
 
+const C = CONTRACTS.arcTestnet;
 const SUBJECTS = ['BountyFinding', 'ModeAStake'] as const;
 const STATUS = ['Open', 'Resolved'] as const;
 
@@ -34,7 +36,7 @@ export default function DisputesPage() {
   return (
     <div>
       <h1 className="text-2xl font-bold mb-1">Disputes</h1>
-      <p className="text-sm text-gray-500 mb-6">The staked-jury rung. Approve USDC → Disputes (top bar) to cover bonds.</p>
+      <p className="text-sm text-gray-500 mb-6">The staked-jury rung. Each bond is approved automatically when you post it.</p>
 
       {cfg && (
         <div className="mb-6">
@@ -58,7 +60,10 @@ export default function DisputesPage() {
             <Field label="bond USDC" value={bond} onChange={(e) => setBond(e.target.value)} />
           </div>
           <Command label="Open finding dispute" disabled={!account}
-            run={() => sdk.openFindingDispute(BigInt(marketId), BigInt(findingIndex), toUnits(bond), account!)} />
+            run={async () => {
+              await sdk.ensureUsdcAllowance(C.disputeResolver, toUnits(bond), account!);
+              return sdk.openFindingDispute(BigInt(marketId), BigInt(findingIndex), toUnits(bond), account!);
+            }} />
         </Card>
 
         <Card title="Open stake dispute (flag)" hint="openStakeDispute — requester flags a revealed applicant's held stake as bait (P6).">
@@ -68,7 +73,10 @@ export default function DisputesPage() {
           </div>
           <Field label="participant" value={participant} onChange={(e) => setParticipant(e.target.value)} placeholder="0x…" />
           <Command label="Open stake dispute" tone="danger" disabled={!account || !participant}
-            run={() => sdk.openStakeDispute(BigInt(marketId), participant as `0x${string}`, toUnits(bond), account!)} />
+            run={async () => {
+              await sdk.ensureUsdcAllowance(C.disputeResolver, toUnits(bond), account!);
+              return sdk.openStakeDispute(BigInt(marketId), participant as `0x${string}`, toUnits(bond), account!);
+            }} />
         </Card>
       </Section>
 
@@ -76,7 +84,12 @@ export default function DisputesPage() {
         <Card title="Counter / vote / resolve" hint="counter posts the matching bond; jurors vote; anyone resolves after the window.">
           <Field label="disputeId" value={disputeId} onChange={(e) => setDisputeId(e.target.value)} />
           <div className="flex flex-wrap gap-2">
-            <Command label="Counter" disabled={!account} run={() => sdk.counterDispute(did(), account!)} />
+            <Command label="Counter" disabled={!account}
+              run={async () => {
+                const disp: any = await sdk.getDispute(did());
+                await sdk.ensureUsdcAllowance(C.disputeResolver, BigInt(disp.bond), account!);
+                return sdk.counterDispute(did(), account!);
+              }} />
             <Command label="Vote: for opener" disabled={!account} run={() => sdk.voteDispute(did(), true, account!)} />
             <Command label="Vote: against" tone="neutral" disabled={!account} run={() => sdk.voteDispute(did(), false, account!)} />
             <Command label="Resolve" disabled={!account} onDone={() => sdk.getDispute(did()).then(setD)} run={() => sdk.resolveDispute(did(), account!)} />

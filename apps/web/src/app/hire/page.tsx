@@ -9,6 +9,7 @@ import { useEcho } from '@/lib/sdk';
 import { useAgent } from '@/lib/agent';
 import { Section, Card, Field } from '@/components/ui';
 import { Command } from '@/components/Command';
+import { IdentityBanner } from '@/components/IdentityBanner';
 import { toUnits, scope, modeName, modeTagClass, MODE_BLURBS } from '@/lib/format';
 
 const C = CONTRACTS.arcTestnet;
@@ -25,7 +26,8 @@ export default function HirePage() {
   return (
     <div>
       <h1 className="text-2xl font-bold mb-1">Post a job</h1>
-      <p className="text-sm text-gray-500 mb-6">Create work, then manage it. requesterAgentId is your registered agentId ({agentId || '—'}).</p>
+      <p className="text-sm text-gray-500 mb-6">Create work, then manage it. Your identity: agentId {agentId || '—'}.</p>
+      <IdentityBanner />
       <CreateMarket sdk={sdk} account={account} agentId={agentId} />
       <MyMarkets account={account} />
     </div>
@@ -56,7 +58,7 @@ function CreateMarket({ sdk, account, agentId }: { sdk: ReturnType<typeof useEch
     <Section title={`Create — ${modeName(type)}`} desc="Each create approves the exact USDC it needs, then funds the escrow in one go.">
       <div className="sm:col-span-2">
         <button onClick={() => setType(null)} className="text-xs text-gray-500 hover:text-gray-900 mb-3">← pick a different type</button>
-        {need && <p className="text-xs text-amber-600 mb-2">Connect a wallet + register an agentId (top bar) first.</p>}
+        {need && <p className="text-xs text-amber-600 mb-2">Connect a wallet and register your identity (above) first.</p>}
         {type === EchoMode.OpenMarket && <OpenForm sdk={sdk} account={account} agentId={agentId} disabled={need} />}
         {type === EchoMode.DirectJob && <DirectForm sdk={sdk} account={account} agentId={agentId} disabled={need} />}
         {type === EchoMode.Bounty && <BountyForm sdk={sdk} account={account} agentId={agentId} disabled={need} />}

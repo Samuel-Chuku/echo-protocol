@@ -62,7 +62,10 @@ export default function ManageMarketPage({ params }: { params: Promise<{ id: str
 
   return (
     <div>
-      <Link href="/hire" className="text-xs text-gray-500 hover:text-gray-900">← My markets</Link>
+      <div className="flex items-center justify-between">
+        <Link href="/hire" className="text-xs text-gray-500 hover:text-gray-900">← My markets</Link>
+        <Link href="/disputes" className="text-xs text-gray-500 hover:text-gray-900">Disputes →</Link>
+      </div>
       <h1 className="text-2xl font-bold mt-1 mb-1">Market #{id}</h1>
       <p className="text-sm text-gray-500 mb-6">{data ? modeName(data.mode) : 'Loading…'}{data?.market?.subject ? ` · ${data.market.subject}` : ''}</p>
 
@@ -91,7 +94,7 @@ export default function ManageMarketPage({ params }: { params: Promise<{ id: str
               <Command label="Reveal" disabled={!account || !participant} onDone={load} run={() => sdk.reveal(marketId(), participant as `0x${string}`, account!)} />
               <Command label="Settle stake" tone="neutral" disabled={!account || !participant} onDone={load} run={() => sdk.settleRevealStake(marketId(), participant as `0x${string}`, account!)} />
             </div>
-            <p className="text-xs text-gray-400">To flag a reveal as bait-and-switch, open a bonded stake dispute on the Disputes tab.</p>
+            <p className="text-xs text-gray-400">To flag a reveal as bait-and-switch, <Link href="/disputes" className="underline hover:text-gray-700">open a bonded stake dispute</Link>.</p>
             <div className="flex flex-wrap gap-2">
               <Command label="Grade Substantive" disabled={!account || !participant} onDone={load} run={() => sdk.gradeSubstantive(marketId(), participant as `0x${string}`, account!)} />
               <Command label="Grade Shortlist" disabled={!account || !participant} onDone={load} run={() => sdk.gradeShortlist(marketId(), participant as `0x${string}`, account!)} />

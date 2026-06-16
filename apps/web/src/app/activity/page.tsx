@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { ExternalLink } from 'lucide-react';
 import { useAccount } from 'wagmi';
 import { useQuery } from 'urql';
+import { useAgent } from '@/lib/agent';
 import { ACTIVITY_QUERY, eventLabel, summarizeArgs, timeAgo, marketHref, type ActivityRow } from '@/lib/activity';
 import { txLink } from '@/lib/format';
 import { Section, Card } from '@/components/ui';
@@ -18,6 +19,7 @@ type Filter = 'ALL' | 'PENDING' | 'COMPLETED';
 
 export default function ActivityPage() {
   const { address, isConnected } = useAccount();
+  const { agentId } = useAgent();
   const [filter, setFilter] = useState<Filter>('ALL');
 
   // One query (no status filter) → derive counts + filter client-side, so the tabs always show totals.
@@ -33,7 +35,7 @@ export default function ActivityPage() {
   const now = Math.floor(Date.now() / 1000);
 
   return (
-    <Section title="Activity" desc="Events from your markets, jobs, and applications — read from the Echo indexer.">
+    <Section title="Activity" desc={isConnected && agentId ? `Your events on Echo · agentId ${agentId}` : 'Your events on Echo — markets, jobs, and applications.'}>
       <div className="sm:col-span-2">
         {!isConnected ? (
           <Card title="Connect a wallet"><p className="text-sm text-gray-400">Connect a wallet to see your activity.</p></Card>

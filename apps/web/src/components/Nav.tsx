@@ -1,24 +1,19 @@
 'use client';
 
-import { useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { ConnectButton } from '@rainbow-me/rainbowkit';
-import { Bell } from './Bell';
-import { SignInModal } from './SignInModal';
+import { WalletStatus } from './WalletStatus';
 
-// Role-first IA. Create lives in the Requester flow (#6); Activity is a tab, not the landing (#10).
+// Role-first IA. Disputes is intentionally NOT here — it's market-specific, reached from inside a job.
 const LINKS = [
   { href: '/hire', label: 'Post a job' },
   { href: '/apply', label: 'Find work' },
   { href: '/attribution', label: 'Introducer' },
-  { href: '/disputes', label: 'Disputes' },
   { href: '/activity', label: 'Activity' },
 ];
 
 export function Nav() {
   const path = usePathname();
-  const [signInOpen, setSignInOpen] = useState(false);
   return (
     <nav className="border-b border-gray-200">
       <div className="max-w-6xl mx-auto px-6 flex items-center gap-1 h-14">
@@ -36,37 +31,18 @@ export function Nav() {
           );
         })}
 
-        {/* wallet + notifications, pinned right (#4). Disconnected → our custom sign-in modal
-            (email/passkey + connect-a-wallet); connected → RainbowKit's account chip. */}
-        <div className="ml-auto flex items-center gap-2">
-          <Bell />
-          <ConnectButton.Custom>
-            {({ account, chain, openAccountModal, openChainModal, mounted }) => {
-              if (!mounted) return null;
-              if (!account) {
-                return (
-                  <button onClick={() => setSignInOpen(true)} className="rounded-md bg-gray-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-700">
-                    Sign in
-                  </button>
-                );
-              }
-              if (chain?.unsupported) {
-                return (
-                  <button onClick={openChainModal} className="rounded-md bg-red-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-500">
-                    Wrong network
-                  </button>
-                );
-              }
-              return (
-                <button onClick={openAccountModal} className="rounded-md bg-gray-100 px-3 py-1.5 text-sm font-medium text-gray-800 hover:bg-gray-200">
-                  {account.displayName}
-                </button>
-              );
-            }}
-          </ConnectButton.Custom>
-        </div>
+        {/* Reputation lives in profiles for now; scoring is deferred. Show it as coming soon. */}
+        <span
+          title="Coming soon — reputation currently shows on profiles"
+          className="px-3 py-1.5 text-sm rounded-md text-gray-400 cursor-default inline-flex items-center gap-1.5"
+        >
+          Reputation
+          <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-gray-500">Soon</span>
+        </span>
+
+        {/* USDC balance + bell + wallet + profile avatar, pinned right (#4). */}
+        <WalletStatus />
       </div>
-      {signInOpen && <SignInModal onClose={() => setSignInOpen(false)} />}
     </nav>
   );
 }

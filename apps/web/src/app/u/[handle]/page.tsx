@@ -63,7 +63,7 @@ export default function ProfilePage({ params }: { params: Promise<{ handle: stri
       </div>
       <p className="text-sm text-gray-500 mb-6 font-mono break-all">{address}</p>
 
-      <Section title="Overview" desc="What the Echo indexer knows about this address.">
+      <Section title="Overview" desc="Public on-chain activity on Echo.">
         <Card title="Summary">
           <KV rows={[
             ['agentId', agentId ?? '—'],

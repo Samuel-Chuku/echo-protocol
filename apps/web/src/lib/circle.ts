@@ -73,7 +73,11 @@ export function circleConnector() {
       name: 'Circle Wallet (passkey)',
       type: 'circle' as const,
 
-      async connect() {
+      async connect(params?: { isReconnecting?: boolean }) {
+        // Never trigger the passkey/WebAuthn prompt during wagmi's auto-reconnect on page load — it
+        // must only fire from an explicit "Continue with email" click. wagmi catches this throw and
+        // silently drops the connector from the reconnect attempt.
+        if (params?.isReconnecting) throw new Error('Circle passkey sign-in must be explicit');
         const built = await buildCircleProvider(pendingUsername);
         provider = built.provider;
         address = built.address;
@@ -91,7 +95,8 @@ export function circleConnector() {
         return arcTestnet.id;
       },
       async getProvider() {
-        if (!provider) ({ provider, address } = await buildCircleProvider(pendingUsername));
+        // Return only the provider cached by an explicit connect(); never build here, or a stray
+        // getProvider() call (e.g. during reconnect) would pop the passkey dialog on page load.
         return provider;
       },
       async isAuthorized() {

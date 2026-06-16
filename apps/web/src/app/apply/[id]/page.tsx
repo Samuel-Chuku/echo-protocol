@@ -3,12 +3,15 @@
 import { use, useEffect, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useQuery, gql } from 'urql';
-import { EchoMode } from '@echo/sdk';
+import { EchoMode, CONTRACTS } from '@echo/sdk';
 import { useEcho } from '@/lib/sdk';
 import { useAgent } from '@/lib/agent';
 import { Section, Card, Field, KV } from '@/components/ui';
 import { Command } from '@/components/Command';
+import { IdentityBanner } from '@/components/IdentityBanner';
 import { usdc, scope, short, modeName, modeTagClass, isZeroAddr, MILESTONE_STATUS } from '@/lib/format';
+
+const C = CONTRACTS.arcTestnet;
 
 /**
  * Worker job-detail page (#7). Full subject/description + terms from the indexer, an apply CTA, and a
@@ -71,6 +74,8 @@ export default function JobDetailPage({ params }: { params: Promise<{ id: string
         {m && <span className={`rounded px-2 py-0.5 text-xs font-medium ${modeTagClass(m.mode)}`}>{modeName(m.mode)}</span>}
       </div>
 
+      <div className="mt-4"><IdentityBanner /></div>
+
       {fetching && !m && <p className="text-sm text-gray-400">Loading…</p>}
       {error && <p className="text-sm text-red-600 break-all">{error.message} — is the indexer running on :4000?</p>}
       {!fetching && !error && !m && <p className="text-sm text-gray-400">No market #{id} in the indexer.</p>}
@@ -106,10 +111,15 @@ function OpenApply({ sdk, account, agentId, marketId, closed }: { sdk: ReturnTyp
       <Card title="Apply to this market" hint="applyToMarket — mints a participation receipt; pulls the stake if the market requires one.">
         <Field label="submission text → hash" value={submission} onChange={(e) => setSubmission(e.target.value)} />
         {closed && <p className="text-xs text-amber-600">This market is no longer active.</p>}
-        {need && <p className="text-xs text-amber-600">Connect a wallet + register an agentId (top bar) first.</p>}
+        {need && <p className="text-xs text-amber-600">Register your identity (banner above) first.</p>}
         <div className="flex flex-wrap gap-2">
           <Command label="Apply" disabled={need || closed}
-            run={() => sdk.applyToMarket(marketId, BigInt(agentId || '0'), scope(submission), account!)} />
+            run={async () => {
+              // If the market requires an applicant stake, approve exactly that much first (no standing allowance).
+              const stake = await sdk.marketStakeRequired(marketId).catch(() => 0n);
+              if (stake > 0n) await sdk.ensureUsdcAllowance(C.marketRegistry, stake, account!);
+              return sdk.applyToMarket(marketId, BigInt(agentId || '0'), scope(submission), account!);
+            }} />
           <Command label="Load my application" tone="neutral" disabled={!account}
             run={async () => { setApp(await sdk.getApplication(marketId, account!)); return 'loaded'; }} />
         </div>
@@ -176,7 +186,7 @@ function BountyDeliver({ sdk, account, agentId, marketId, closed }: { sdk: Retur
       <Card title="Submit finding" hint="submitFinding — appends a finding; the requester accepts (≥ default award), rejects, or it auto-escalates.">
         <Field label="finding text → hash" value={deliver} onChange={(e) => setDeliver(e.target.value)} />
         {closed && <p className="text-xs text-amber-600">This bounty is closed.</p>}
-        {need && <p className="text-xs text-amber-600">Connect a wallet + register an agentId (top bar) first.</p>}
+        {need && <p className="text-xs text-amber-600">Register your identity (banner above) first.</p>}
         <Command label="Submit finding" disabled={need || closed}
           run={() => sdk.submitFinding(marketId, BigInt(agentId || '0'), scope(deliver), account!)} />
       </Card>
