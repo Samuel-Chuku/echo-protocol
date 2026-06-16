@@ -16,6 +16,17 @@ export function usdc(base: bigint | number | undefined): string {
   return `${neg ? '-' : ''}${whole}${frac ? '.' + frac : ''}`;
 }
 
+/** USDC base units → compact string truncated (not rounded) to 2 decimals, e.g. 22.001682 → "22.00".
+ *  Used in the nav where space is tight. */
+export function usdcShort(base: bigint | undefined): string {
+  if (base === undefined) return '—';
+  const neg = base < 0n;
+  const abs = neg ? -base : base;
+  const whole = abs / 1_000_000n;
+  const frac2 = (abs % 1_000_000n) / 10_000n; // drop the last 4 digits → truncate to 2 dp
+  return `${neg ? '-' : ''}${whole}.${frac2.toString().padStart(2, '0')}`;
+}
+
 /** Parse a human USDC string ("12.5") into 6-decimal base units. */
 export function toUnits(human: string): bigint {
   const [w, f = ''] = human.trim().split('.');

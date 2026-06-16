@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
 import { useEcho } from '@/lib/sdk';
-import { usdc } from '@/lib/format';
+import { usdcShort } from '@/lib/format';
 import { Bell } from './Bell';
 import { SignInModal } from './SignInModal';
 
@@ -29,7 +29,7 @@ export function WalletStatus() {
     <div className="ml-auto flex items-center gap-2">
       {account && (
         <span className="text-sm text-gray-700 font-medium tabular-nums">
-          {usdc(bal)} <span className="text-xs text-gray-400 font-normal">USDC</span>
+          {usdcShort(bal)} <span className="text-xs text-gray-400 font-normal">USDC</span>
         </span>
       )}
       <Bell />
