@@ -11,13 +11,13 @@ import {
   walletConnectWallet,
 } from '@rainbow-me/rainbowkit/wallets';
 import { arcTestnet } from '@echo/sdk';
-import { circleWallet, circleConfigured } from './circle';
+import { circleConnector, circleConfigured } from './circle';
 
 /**
- * One "Connect Wallet" button → a RainbowKit modal listing every wallet. We use connectorsForWallets
- * (rather than getDefaultConfig) so the Circle Modular Wallet can sit in its own "Smart Wallets" group
- * alongside the standard ones — it only appears when circleConfigured() (the NEXT_PUBLIC_CIRCLE_* env
- * vars are set; see lib/circle.ts).
+ * Two distinct sign-in paths (see components/SignInModal):
+ *  - "Connect a wallet" → the RainbowKit modal listing Rabby/MetaMask/Coinbase/WalletConnect.
+ *  - "Continue with email" → the Circle Modular Wallet (passkey smart account), registered here as a
+ *    standalone wagmi connector OUTSIDE the RainbowKit list, only when circleConfigured().
  *
  * WalletConnect / mobile wallets need a (free) project id from https://cloud.reown.com →
  * NEXT_PUBLIC_WC_PROJECT_ID in apps/web/.env.local. Injected wallets work without it.
@@ -26,11 +26,8 @@ const projectId = process.env.NEXT_PUBLIC_WC_PROJECT_ID || 'echo_console_dev_pla
 
 const chains = [arcTestnet] as unknown as readonly [Chain, ...Chain[]];
 
-const connectors = connectorsForWallets(
+const rainbowConnectors = connectorsForWallets(
   [
-    ...(circleConfigured()
-      ? [{ groupName: 'Smart Wallets', wallets: [circleWallet] }]
-      : []),
     {
       groupName: 'Popular',
       wallets: [injectedWallet, rabbyWallet, metaMaskWallet, coinbaseWallet, walletConnectWallet],
@@ -38,6 +35,9 @@ const connectors = connectorsForWallets(
   ],
   { appName: 'Echo Console', projectId },
 );
+
+// Circle sits alongside (not inside) the RainbowKit connectors so it can be its own modal option.
+const connectors = circleConfigured() ? [circleConnector(), ...rainbowConnectors] : rainbowConnectors;
 
 export const config = createConfig({
   chains,
