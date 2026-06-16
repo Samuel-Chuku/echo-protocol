@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Loader2, ExternalLink, Check, X } from 'lucide-react';
 import { isTxHash, txLink } from '@/lib/format';
 import { formatTxError } from '@/lib/errors';
+import { useTx } from '@/lib/tx';
 
 /**
  * A two-step action button: one button position that the user clicks twice, producing two separate
@@ -27,6 +28,7 @@ export function ApproveCreate({
   /** Called after a successful create — use it to refresh adjacent read panels. */
   onDone?: (result: unknown) => void;
 }) {
+  const { run: runTx } = useTx();
   const [step, setStep] = useState<'approve' | 'create'>('approve');
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<{ ok: boolean; msg: string } | null>(null);
@@ -35,7 +37,7 @@ export function ApproveCreate({
     setBusy(true);
     setResult(null);
     try {
-      await approve();
+      await runTx({ title: approveLabel, kind: 'approval', step: 1, total: 2 }, approve);
       setStep('create');
       setResult({ ok: true, msg: 'Approved — now create (a second wallet confirmation).' });
     } catch (e) {
@@ -49,7 +51,7 @@ export function ApproveCreate({
     setBusy(true);
     setResult(null);
     try {
-      const r = await create();
+      const r = await runTx({ title: createLabel, kind: 'action', step: 2, total: 2 }, create);
       setResult({ ok: true, msg: isTxHash(r) ? (r as string) : 'done' });
       onDone?.(r);
     } catch (e) {

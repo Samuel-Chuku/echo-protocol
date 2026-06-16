@@ -2,9 +2,10 @@
 
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { Bell as BellIcon } from 'lucide-react';
+import { Bell as BellIcon, ExternalLink } from 'lucide-react';
 import { useAccount } from 'wagmi';
 import { useQuery } from 'urql';
+import { txLink } from '@/lib/format';
 import { ACTIVITY_QUERY, eventLabel, summarizeArgs, timeAgo, marketHref, type ActivityRow } from '@/lib/activity';
 
 /**
@@ -68,17 +69,28 @@ export function Bell() {
                         <span className="text-sm font-medium">{eventLabel(r.eventName)}</span>
                         <span className="text-xs text-gray-400 shrink-0">{timeAgo(r.createdAt, now)}</span>
                       </div>
-                      <div className="text-xs text-gray-500 font-mono mt-0.5">
+                      <div className="text-xs text-gray-500 font-mono mt-0.5 pr-10 truncate">
                         {r.marketId !== null && `#${r.marketId} `}{summarizeArgs(r.args)}
                       </div>
                     </>
                   );
                   return (
-                    <li key={r.id}>
+                    <li key={r.id} className="relative">
                       {href ? (
                         <Link href={href} onClick={() => setOpen(false)} className="block px-4 py-2.5 hover:bg-gray-50">{body}</Link>
                       ) : (
                         <div className="px-4 py-2.5">{body}</div>
+                      )}
+                      {/* Tx link sits outside the row Link to avoid a nested anchor. */}
+                      {r.txHash && (
+                        <a
+                          href={txLink(r.txHash)}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="absolute bottom-2.5 right-4 inline-flex items-center gap-0.5 text-xs text-gray-400 hover:text-gray-700"
+                        >
+                          Tx <ExternalLink className="w-3 h-3" />
+                        </a>
                       )}
                     </li>
                   );

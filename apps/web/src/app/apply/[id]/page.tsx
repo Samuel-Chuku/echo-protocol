@@ -8,6 +8,7 @@ import { useEcho } from '@/lib/sdk';
 import { useAgent } from '@/lib/agent';
 import { Section, Card, Field, KV } from '@/components/ui';
 import { Command } from '@/components/Command';
+import { Receipt } from '@/components/Receipt';
 import { IdentityBanner } from '@/components/IdentityBanner';
 import { usdc, scope, short, modeName, modeTagClass, isZeroAddr, MILESTONE_STATUS } from '@/lib/format';
 
@@ -89,6 +90,17 @@ export default function JobDetailPage({ params }: { params: Promise<{ id: string
             <Card title="Terms">
               <KV rows={termsRows(m)} />
             </Card>
+            <div className="sm:col-span-2">
+              <Receipt
+                marketId={m.id}
+                mode={m.mode}
+                status={m.status}
+                requester={m.requester}
+                worker={m.mode === EchoMode.DirectJob ? m.worker : undefined}
+                amount={m.mode === EchoMode.Bounty ? m.pool : m.escrowTotal}
+                amountLabel={m.mode === EchoMode.Bounty ? 'Pool' : 'Escrow'}
+              />
+            </div>
           </Section>
 
           {m.mode === EchoMode.OpenMarket && <OpenApply sdk={sdk} account={account} agentId={agentId} marketId={BigInt(id)} closed={m.status !== 'active'} />}

@@ -6,6 +6,7 @@ import { EchoMode, CONTRACTS } from '@echo/sdk';
 import { useEcho } from '@/lib/sdk';
 import { Section, Card, Field, KV } from '@/components/ui';
 import { Command } from '@/components/Command';
+import { Receipt } from '@/components/Receipt';
 import { usdc, toUnits, short, modeName, FINDING_STATUS, MILESTONE_STATUS } from '@/lib/format';
 
 const C = CONTRACTS.arcTestnet;
@@ -85,6 +86,20 @@ export default function ManageMarketPage({ params }: { params: Promise<{ id: str
             ]} />
           )}
         </Card>
+
+        {data && (
+          <div className="sm:col-span-2">
+            <Receipt
+              marketId={id}
+              mode={data.mode}
+              status={data.market?.closed ? 'closed' : 'active'}
+              requester={data.market?.requester}
+              worker={data.mode === EchoMode.DirectJob ? data.market?.worker : undefined}
+              amount={data.market?.escrowTotal != null ? String(data.market.escrowTotal) : undefined}
+              amountLabel="Escrow"
+            />
+          </div>
+        )}
 
         {/* Open/Reveal actions */}
         {data?.mode === EchoMode.OpenMarket && (

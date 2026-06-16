@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Loader2, ExternalLink, Check, X } from 'lucide-react';
 import { isTxHash, txLink } from '@/lib/format';
 import { formatTxError } from '@/lib/errors';
+import { useTx } from '@/lib/tx';
 
 type Tone = 'primary' | 'neutral' | 'danger';
 const TONES: Record<Tone, string> = {
@@ -31,14 +32,18 @@ export function Command({
   /** Called after a successful run — use it to refresh adjacent read panels. */
   onDone?: (result: unknown) => void;
 }) {
+  const { run: runTx } = useTx();
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<{ ok: boolean; msg: string } | null>(null);
+
+  // Reads/utility buttons (Refresh, Load …) use tone="neutral" and shouldn't pop the tx overlay.
+  const isWrite = tone !== 'neutral';
 
   async function onClick() {
     setBusy(true);
     setResult(null);
     try {
-      const r = await run();
+      const r = isWrite ? await runTx({ title: label, kind: 'action' }, run) : await run();
       const msg = isTxHash(r) ? (r as string) : 'done';
       setResult({ ok: true, msg });
       onDone?.(r);

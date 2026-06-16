@@ -82,8 +82,8 @@ export default function ActivityPage() {
                       ) : (
                         <span className="flex items-center gap-3 flex-1 min-w-0">{body}</span>
                       )}
-                      <a href={txLink(r.txHash)} target="_blank" rel="noreferrer" className="text-gray-300 hover:text-gray-700 shrink-0">
-                        <ExternalLink className="w-3.5 h-3.5" />
+                      <a href={txLink(r.txHash)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-0.5 text-xs text-gray-400 hover:text-gray-700 shrink-0">
+                        Tx <ExternalLink className="w-3.5 h-3.5" />
                       </a>
                     </li>
                   );
