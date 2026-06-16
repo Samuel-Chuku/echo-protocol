@@ -6,7 +6,7 @@ import { ChevronDown, ChevronRight } from 'lucide-react';
 import { useQuery, gql } from 'urql';
 import { Section } from '@/components/ui';
 import { Command } from '@/components/Command';
-import { usdc, short, modeName, modeTagClass } from '@/lib/format';
+import { usdc, short, modeName, modeTagClass, ago, duration } from '@/lib/format';
 
 /**
  * Worker home — browse open markets from the indexer. Each card previews its payout tiers inline
@@ -22,6 +22,8 @@ const OPEN_MARKETS = gql`
       description
       applicantCount
       tiers
+      createdAt
+      ghostDeadline
     }
   }
 `;
@@ -34,6 +36,8 @@ type MarketRow = {
   description: string | null;
   applicantCount: number;
   tiers: string[] | null;
+  createdAt: number;
+  ghostDeadline: number | null;
 };
 
 export default function ApplyPage() {
@@ -76,6 +80,11 @@ function MarketCard({ m }: { m: MarketRow }) {
           {m.description && <span className="block text-xs text-gray-500 line-clamp-2">{m.description}</span>}
         </span>
         <span className="text-xs text-gray-400 shrink-0 pt-0.5">{short(m.requester)} · {m.applicantCount} appl.</span>
+      </div>
+
+      <div className="mt-2 flex items-center gap-3 text-xs text-gray-400 pl-[52px]">
+        <span>Created {ago(m.createdAt)}</span>
+        {m.ghostDeadline ? <span>· Runs {duration(m.ghostDeadline)}</span> : null}
       </div>
 
       <div className="mt-3 flex items-center justify-between gap-2">

@@ -27,6 +27,49 @@ export function usdcShort(base: bigint | undefined): string {
   return `${neg ? '-' : ''}${whole}.${frac2.toString().padStart(2, '0')}`;
 }
 
+/** Compact relative time from a unix-seconds timestamp, e.g. "3h ago", "2d ago", "just now". */
+export function ago(unixSeconds: number | undefined): string {
+  if (!unixSeconds) return '—';
+  const diff = Math.floor(Date.now() / 1000) - unixSeconds;
+  if (diff < 60) return 'just now';
+  const units: [number, string][] = [
+    [31_536_000, 'y'], [2_592_000, 'mo'], [86_400, 'd'], [3_600, 'h'], [60, 'm'],
+  ];
+  for (const [secs, label] of units) {
+    if (diff >= secs) return `${Math.floor(diff / secs)}${label} ago`;
+  }
+  return 'just now';
+}
+
+/** Humanize a duration given in seconds, e.g. 604800 → "7 days", 86400 → "1 day". */
+export function duration(seconds: number | undefined): string {
+  if (!seconds || seconds <= 0) return '—';
+  const units: [number, string][] = [
+    [86_400, 'day'], [3_600, 'hour'], [60, 'minute'],
+  ];
+  for (const [secs, label] of units) {
+    if (seconds >= secs) {
+      const n = Math.round(seconds / secs);
+      return `${n} ${label}${n === 1 ? '' : 's'}`;
+    }
+  }
+  return `${seconds}s`;
+}
+
+/**
+ * Mirror of MarketRegistry._calculateMinEscrow + the reveal-fee floor (MIN_REVEALS = 5), so the
+ * console can pre-fill a valid escrow and never hit InsufficientEscrow. tiers = [reveal/R,
+ * shortlist, final, ghost] in base units; maxApplicants is a plain count.
+ */
+export function recommendedEscrow(tiers: [bigint, bigint, bigint, bigint], maxApplicants: bigint): bigint {
+  const sub = maxApplicants / 5n;      // estimatedSubstantive
+  const short = maxApplicants / 20n;   // estimatedShortlist
+  const fin = maxApplicants / 50n;     // estimatedFinal
+  const calcMin = sub * tiers[0] + short * tiers[1] + fin * tiers[2] + tiers[3];
+  const revealFloor = tiers[0] * 5n;   // escrow must fund at least MIN_REVEALS reveals
+  return calcMin > revealFloor ? calcMin : revealFloor;
+}
+
 /** Parse a human USDC string ("12.5") into 6-decimal base units. */
 export function toUnits(human: string): bigint {
   const [w, f = ''] = human.trim().split('.');

@@ -30,6 +30,7 @@ export const typeDefs = /* GraphQL */ `
     defaultAward: String
     pool: String
     reviewWindow: Int
+    ghostDeadline: Int
     status: String!
     applicantCount: Int!
     createdAt: Int!

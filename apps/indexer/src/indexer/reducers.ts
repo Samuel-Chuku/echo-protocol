@@ -48,6 +48,7 @@ export async function applyEvent(
         subject: meta.subject ?? null, description: meta.description ?? null, metadataURI: s(m.metadataURI),
         scopeHash: s(m.scopeHash), tiers: JSON.stringify((m.tierAmounts ?? []).map(String)),
         escrowTotal: s(m.escrowTotal), revealFee: s(revealFee), flagWindow: Number(flagWindow),
+        ghostDeadline: Number(m.ghostDeadline ?? 0),
         stakeRequired: s(stake), status: m.closed ? 'closed' : 'active',
         applicantCount: Number(m.applicantCount ?? 0), createdAtBlock: ctx.block, createdAt: ctx.now,
       }).onConflictDoNothing();

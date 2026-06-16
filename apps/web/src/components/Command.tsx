@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { Loader2, ExternalLink, Check, X } from 'lucide-react';
 import { isTxHash, txLink } from '@/lib/format';
+import { formatTxError } from '@/lib/errors';
 
 type Tone = 'primary' | 'neutral' | 'danger';
 const TONES: Record<Tone, string> = {
@@ -42,8 +43,7 @@ export function Command({
       setResult({ ok: true, msg });
       onDone?.(r);
     } catch (e: unknown) {
-      const err = e as { shortMessage?: string; details?: string; message?: string };
-      setResult({ ok: false, msg: err.shortMessage || err.details || err.message || String(e) });
+      setResult({ ok: false, msg: formatTxError(e) });
     } finally {
       setBusy(false);
     }

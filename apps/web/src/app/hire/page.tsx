@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useQuery, gql } from 'urql';
 import { useAccount } from 'wagmi';
@@ -10,7 +10,7 @@ import { useAgent } from '@/lib/agent';
 import { Section, Card, Field } from '@/components/ui';
 import { Command } from '@/components/Command';
 import { IdentityBanner } from '@/components/IdentityBanner';
-import { toUnits, scope, modeName, modeTagClass, MODE_BLURBS } from '@/lib/format';
+import { toUnits, usdc, recommendedEscrow, scope, modeName, modeTagClass, MODE_BLURBS } from '@/lib/format';
 
 const C = CONTRACTS.arcTestnet;
 
@@ -74,11 +74,28 @@ function OpenForm({ sdk, account, agentId, disabled }: FormProps) {
   const [desc, setDesc] = useState('');
   const [tiers, setTiers] = useState(['5', '50', '250', '1000']);
   const [escrow, setEscrow] = useState('2000');
+  const [escrowDirty, setEscrowDirty] = useState(false);
   const [maxApplicants, setMax] = useState('50');
   const [ghostDays, setGhostDays] = useState('7');
   const [stake, setStake] = useState('10');
   const [flagDays, setFlagDays] = useState('2');
   const [requiredProofs, setProofs] = useState('0');
+
+  // #7 — mirror the contract's min-escrow so the field pre-fills to a value that can't revert with
+  // InsufficientEscrow. Returns undefined if any input isn't yet a valid number.
+  const recommended = useMemo(() => {
+    try {
+      const t = tiers.map(toUnits) as [bigint, bigint, bigint, bigint];
+      return recommendedEscrow(t, BigInt(maxApplicants || '0'));
+    } catch {
+      return undefined;
+    }
+  }, [tiers, maxApplicants]);
+
+  // Track the recommendation in the escrow field until the requester types their own amount.
+  useEffect(() => {
+    if (!escrowDirty && recommended !== undefined) setEscrow(usdc(recommended));
+  }, [recommended, escrowDirty]);
 
   return (
     <Card title="Open / Reveal market" hint="tier[0] is the reveal fee R; set stake + flag window for a reveal market.">
@@ -91,7 +108,7 @@ function OpenForm({ sdk, account, agentId, disabled }: FormProps) {
         ))}
       </div>
       <div className="grid grid-cols-3 gap-1">
-        <Field label="escrow USDC" value={escrow} onChange={(e) => setEscrow(e.target.value)} />
+        <Field label="escrow USDC" value={escrow} onChange={(e) => { setEscrowDirty(true); setEscrow(e.target.value); }} />
         <Field label="max applicants" value={maxApplicants} onChange={(e) => setMax(e.target.value)} />
         <Field label="ghost (days)" value={ghostDays} onChange={(e) => setGhostDays(e.target.value)} />
       </div>
@@ -100,6 +117,16 @@ function OpenForm({ sdk, account, agentId, disabled }: FormProps) {
         <Field label="flag window (days)" value={flagDays} onChange={(e) => setFlagDays(e.target.value)} />
         <Field label="requiredProofs" value={requiredProofs} onChange={(e) => setProofs(e.target.value)} />
       </div>
+      {recommended !== undefined && (
+        <p className="text-xs text-gray-500">
+          Recommended ≥ <span className="font-medium text-gray-700">{usdc(recommended)} USDC</span> — covers the min reveals, tier payouts, and the ghost reserve.
+          {escrowDirty && (
+            <button type="button" onClick={() => { setEscrowDirty(false); setEscrow(usdc(recommended)); }} className="ml-1 underline hover:text-gray-900">
+              use recommended
+            </button>
+          )}
+        </p>
+      )}
       <p className="text-xs text-gray-400">Approves {escrow} USDC to the market, then creates.</p>
       <Command label={`Approve ${escrow} + create`} disabled={disabled}
         run={async () => {

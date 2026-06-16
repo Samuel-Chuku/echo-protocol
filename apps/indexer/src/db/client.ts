@@ -30,7 +30,7 @@ export function migrate(): void {
       id INTEGER PRIMARY KEY, mode INTEGER NOT NULL, requester TEXT NOT NULL,
       requester_agent_id TEXT, worker TEXT, subject TEXT, description TEXT, metadata_uri TEXT,
       scope_hash TEXT, tiers TEXT, escrow_total TEXT, reveal_fee TEXT, flag_window INTEGER,
-      stake_required TEXT, default_award TEXT, pool TEXT, review_window INTEGER,
+      stake_required TEXT, default_award TEXT, pool TEXT, review_window INTEGER, ghost_deadline INTEGER,
       status TEXT NOT NULL DEFAULT 'active', applicant_count INTEGER NOT NULL DEFAULT 0,
       created_at_block INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL DEFAULT 0
     );
@@ -66,6 +66,13 @@ export function migrate(): void {
       created_at INTEGER NOT NULL DEFAULT 0
     );
   `);
+
+  // Additive column migrations for DBs created before the column existed. SQLite has no
+  // `ADD COLUMN IF NOT EXISTS`, so guard each against the "duplicate column" error. Existing rows
+  // get NULL until a full re-index backfills them.
+  for (const ddl of ['ALTER TABLE markets ADD COLUMN ghost_deadline INTEGER']) {
+    try { sqlite.exec(ddl); } catch { /* column already present */ }
+  }
 }
 
 export { schema };

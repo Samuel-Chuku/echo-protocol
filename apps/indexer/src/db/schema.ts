@@ -42,6 +42,7 @@ export const markets = sqliteTable('markets', {
   defaultAward: text('default_award'), // Bounty
   pool: text('pool'), // Bounty
   reviewWindow: integer('review_window'), // Mode B / Bounty
+  ghostDeadline: integer('ghost_deadline'), // Open: seconds until the Final-tier ghost penalty
   status: text('status').notNull().default('active'), // active | closed | cancelled
   applicantCount: integer('applicant_count').notNull().default(0),
   createdAtBlock: integer('created_at_block').notNull().default(0),
