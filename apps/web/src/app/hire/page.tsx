@@ -8,7 +8,7 @@ import { EchoMode, buildMetadata, CONTRACTS } from '@echo/sdk';
 import { useEcho } from '@/lib/sdk';
 import { useAgent } from '@/lib/agent';
 import { Section, Card, Field } from '@/components/ui';
-import { Command } from '@/components/Command';
+import { ApproveCreate } from '@/components/ApproveCreate';
 import { IdentityBanner } from '@/components/IdentityBanner';
 import { toUnits, usdc, recommendedEscrow, scope, modeName, modeTagClass, MODE_BLURBS } from '@/lib/format';
 
@@ -127,27 +127,29 @@ function OpenForm({ sdk, account, agentId, disabled }: FormProps) {
           )}
         </p>
       )}
-      <p className="text-xs text-gray-400">Approves {escrow} USDC to the market, then creates.</p>
-      <Command label={`Approve ${escrow} + create`} disabled={disabled}
-        run={async () => {
-          await sdk.ensureUsdcAllowance(C.marketRegistry, toUnits(escrow), account!);
-          return sdk.createMarketWithMode({
-            metadataURI: buildMetadata({ subject, description: desc }),
-            scopeHash: scope(subject || 'console-scope'),
-            tierAmounts: tiers.map(toUnits) as unknown as [bigint, bigint, bigint, bigint],
-            minPRep: 0n,
-            maxApplicants: BigInt(maxApplicants),
-            ghostDeadline: BigInt(Number(ghostDays) * 86400),
-            escrowTotal: toUnits(escrow),
-            requesterAgentId: BigInt(agentId || '0'),
-            cfg: {
-              mode: EchoMode.OpenMarket,
-              requiredProofs: BigInt(requiredProofs),
-              stakeRequired: toUnits(stake),
-              flagWindow: BigInt(Number(flagDays) * 86400),
-            },
-          }, account!);
-        }} />
+      <p className="text-xs text-gray-400">Two steps: approve {escrow} USDC, then create — two wallet confirmations.</p>
+      <ApproveCreate
+        approveLabel={`Approve ${escrow} USDC`}
+        createLabel="Create market"
+        disabled={disabled}
+        approve={() => sdk.ensureUsdcAllowance(C.marketRegistry, toUnits(escrow), account!)}
+        create={() => sdk.createMarketWithMode({
+          metadataURI: buildMetadata({ subject, description: desc }),
+          scopeHash: scope(subject || 'console-scope'),
+          tierAmounts: tiers.map(toUnits) as unknown as [bigint, bigint, bigint, bigint],
+          minPRep: 0n,
+          maxApplicants: BigInt(maxApplicants),
+          ghostDeadline: BigInt(Number(ghostDays) * 86400),
+          escrowTotal: toUnits(escrow),
+          requesterAgentId: BigInt(agentId || '0'),
+          cfg: {
+            mode: EchoMode.OpenMarket,
+            requiredProofs: BigInt(requiredProofs),
+            stakeRequired: toUnits(stake),
+            flagWindow: BigInt(Number(flagDays) * 86400),
+          },
+        }, account!)}
+      />
     </Card>
   );
 }
@@ -173,19 +175,21 @@ function DirectForm({ sdk, account, agentId, disabled }: FormProps) {
         <Field label="review (days)" value={reviewDays} onChange={(e) => setReviewDays(e.target.value)} />
       </div>
       <Field label="milestone amounts (USDC, comma)" value={milestones} onChange={(e) => setMilestones(e.target.value)} />
-      <Command label="Approve total + create" disabled={disabled || !worker}
-        run={async () => {
-          await sdk.ensureUsdcAllowance(C.marketRegistry, total(), account!);
-          return sdk.createDirectJob({
-            worker: worker as `0x${string}`,
-            workerAgentId: BigInt(workerAgentId || '0'),
-            requesterAgentId: BigInt(agentId || '0'),
-            metadataURI: buildMetadata({ subject, description: desc }),
-            scopeHash: scope(subject || 'console-job'),
-            milestoneAmounts: amounts(),
-            reviewWindow: BigInt(Number(reviewDays) * 86400),
-          }, account!);
-        }} />
+      <ApproveCreate
+        approveLabel="Approve total"
+        createLabel="Create job"
+        disabled={disabled || !worker}
+        approve={() => sdk.ensureUsdcAllowance(C.marketRegistry, total(), account!)}
+        create={() => sdk.createDirectJob({
+          worker: worker as `0x${string}`,
+          workerAgentId: BigInt(workerAgentId || '0'),
+          requesterAgentId: BigInt(agentId || '0'),
+          metadataURI: buildMetadata({ subject, description: desc }),
+          scopeHash: scope(subject || 'console-job'),
+          milestoneAmounts: amounts(),
+          reviewWindow: BigInt(Number(reviewDays) * 86400),
+        }, account!)}
+      />
     </Card>
   );
 }
@@ -210,20 +214,22 @@ function BountyForm({ sdk, account, agentId, disabled }: FormProps) {
         <Field label="review (days)" value={reviewDays} onChange={(e) => setReviewDays(e.target.value)} />
         <Field label="requiredProofs" value={requiredProofs} onChange={(e) => setProofs(e.target.value)} />
       </div>
-      <p className="text-xs text-gray-400">Approves {pool} USDC to the market, then creates.</p>
-      <Command label={`Approve ${pool} + create`} disabled={disabled}
-        run={async () => {
-          await sdk.ensureUsdcAllowance(C.marketRegistry, toUnits(pool), account!);
-          return sdk.createBounty({
-            requesterAgentId: BigInt(agentId || '0'),
-            metadataURI: buildMetadata({ subject, description: desc }),
-            scopeHash: scope(subject || 'console-bounty'),
-            requiredProofs: BigInt(requiredProofs),
-            defaultAward: toUnits(defaultAward),
-            reviewWindow: BigInt(Number(reviewDays) * 86400),
-            pool: toUnits(pool),
-          }, account!);
-        }} />
+      <p className="text-xs text-gray-400">Two steps: approve {pool} USDC, then create — two wallet confirmations.</p>
+      <ApproveCreate
+        approveLabel={`Approve ${pool} USDC`}
+        createLabel="Create bounty"
+        disabled={disabled}
+        approve={() => sdk.ensureUsdcAllowance(C.marketRegistry, toUnits(pool), account!)}
+        create={() => sdk.createBounty({
+          requesterAgentId: BigInt(agentId || '0'),
+          metadataURI: buildMetadata({ subject, description: desc }),
+          scopeHash: scope(subject || 'console-bounty'),
+          requiredProofs: BigInt(requiredProofs),
+          defaultAward: toUnits(defaultAward),
+          reviewWindow: BigInt(Number(reviewDays) * 86400),
+          pool: toUnits(pool),
+        }, account!)}
+      />
     </Card>
   );
 }
