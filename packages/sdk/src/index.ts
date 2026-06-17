@@ -131,6 +131,16 @@ const ERC20_ABI = [
     inputs: [{ name: 'account', type: 'address' }],
     outputs: [{ name: '', type: 'uint256' }],
   },
+  {
+    type: 'function',
+    name: 'transfer',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'to', type: 'address' },
+      { name: 'amount', type: 'uint256' },
+    ],
+    outputs: [{ name: '', type: 'bool' }],
+  },
 ] as const;
 
 /**
@@ -718,6 +728,22 @@ export class EchoSdk {
       abi: ERC20_ABI,
       functionName: 'approve',
       args: [spender, amount],
+      account,
+    });
+    return this.send(request);
+  }
+
+  /**
+   * Send USDC from `account` to `to`. A plain ERC-20 transfer — works for any connected wallet,
+   * including the Circle passkey smart account (routed as a sponsored userOp). Returns the tx hash.
+   */
+  async transferUsdc(to: Address, amount: bigint, account: Address) {
+    if (!this.walletClient) throw new Error('Wallet not connected');
+    const { request } = await this.publicClient.simulateContract({
+      address: this.contracts.usdc,
+      abi: ERC20_ABI,
+      functionName: 'transfer',
+      args: [to, amount],
       account,
     });
     return this.send(request);

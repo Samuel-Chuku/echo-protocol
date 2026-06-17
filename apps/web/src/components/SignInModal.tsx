@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { Mail, Wallet, X, ArrowRight, Loader2 } from 'lucide-react';
 import { useConnect } from 'wagmi';
 import { useConnectModal } from '@rainbow-me/rainbowkit';
-import { CIRCLE_CONNECTOR_ID, circleConfigured, setCircleUsername } from '@/lib/circle';
+import { CIRCLE_CONNECTOR_ID, circleConfigured, setCircleUsername, setCircleMode, type CircleMode } from '@/lib/circle';
 
 /**
  * Sign-in modal with two distinct paths (the Karwan pattern, #5):
@@ -24,17 +24,24 @@ export function SignInModal({ onClose }: { onClose: () => void }) {
   const circle = connectors.find((c) => c.id === CIRCLE_CONNECTOR_ID);
   const showCircle = circleConfigured() && !!circle;
 
-  async function continueWithEmail() {
-    if (!emailStep) { setEmailStep(true); return; }
+  const [mode, setMode] = useState<CircleMode>('register');
+
+  // mode === 'register' → create a brand-new passkey wallet (email is the passkey label).
+  // mode === 'login'    → present an existing passkey (returning user).
+  async function continueWithEmail(intent: CircleMode) {
+    if (!emailStep) { setMode(intent); setEmailStep(true); return; }
     setErr('');
     setBusy(true);
     try {
+      setCircleMode(intent);
       setCircleUsername(email.trim());
       await connectAsync({ connector: circle! });
       onClose();
     } catch (e: any) {
       setErr(e?.shortMessage || e?.message || 'Passkey sign-in failed.');
       setBusy(false);
+    } finally {
+      setCircleMode(undefined); // don't leak intent into wagmi auto-reconnect
     }
   }
 
@@ -66,24 +73,39 @@ export function SignInModal({ onClose }: { onClose: () => void }) {
                     autoFocus
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === 'Enter') continueWithEmail(); }}
+                    onKeyDown={(e) => { if (e.key === 'Enter') continueWithEmail(mode); }}
                     placeholder="you@example.com"
                     className="mt-0.5 w-full px-2.5 py-1.5 text-sm rounded-md border border-gray-300 focus:border-gray-500 focus:outline-none"
                   />
                 </label>
-                <button
-                  onClick={continueWithEmail}
-                  disabled={busy}
-                  className="mt-2 w-full inline-flex items-center justify-center gap-2 rounded-lg bg-gray-900 px-4 py-2.5 text-sm font-medium text-white hover:bg-gray-700 disabled:opacity-50"
-                >
-                  {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Mail className="w-4 h-4" />}
-                  {busy ? 'Creating your passkey…' : 'Continue'}
-                </button>
-                <p className="mt-1.5 text-xs text-gray-400">You&apos;ll be asked for a passkey (Face/Touch/PIN). No password.</p>
+                {busy ? (
+                  <button disabled className="mt-2 w-full inline-flex items-center justify-center gap-2 rounded-lg bg-gray-900 px-4 py-2.5 text-sm font-medium text-white opacity-50">
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    {mode === 'register' ? 'Creating your passkey…' : 'Opening your passkey…'}
+                  </button>
+                ) : (
+                  <div className="mt-2 grid grid-cols-2 gap-2">
+                    <button
+                      onClick={() => continueWithEmail('register')}
+                      className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-gray-900 px-3 py-2.5 text-sm font-medium text-white hover:bg-gray-700"
+                    >
+                      <Mail className="w-4 h-4" /> Create wallet
+                    </button>
+                    <button
+                      onClick={() => continueWithEmail('login')}
+                      className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-gray-300 px-3 py-2.5 text-sm font-medium text-gray-800 hover:bg-gray-50"
+                    >
+                      Sign in
+                    </button>
+                  </div>
+                )}
+                <p className="mt-1.5 text-xs text-gray-400">
+                  New here? <b>Create wallet</b> makes a passkey (Face/Touch/PIN) — no password. Returning? <b>Sign in</b> with your existing passkey.
+                </p>
               </div>
             ) : (
               <button
-                onClick={continueWithEmail}
+                onClick={() => continueWithEmail('register')}
                 className="w-full inline-flex items-center justify-between gap-2 rounded-xl border border-gray-900 bg-gray-900 px-4 py-3 text-sm font-medium text-white hover:bg-gray-700"
               >
                 <span className="inline-flex items-center gap-2"><Mail className="w-4 h-4" /> Continue with email</span>

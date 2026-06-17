@@ -7,7 +7,7 @@ import { useAccount } from 'wagmi';
 import { useQuery } from 'urql';
 import { useAgent } from '@/lib/agent';
 import { ACTIVITY_QUERY, eventLabel, summarizeArgs, timeAgo, marketHref, type ActivityRow } from '@/lib/activity';
-import { txLink } from '@/lib/format';
+import { txLink, short } from '@/lib/format';
 import { Section, Card } from '@/components/ui';
 
 /**
@@ -82,8 +82,8 @@ export default function ActivityPage() {
                       ) : (
                         <span className="flex items-center gap-3 flex-1 min-w-0">{body}</span>
                       )}
-                      <a href={txLink(r.txHash)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-0.5 text-xs text-gray-400 hover:text-gray-700 shrink-0">
-                        Tx <ExternalLink className="w-3.5 h-3.5" />
+                      <a href={txLink(r.txHash)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs text-gray-400 hover:text-gray-700 shrink-0">
+                        Tx: <span className="font-mono">{short(r.txHash)}</span> <ExternalLink className="w-3.5 h-3.5" />
                       </a>
                     </li>
                   );

@@ -28,6 +28,12 @@ export const circleConfigured = () => Boolean(CLIENT_KEY && CLIENT_URL);
 let pendingUsername: string | undefined;
 export function setCircleUsername(name: string) { pendingUsername = name || undefined; }
 
+// Explicit intent from the sign-in modal: 'register' = new user (create a passkey), 'login' = returning
+// user (present an existing passkey). undefined = legacy auto (try login, then register).
+export type CircleMode = 'register' | 'login';
+let pendingMode: CircleMode | undefined;
+export function setCircleMode(mode: CircleMode | undefined) { pendingMode = mode; }
+
 /** Build the Circle Smart Account EIP-1193 provider via passkey (login, else register). Dynamic-imports
  *  the Circle + viem AA SDKs so the connector module stays light and SSR-safe. */
 async function buildCircleProvider(username?: string): Promise<{ provider: any; address: `0x${string}` }> {
@@ -40,23 +46,88 @@ async function buildCircleProvider(username?: string): Promise<{ provider: any; 
   const passkeyTransport = core.toPasskeyTransport(CLIENT_URL, CLIENT_KEY);
   const modularTransport = core.toModularTransport(`${CLIENT_URL}/${CHAIN_SLUG}`, CLIENT_KEY);
 
-  // Returning users log in with their existing passkey; first-timers register one under their email.
+  // Resolve the passkey credential by explicit intent:
+  //  - 'login'    → present an existing passkey only (no silent account creation).
+  //  - 'register' → create a new passkey under the email username.
+  //  - undefined  → legacy auto: try login, fall back to register.
   let credential;
-  try {
+  if (pendingMode === 'login') {
     credential = await core.toWebAuthnCredential({ transport: passkeyTransport, mode: core.WebAuthnMode.Login });
-  } catch {
+  } else if (pendingMode === 'register') {
     credential = await core.toWebAuthnCredential({
       transport: passkeyTransport, mode: core.WebAuthnMode.Register, username: username || 'echo-user',
     });
+  } else {
+    try {
+      credential = await core.toWebAuthnCredential({ transport: passkeyTransport, mode: core.WebAuthnMode.Login });
+    } catch {
+      credential = await core.toWebAuthnCredential({
+        transport: passkeyTransport, mode: core.WebAuthnMode.Register, username: username || 'echo-user',
+      });
+    }
   }
 
   const client = viem.createPublicClient({ chain: arcTestnet, transport: modularTransport });
   const smartAccount = await core.toCircleSmartAccount({ client, owner: aa.toWebAuthnAccount({ credential }) });
-  const bundlerClient = aa.createBundlerClient({ account: smartAccount, chain: arcTestnet, transport: modularTransport });
+
+  // Arc's bundler returns gas prices as a TIERED object via `circle_getUserOperationGasPrice`
+  // ({ low|medium|high: { maxFeePerGas, maxPriorityFeePerGas } } as hex strings), not flat fee
+  // fields. Without a custom fee hook, viem's generic estimateFeesPerGas receives that object and
+  // does `BigInt({...})` → "Cannot convert [object Object] to a BigInt" (the register failure). The
+  // `userOperation.estimateFeesPerGas` hook below mirrors Circle's quickstart: read the tier and
+  // convert with hexToBigInt.
+  const estimateFeesPerGas = async ({ bundlerClient }: any) => {
+    const price = await bundlerClient.request({ method: 'circle_getUserOperationGasPrice', params: [] });
+    // Temporary signal so we can confirm the new fee hook is actually running (vs a stale cached
+    // provider). Remove once register works.
+    // eslint-disable-next-line no-console
+    console.log('[circle] estimateFeesPerGas hook running; gas price tiers =', price);
+    const tier = price.medium ?? price.high ?? price.low;
+    return {
+      maxFeePerGas: viem.hexToBigInt(tier.maxFeePerGas),
+      maxPriorityFeePerGas: viem.hexToBigInt(tier.maxPriorityFeePerGas),
+    };
+  };
+
+  // `paymaster: true` routes every userOp through the Circle Paymaster (Gas Station). viem's
+  // prepareUserOperation honours this client-level default. Sponsorship still requires a Gas Station
+  // policy enabled for Arc Testnet on this client key (the wrapper below logs the real reason if not).
+  const bundlerClient = aa.createBundlerClient({
+    account: smartAccount,
+    chain: arcTestnet,
+    transport: modularTransport,
+    paymaster: true,
+    userOperation: { estimateFeesPerGas },
+  });
 
   const publicClient = viem.createPublicClient({ chain: arcTestnet, transport: viem.http('https://rpc.testnet.arc.network') });
-  const provider = new core.EIP1193Provider(bundlerClient, publicClient);
+  const provider = wrapWithDiagnostics(new core.EIP1193Provider(bundlerClient, publicClient));
   return { provider, address: smartAccount.address as `0x${string}` };
+}
+
+/**
+ * Adapt Circle's `EIP1193Provider` to the EIP-1193 contract viem's `custom()` transport expects.
+ *
+ * Despite its name, Circle's provider is web3.js-style: every `request()` resolves to a full
+ * JSON-RPC *response object* `{ jsonrpc, id, result }` (and `{ ..., error }` on failure). viem's
+ * `custom()` transport — like EIP-1193 — expects `request()` to return the RAW result (or throw).
+ * Without unwrapping, viem feeds the whole object into e.g. `hexToNumber` for `eth_chainId`, which
+ * does `BigInt({...})` → "Cannot convert [object Object] to a BigInt", killing every Circle write
+ * before it leaves the browser. We unwrap `.result` (throwing `.error`) so viem gets a conformant
+ * provider.
+ */
+function wrapWithDiagnostics(provider: any): any {
+  const orig = provider.request.bind(provider);
+  provider.request = async (payload: any) => {
+    const res = await orig(payload);
+    // Only unwrap genuine JSON-RPC envelopes; pass anything already-raw straight through.
+    if (res && typeof res === 'object' && 'jsonrpc' in res && ('result' in res || 'error' in res)) {
+      if (res.error) throw res.error;
+      return res.result;
+    }
+    return res;
+  };
+  return provider;
 }
 
 /**

@@ -23,7 +23,20 @@ export function formatTxError(e: unknown): string {
         return `${name}${argStr}`;
       }
     }
-    return e.shortMessage || e.message;
+
+    // No decodable contract revert. This is the common shape for smart-account / ERC-4337 userOp
+    // failures (Circle modular wallet): viem's top-level shortMessage is the generic "An unknown
+    // error occurred…". The real reason lives deeper — walk to the root cause and prefer its
+    // shortMessage/details/metaMessages over the generic top-level one.
+    const root = e.walk() as BaseError;
+    const deepest =
+      (root instanceof BaseError ? root.shortMessage : undefined) ||
+      (root as { details?: string }).details ||
+      root.message;
+    const meta = e.metaMessages?.length ? ` — ${e.metaMessages.join(' ')}` : '';
+    const generic = /unknown error/i.test(e.shortMessage);
+    const base = generic && deepest && deepest !== e.shortMessage ? deepest : e.shortMessage || e.message;
+    return `${base}${meta}`.trim();
   }
   const err = e as { shortMessage?: string; details?: string; message?: string };
   return err.shortMessage || err.details || err.message || String(e);

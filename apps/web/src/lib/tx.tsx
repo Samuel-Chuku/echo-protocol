@@ -2,7 +2,7 @@
 
 import { createContext, useCallback, useContext, useRef, useState, type ReactNode } from 'react';
 import { Loader2, CheckCircle2, XCircle, ExternalLink, Copy, Check, Wallet } from 'lucide-react';
-import { isTxHash, txLink } from './format';
+import { isTxHash, txLink, short } from './format';
 import { formatTxError } from './errors';
 
 /**
@@ -143,15 +143,23 @@ function Failure({ state, onClose }: { state: TxState; onClose: () => void }) {
   );
 }
 
-/** A receipt row: the tx hash with copy + Arcscan link — reused by the overlay and the job-page Receipt. */
-export function TxRow({ hash, label = 'Transaction' }: { hash: string; label?: string }) {
+/** A receipt row: a "Tx: 0x…↗" Arcscan link with copy — reused by the overlay and the job-page Receipt. */
+export function TxRow({ hash }: { hash: string }) {
   const [copied, setCopied] = useState(false);
   return (
     <div className="flex items-center gap-2 text-sm">
       <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500" />
-      <span className="font-medium text-gray-700">{label}</span>
+      <a
+        href={txLink(hash)}
+        target="_blank"
+        rel="noreferrer"
+        title="View on Arcscan"
+        className="inline-flex items-center gap-1 font-medium text-gray-700 hover:underline"
+      >
+        Tx: <span className="font-mono text-gray-500">{short(hash)}</span>
+        <ExternalLink className="h-3.5 w-3.5" />
+      </a>
       <span className="flex-1" />
-      <span className="font-mono text-xs text-gray-500">{hash.slice(0, 8)}…{hash.slice(-6)}</span>
       <button
         onClick={() => { navigator.clipboard?.writeText(hash).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1200); }).catch(() => {}); }}
         title="Copy tx hash"
@@ -159,9 +167,6 @@ export function TxRow({ hash, label = 'Transaction' }: { hash: string; label?: s
       >
         {copied ? <Check className="h-4 w-4 text-emerald-500" /> : <Copy className="h-4 w-4" />}
       </button>
-      <a href={txLink(hash)} target="_blank" rel="noreferrer" title="View on Arcscan" className="text-gray-400 hover:text-gray-700">
-        <ExternalLink className="h-4 w-4" />
-      </a>
     </div>
   );
 }

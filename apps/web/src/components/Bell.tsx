@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { Bell as BellIcon, ExternalLink } from 'lucide-react';
 import { useAccount } from 'wagmi';
 import { useQuery } from 'urql';
-import { txLink } from '@/lib/format';
+import { txLink, short } from '@/lib/format';
 import { ACTIVITY_QUERY, eventLabel, summarizeArgs, timeAgo, marketHref, type ActivityRow } from '@/lib/activity';
 
 /**
@@ -69,7 +69,7 @@ export function Bell() {
                         <span className="text-sm font-medium">{eventLabel(r.eventName)}</span>
                         <span className="text-xs text-gray-400 shrink-0">{timeAgo(r.createdAt, now)}</span>
                       </div>
-                      <div className="text-xs text-gray-500 font-mono mt-0.5 pr-10 truncate">
+                      <div className="text-xs text-gray-500 font-mono mt-0.5 pr-28 truncate">
                         {r.marketId !== null && `#${r.marketId} `}{summarizeArgs(r.args)}
                       </div>
                     </>
@@ -87,9 +87,9 @@ export function Bell() {
                           href={txLink(r.txHash)}
                           target="_blank"
                           rel="noreferrer"
-                          className="absolute bottom-2.5 right-4 inline-flex items-center gap-0.5 text-xs text-gray-400 hover:text-gray-700"
+                          className="absolute bottom-2.5 right-4 inline-flex items-center gap-1 text-xs text-gray-400 hover:text-gray-700"
                         >
-                          Tx <ExternalLink className="w-3 h-3" />
+                          Tx: <span className="font-mono">{short(r.txHash)}</span> <ExternalLink className="w-3 h-3" />
                         </a>
                       )}
                     </li>
