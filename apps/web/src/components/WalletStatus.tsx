@@ -10,6 +10,7 @@ import { usdcShort } from '@/lib/format';
 import { CIRCLE_CONNECTOR_ID } from '@/lib/circle';
 import { Bell } from './Bell';
 import { SignInModal } from './SignInModal';
+import { SendButton } from './SendUsdc';
 
 /**
  * Right-side wallet cluster in the nav: USDC balance (auto-refreshing), the notification bell, an
@@ -80,6 +81,7 @@ export function WalletStatus() {
                 <span className="h-2 w-2 rounded-full bg-emerald-500" />
                 {chain?.name ?? arcTestnet.name}
               </span>
+              <SendButton />
               <CopyChip account={account!} displayName={acc.displayName} />
               {openAccountModal && <ProfileAvatar onClick={openAccountModal} account={account!} />}
             </div>

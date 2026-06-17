@@ -1,17 +1,15 @@
 'use client';
 
-import { use, useEffect, useMemo, useState } from 'react';
+import { use, useMemo } from 'react';
 import Link from 'next/link';
 import { ExternalLink } from 'lucide-react';
 import { getAddress } from 'viem';
 import { useAccount } from 'wagmi';
 import { useQuery, gql } from 'urql';
 import { eventLabel, summarizeArgs, timeAgo, marketHref, type ActivityRow } from '@/lib/activity';
-import { short, modeName, modeTagClass, txLink, addrLink, usdc, toUnits } from '@/lib/format';
-import { Section, Card, KV, Field } from '@/components/ui';
-import { Command } from '@/components/Command';
-import { useEcho } from '@/lib/sdk';
-import { CIRCLE_CONNECTOR_ID } from '@/lib/circle';
+import { short, modeName, modeTagClass, txLink, addrLink } from '@/lib/format';
+import { Section, Card, KV } from '@/components/ui';
+import { SendUsdcCard, useIsPasskeyWallet } from '@/components/SendUsdc';
 
 /**
  * Public profile (#7, profiles-only — reputation scoring stays deferred). Aggregates what the indexer
@@ -59,10 +57,10 @@ export default function ProfilePage({ params }: { params: Promise<{ handle: stri
     ?? null;
   const now = Math.floor(Date.now() / 1000);
 
-  // Send is offered only to the profile's own passkey (Circle) wallet, viewing its own profile.
-  const { address: connected, connector } = useAccount();
+  // Send is offered only on your OWN profile while connected with the passkey wallet.
+  const { address: connected } = useAccount();
+  const isPasskey = useIsPasskeyWallet();
   const isOwn = !!connected && connected.toLowerCase() === address.toLowerCase();
-  const isPasskey = connector?.id === CIRCLE_CONNECTOR_ID;
   const showSend = isOwn && isPasskey;
 
   return (
@@ -75,7 +73,7 @@ export default function ProfilePage({ params }: { params: Promise<{ handle: stri
 
       {showSend && (
         <Section title="Send USDC" desc="Transfer USDC from your passkey wallet. Gas is sponsored on Arc.">
-          <div className="sm:col-span-2"><SendUsdc /></div>
+          <div className="sm:col-span-2"><SendUsdcCard /></div>
         </Section>
       )}
 
@@ -165,41 +163,5 @@ export default function ProfilePage({ params }: { params: Promise<{ handle: stri
         </div>
       </Section>
     </div>
-  );
-}
-
-/** Send-USDC card for the connected passkey (Circle) wallet. Validates a recipient + amount, shows
- *  the live balance, and routes the transfer through the tx overlay (sponsored userOp on Arc). */
-function SendUsdc() {
-  const { sdk, account } = useEcho();
-  const [to, setTo] = useState('');
-  const [amount, setAmount] = useState('');
-  const [bal, setBal] = useState<bigint>();
-
-  const loadBal = async () => {
-    if (!account) return;
-    setBal((await sdk.usdcBalanceOf(account).catch(() => undefined)) as bigint | undefined);
-  };
-  useEffect(() => { loadBal(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [account]);
-
-  const validTo = /^0x[0-9a-fA-F]{40}$/.test(to.trim());
-  const amt = (() => { try { return amount ? toUnits(amount) : 0n; } catch { return 0n; } })();
-  const overBalance = bal !== undefined && amt > bal;
-  const disabled = !account || !validTo || amt <= 0n || overBalance;
-
-  return (
-    <Card title="Send USDC" hint="A plain transfer from your smart account. Recipient receives native USDC on Arc.">
-      <p className="text-xs text-gray-500">Balance: <b className="font-mono">{bal !== undefined ? usdc(bal) : '—'} USDC</b></p>
-      <Field label="recipient address" value={to} onChange={(e) => setTo(e.target.value)} placeholder="0x…" />
-      <Field label="amount (USDC)" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0.00" />
-      {to && !validTo && <p className="text-xs text-amber-600">Enter a valid 0x address.</p>}
-      {overBalance && <p className="text-xs text-amber-600">Amount exceeds your balance.</p>}
-      <Command
-        label={amt > 0n && validTo ? `Send ${amount} USDC` : 'Send USDC'}
-        disabled={disabled}
-        onDone={loadBal}
-        run={() => sdk.transferUsdc(to.trim() as `0x${string}`, amt, account!)}
-      />
-    </Card>
   );
 }
