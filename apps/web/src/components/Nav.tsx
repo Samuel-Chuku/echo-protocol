@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { useAccount } from 'wagmi';
 import { WalletStatus } from './WalletStatus';
 
 // Role-first IA. Disputes is intentionally NOT here — it's market-specific, reached from inside a job.
@@ -14,6 +15,9 @@ const LINKS = [
 
 export function Nav() {
   const path = usePathname();
+  const { address } = useAccount();
+  const repHref = address ? `/u/${address}` : null;
+  const repActive = !!repHref && path.startsWith(repHref);
   return (
     <nav className="border-b border-gray-200">
       <div className="max-w-6xl mx-auto px-6 flex items-center gap-1 h-14">
@@ -31,14 +35,23 @@ export function Nav() {
           );
         })}
 
-        {/* Reputation lives in profiles for now; scoring is deferred. Show it as coming soon. */}
-        <span
-          title="Coming soon — reputation currently shows on profiles"
-          className="px-3 py-1.5 text-sm rounded-md text-gray-400 cursor-default inline-flex items-center gap-1.5"
-        >
-          Reputation
-          <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-gray-500">Soon</span>
-        </span>
+        {/* Reputation = the connected wallet's own profile (rep section anchors there). Disabled
+            chip when no wallet connected, so the nav layout stays stable on connect. */}
+        {repHref ? (
+          <Link
+            href={repHref}
+            className={`px-3 py-1.5 text-sm rounded-md transition ${repActive ? 'bg-gray-900 text-white' : 'text-gray-600 hover:bg-gray-100'}`}
+          >
+            Reputation
+          </Link>
+        ) : (
+          <span
+            title="Connect a wallet to see your reputation"
+            className="px-3 py-1.5 text-sm rounded-md text-gray-400 cursor-default"
+          >
+            Reputation
+          </span>
+        )}
 
         {/* USDC balance + bell + wallet + profile avatar, pinned right (#4). */}
         <WalletStatus />

@@ -2,13 +2,14 @@ import { eq } from 'drizzle-orm';
 import { db } from '../db/client.js';
 import { cursor, events } from '../db/schema.js';
 import { publicClient } from '../chain.js';
-import { MarketRegistryABI, DisputeResolverABI } from '../abis.js';
+import { MarketRegistryABI, DisputeResolverABI, EchoHookABI } from '../abis.js';
 import { config } from '../config.js';
 import { applyEvent } from './reducers.js';
 
 const SOURCES = [
   { address: config.contracts.marketRegistry as `0x${string}`, abi: MarketRegistryABI },
   { address: config.contracts.disputeResolver as `0x${string}`, abi: DisputeResolverABI },
+  { address: config.contracts.echoHook as `0x${string}`, abi: EchoHookABI }, // settlement / reputation
 ];
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));

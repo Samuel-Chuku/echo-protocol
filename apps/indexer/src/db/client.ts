@@ -59,6 +59,18 @@ export async function migrate(): Promise<void> {
       id TEXT PRIMARY KEY, market_id INTEGER NOT NULL, participant TEXT NOT NULL,
       status INTEGER NOT NULL DEFAULT 1, revealed_at INTEGER
     );
+    CREATE TABLE IF NOT EXISTS reputation (
+      address TEXT PRIMARY KEY, agent_id TEXT,
+      jobs_completed INTEGER NOT NULL DEFAULT 0,
+      total_earned TEXT NOT NULL DEFAULT '0',
+      tier_sum INTEGER NOT NULL DEFAULT 0,
+      ghost_count INTEGER NOT NULL DEFAULT 0,
+      total_slashed TEXT NOT NULL DEFAULT '0',
+      r_rep_slashes INTEGER NOT NULL DEFAULT 0,
+      last_event_block INTEGER NOT NULL DEFAULT 0,
+      updated_at INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS reputation_agent_id ON reputation(agent_id);
     CREATE TABLE IF NOT EXISTS disputes (
       id INTEGER PRIMARY KEY, subject INTEGER NOT NULL, market_id INTEGER, target INTEGER,
       participant TEXT, opener TEXT, counter TEXT, bond TEXT, status INTEGER NOT NULL DEFAULT 0,

@@ -1,6 +1,6 @@
 import { eq, sql } from 'drizzle-orm';
 import { db } from '../db/client.js';
-import { markets, applications, findings, milestones, revealHolds, disputes } from '../db/schema.js';
+import { markets, applications, findings, milestones, revealHolds, disputes, reputation } from '../db/schema.js';
 import { publicClient } from '../chain.js';
 import { MarketRegistryABI } from '../abis.js';
 import { config } from '../config.js';
@@ -196,9 +196,90 @@ export async function applyEvent(
         .where(eq(disputes.id, Number(args.disputeId)));
       return { marketId: null, actor: null };
 
+    // ── EchoHook (settlement + reputation) ──
+    case 'TierPayout': {
+      // Provider got paid at tier T (0 reveal, 1 shortlist, 2 final). Bump P-Rep totals.
+      const provider = String(args.provider).toLowerCase();
+      const net = String(args.net ?? '0');
+      const tier = Number(args.tier ?? 0);
+      await upsertReputation(provider, ctx, {
+        jobsCompleted: 1,
+        totalEarnedDelta: net,
+        tierSumDelta: tier + 1,
+      });
+      return { marketId: mid, actor: provider };
+    }
+
+    case 'GhostPenalty': {
+      // Provider ghosted at the final tier — slash R-Rep on the provider side.
+      const provider = String(args.provider).toLowerCase();
+      const amount = String(args.ghostAmount ?? '0');
+      await upsertReputation(provider, ctx, {
+        ghostCountDelta: 1,
+        totalSlashedDelta: amount,
+      });
+      return { marketId: mid, actor: provider };
+    }
+
+    case 'RRepSlashed': {
+      // Requester-side R-Rep slash. Event carries only agentId; look up the address via the
+      // earliest market we indexed for that requester.
+      const agentId = String(args.requesterAgentId);
+      const [m] = await db.select({ requester: markets.requester })
+        .from(markets).where(eq(markets.requesterAgentId, agentId)).limit(1);
+      if (!m) return { marketId: mid, actor: null }; // unknown agentId — ignore
+      const requester = m.requester.toLowerCase();
+      await upsertReputation(requester, ctx, { rRepSlashesDelta: 1, agentId });
+      return { marketId: mid, actor: requester };
+    }
+
     default:
       return { marketId: mid, actor: null };
   }
+}
+
+type RepDelta = {
+  jobsCompleted?: number;
+  totalEarnedDelta?: string; // bigint as decimal string
+  tierSumDelta?: number;
+  ghostCountDelta?: number;
+  totalSlashedDelta?: string;
+  rRepSlashesDelta?: number;
+  agentId?: string;
+};
+
+/**
+ * Atomic upsert into the reputation rollup. We rely on Postgres `ON CONFLICT DO UPDATE` so the
+ * increments happen in one round-trip with no read-modify-write race. bigint columns (total_earned,
+ * total_slashed) are stored as TEXT and added with `(col::numeric + $delta::numeric)::text`.
+ */
+async function upsertReputation(address: string, ctx: Ctx, d: RepDelta): Promise<void> {
+  const insert = {
+    address,
+    agentId: d.agentId ?? null,
+    jobsCompleted: d.jobsCompleted ?? 0,
+    totalEarned: d.totalEarnedDelta ?? '0',
+    tierSum: d.tierSumDelta ?? 0,
+    ghostCount: d.ghostCountDelta ?? 0,
+    totalSlashed: d.totalSlashedDelta ?? '0',
+    rRepSlashes: d.rRepSlashesDelta ?? 0,
+    lastEventBlock: ctx.block,
+    updatedAt: ctx.now,
+  };
+  await db.insert(reputation).values(insert).onConflictDoUpdate({
+    target: reputation.address,
+    set: {
+      agentId: sql`COALESCE(${reputation.agentId}, EXCLUDED.agent_id)`,
+      jobsCompleted: sql`${reputation.jobsCompleted} + EXCLUDED.jobs_completed`,
+      totalEarned: sql`(${reputation.totalEarned}::numeric + EXCLUDED.total_earned::numeric)::text`,
+      tierSum: sql`${reputation.tierSum} + EXCLUDED.tier_sum`,
+      ghostCount: sql`${reputation.ghostCount} + EXCLUDED.ghost_count`,
+      totalSlashed: sql`(${reputation.totalSlashed}::numeric + EXCLUDED.total_slashed::numeric)::text`,
+      rRepSlashes: sql`${reputation.rRepSlashes} + EXCLUDED.r_rep_slashes`,
+      lastEventBlock: sql`GREATEST(${reputation.lastEventBlock}, EXCLUDED.last_event_block)`,
+      updatedAt: sql`EXCLUDED.updated_at`,
+    },
+  });
 }
 
 async function findingSubmitter(marketId: number, idx: number): Promise<string | null> {

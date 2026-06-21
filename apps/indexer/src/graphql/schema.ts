@@ -10,6 +10,8 @@ export const typeDefs = /* GraphQL */ `
     "Activity for a wallet (as actor or as the market's requester). status: PENDING | COMPLETED."
     activity(address: String!, status: String, limit: Int): [Activity!]!
     disputes(status: Int): [Dispute!]!
+    "Per-address reputation rollup (raw counters from EchoHook). null when no events yet."
+    reputation(address: String!): Reputation
     health: Health!
   }
 
@@ -94,6 +96,19 @@ export const typeDefs = /* GraphQL */ `
     forOpener: Int!
     against: Int!
     createdAt: Int!
+  }
+
+  type Reputation {
+    address: String!
+    agentId: String
+    jobsCompleted: Int!
+    totalEarned: String!
+    tierSum: Int!
+    ghostCount: Int!
+    totalSlashed: String!
+    rRepSlashes: Int!
+    lastEventBlock: Int!
+    updatedAt: Int!
   }
 
   type Health {

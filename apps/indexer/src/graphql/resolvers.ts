@@ -1,6 +1,6 @@
 import { and, desc, eq, inArray, or, sql } from 'drizzle-orm';
 import { db } from '../db/client.js';
-import { markets, applications, findings, milestones, disputes, events, cursor } from '../db/schema.js';
+import { markets, applications, findings, milestones, disputes, events, cursor, reputation } from '../db/schema.js';
 import { publicClient } from '../chain.js';
 
 // Per-event lifecycle tag for the pending/completed split in the activity feed.
@@ -54,6 +54,13 @@ export const resolvers = {
       db.select().from(disputes)
         .where(a.status !== undefined && a.status !== null ? eq(disputes.status, a.status) : undefined)
         .orderBy(desc(disputes.id)),
+
+    reputation: async (_: unknown, a: { address: string }) => {
+      // Stored lowercased so /u/{handle} works regardless of caller casing.
+      const [row] = await db.select().from(reputation)
+        .where(eq(reputation.address, a.address.toLowerCase())).limit(1);
+      return row ?? null;
+    },
 
     health: async () => {
       const [cur] = await db.select().from(cursor).where(eq(cursor.id, 'head')).limit(1);

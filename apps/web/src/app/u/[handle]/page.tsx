@@ -7,14 +7,15 @@ import { getAddress } from 'viem';
 import { useAccount } from 'wagmi';
 import { useQuery, gql } from 'urql';
 import { eventLabel, summarizeArgs, timeAgo, marketHref, type ActivityRow } from '@/lib/activity';
-import { short, modeName, modeTagClass, txLink, addrLink } from '@/lib/format';
+import { short, modeName, modeTagClass, txLink, addrLink, usdcShort } from '@/lib/format';
 import { Section, Card, KV } from '@/components/ui';
 import { SendUsdcCard, useIsPasskeyWallet } from '@/components/SendUsdc';
 
 /**
- * Public profile (#7, profiles-only — reputation scoring stays deferred). Aggregates what the indexer
- * already knows about an address: markets they created (requester), applications they made (worker),
- * and recent activity. No P/R/G-Rep math.
+ * Public profile (#7). Aggregates what the indexer knows about an address: markets they created
+ * (requester), applications they made (worker), reputation rollup from EchoHook, and recent
+ * activity. Reputation is raw counters (TierPayout / GhostPenalty / RRepSlashed) — any decay model
+ * would layer on top.
  */
 const PROFILE = gql`
   query Profile($address: String!) {
@@ -24,6 +25,9 @@ const PROFILE = gql`
     asWorker: applications(participant: $address) {
       id marketId agentId tierReached status createdAt
     }
+    reputation(address: $address) {
+      jobsCompleted totalEarned tierSum ghostCount totalSlashed rRepSlashes lastEventBlock
+    }
     activity(address: $address, limit: 50) {
       id blockNumber txHash eventName marketId actor args state createdAt
     }
@@ -32,7 +36,11 @@ const PROFILE = gql`
 
 type Mkt = { id: number; mode: number; subject: string | null; status: string; applicantCount: number; requesterAgentId: string | null };
 type App = { id: string; marketId: number; agentId: string | null; tierReached: number; status: string; createdAt: number };
-type ProfileData = { asRequester: Mkt[]; asWorker: App[]; activity: ActivityRow[] };
+type Rep = {
+  jobsCompleted: number; totalEarned: string; tierSum: number;
+  ghostCount: number; totalSlashed: string; rRepSlashes: number; lastEventBlock: number;
+};
+type ProfileData = { asRequester: Mkt[]; asWorker: App[]; reputation: Rep | null; activity: ActivityRow[] };
 
 export default function ProfilePage({ params }: { params: Promise<{ handle: string }> }) {
   const { handle } = use(params);
@@ -51,6 +59,7 @@ export default function ProfilePage({ params }: { params: Promise<{ handle: stri
 
   const markets = data?.asRequester ?? [];
   const apps = data?.asWorker ?? [];
+  const rep = data?.reputation ?? null;
   const activity = data?.activity ?? [];
   const agentId = apps.find((a) => a.agentId && a.agentId !== '0')?.agentId
     ?? markets.find((m) => m.requesterAgentId && m.requesterAgentId !== '0')?.requesterAgentId
@@ -86,6 +95,27 @@ export default function ProfilePage({ params }: { params: Promise<{ handle: stri
             ['markets created', String(markets.length)],
             ['applications', String(apps.length)],
           ]} />
+        </Card>
+      </Section>
+
+      <Section title="Reputation" desc="Raw rollup from EchoHook settlement events. No decay applied.">
+        <Card title="Provider (P-Rep)">
+          {rep ? (
+            <KV rows={[
+              ['jobs completed', String(rep.jobsCompleted)],
+              ['total earned', `${usdcShort(BigInt(rep.totalEarned))} USDC`],
+              ['tier prestige', String(rep.tierSum)],
+            ]} />
+          ) : <p className="text-xs text-gray-400">No settled jobs yet.</p>}
+        </Card>
+        <Card title="Responsiveness (R-Rep)">
+          {rep ? (
+            <KV rows={[
+              ['ghost penalties', String(rep.ghostCount)],
+              ['total slashed', `${usdcShort(BigInt(rep.totalSlashed))} USDC`],
+              ['requester slashes', String(rep.rRepSlashes)],
+            ]} />
+          ) : <p className="text-xs text-gray-400">No slashes recorded.</p>}
         </Card>
       </Section>
 

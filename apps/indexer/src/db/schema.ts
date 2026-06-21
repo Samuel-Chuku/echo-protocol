@@ -96,6 +96,27 @@ export const revealHolds = pgTable('reveal_holds', {
   revealedAt: integer('revealed_at'),
 });
 
+/**
+ * Per-address reputation rollup, derived from EchoHook events. Two sides in one row:
+ *  - provider-side (P-Rep): TierPayout increments jobs_completed, total_earned, tier_sum.
+ *  - responsiveness (R-Rep): GhostPenalty (provider ghosted) and RRepSlashed (requester-side)
+ *    increment ghost_count / total_slashed / r_rep_slashes.
+ * Address keys are stored lowercased so lookups from URL handles match regardless of case.
+ * Raw counters only — any decay model layers on top as a computed field, no schema change.
+ */
+export const reputation = pgTable('reputation', {
+  address: text('address').primaryKey(), // lowercased EOA / smart-account address
+  agentId: text('agent_id'), // denormalised — populated whenever a related event also carries the agentId
+  jobsCompleted: integer('jobs_completed').notNull().default(0),
+  totalEarned: text('total_earned').notNull().default('0'), // sum of TierPayout.net (USDC base units, bigint as text)
+  tierSum: integer('tier_sum').notNull().default(0), // Σ (tier + 1) — weighted prestige
+  ghostCount: integer('ghost_count').notNull().default(0),
+  totalSlashed: text('total_slashed').notNull().default('0'), // sum of GhostPenalty.ghostAmount
+  rRepSlashes: integer('r_rep_slashes').notNull().default(0), // requester-side RRepSlashed count
+  lastEventBlock: integer('last_event_block').notNull().default(0),
+  updatedAt: integer('updated_at').notNull().default(0),
+});
+
 /** Disputes (DisputeResolver). subject: 0 BountyFinding, 1 ModeAStake. status: 0 Open, 1 Resolved. */
 export const disputes = pgTable('disputes', {
   id: integer('id').primaryKey(), // disputeId
