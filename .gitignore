@@ -60,3 +60,5 @@ Thumbs.db
 # ═══════════════════════════════════════
 *.log
 logs/
+apps/indexer/echo-indexer.db*
+apps/web/tsconfig.tsbuildinfo
