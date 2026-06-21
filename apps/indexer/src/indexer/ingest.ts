@@ -14,7 +14,7 @@ const SOURCES = [
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function getCursor(): Promise<bigint> {
-  const row = await db.select().from(cursor).where(eq(cursor.id, 'head')).get();
+  const [row] = await db.select().from(cursor).where(eq(cursor.id, 'head')).limit(1);
   if (row) return BigInt(row.lastBlock);
   // First run: index from startBlock (so lastBlock = startBlock - 1).
   const last = config.startBlock > 0n ? config.startBlock - 1n : 0n;

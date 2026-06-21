@@ -95,7 +95,7 @@ export async function applyEvent(
         receiptId: s(args.receiptTokenId), submissionHash: s(args.submissionHash), createdAt: ctx.now,
       }).onConflictDoNothing();
       // Recompute (not increment) so re-processing a range after a crash can't double-count.
-      const cnt = await db.select({ c: sql<number>`count(*)` }).from(applications).where(eq(applications.marketId, id)).get();
+      const [cnt] = await db.select({ c: sql<number>`count(*)` }).from(applications).where(eq(applications.marketId, id)).limit(1);
       await db.update(markets).set({ applicantCount: Number(cnt?.c ?? 0) }).where(eq(markets.id, id));
       return { marketId: id, actor: args.participant };
     }
@@ -202,7 +202,7 @@ export async function applyEvent(
 }
 
 async function findingSubmitter(marketId: number, idx: number): Promise<string | null> {
-  const row = await db.select({ submitter: findings.submitter }).from(findings)
-    .where(eq(findings.id, `${marketId}-${idx}`)).get();
+  const [row] = await db.select({ submitter: findings.submitter }).from(findings)
+    .where(eq(findings.id, `${marketId}-${idx}`)).limit(1);
   return row?.submitter ?? null;
 }

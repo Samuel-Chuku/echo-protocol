@@ -72,9 +72,11 @@ export default function ProfilePage({ params }: { params: Promise<{ handle: stri
       <p className="text-sm text-gray-500 mb-6 font-mono break-all">{address}</p>
 
       {showSend && (
-        <Section title="Send USDC" desc="Transfer USDC from your passkey wallet. Gas is sponsored on Arc.">
-          <div className="sm:col-span-2"><SendUsdcCard /></div>
-        </Section>
+        <div id="send" className="scroll-mt-24">
+          <Section title="Send USDC" desc="Transfer USDC from your passkey wallet. Gas is sponsored on Arc.">
+            <div className="sm:col-span-2"><SendUsdcCard /></div>
+          </Section>
+        </div>
       )}
 
       <Section title="Overview" desc="Public on-chain activity on Echo.">

@@ -5,9 +5,9 @@ import { config } from './config.js';
 
 async function main() {
   console.log('=== Echo Indexer ===');
-  console.log(`db=${config.dbFile} rpc=${config.rpcUrl} startBlock=${config.startBlock}`);
+  console.log(`db=${config.databaseUrl.replace(/:[^:@]+@/, ':***@')} rpc=${config.rpcUrl} startBlock=${config.startBlock}`);
 
-  migrate(); // create tables on first run (idempotent)
+  await migrate(); // create tables on first run (idempotent)
 
   // Serve immediately; ingest runs in the background and catches up.
   await startServer();

@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Send, X } from 'lucide-react';
 import { useAccount } from 'wagmi';
 import { useEcho } from '@/lib/sdk';
 import { CIRCLE_CONNECTOR_ID } from '@/lib/circle';
@@ -51,39 +50,5 @@ export function SendUsdcCard({ onSent }: { onSent?: () => void }) {
         run={() => sdk.transferUsdc(to.trim() as `0x${string}`, amt, account!)}
       />
     </Card>
-  );
-}
-
-/** Nav "Send" button — shown only for passkey wallets. Opens a small modal wrapping SendUsdcCard. */
-export function SendButton() {
-  const isPasskey = useIsPasskeyWallet();
-  const [open, setOpen] = useState(false);
-  if (!isPasskey) return null;
-
-  return (
-    <>
-      <button
-        onClick={() => setOpen(true)}
-        title="Send USDC"
-        className="inline-flex items-center gap-1.5 rounded-md bg-gray-100 px-3 py-1.5 text-sm font-medium text-gray-800 hover:bg-gray-200"
-      >
-        <Send className="h-3.5 w-3.5" /> Send
-      </button>
-      {open && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/50" onClick={() => setOpen(false)} />
-          <div className="relative w-full max-w-sm">
-            <button
-              onClick={() => setOpen(false)}
-              className="absolute -top-3 -right-3 z-10 rounded-full bg-white border border-gray-200 p-1 text-gray-500 hover:text-gray-800 shadow"
-              aria-label="Close"
-            >
-              <X className="h-4 w-4" />
-            </button>
-            <SendUsdcCard onSent={() => setOpen(false)} />
-          </div>
-        </div>
-      )}
-    </>
   );
 }

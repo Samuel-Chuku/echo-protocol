@@ -1,16 +1,17 @@
-import { sqliteTable, text, integer } from 'drizzle-orm/sqlite-core';
+import { pgTable, text, integer, serial } from 'drizzle-orm/pg-core';
 
 // bigint amounts (USDC base units, block numbers that may exceed 2^53) are stored as TEXT.
+// Block numbers stay `integer` (int32) — Arc is at ~46M, well under the 2^31 ceiling.
 
 /** Single-row ingestion cursor: the last fully-indexed block. */
-export const cursor = sqliteTable('cursor', {
+export const cursor = pgTable('cursor', {
   id: text('id').primaryKey(), // always 'head'
   lastBlock: integer('last_block').notNull().default(0),
 });
 
 /** Raw decoded log — immutable history, drives the activity feed. */
-export const events = sqliteTable('events', {
-  id: integer('id').primaryKey({ autoIncrement: true }),
+export const events = pgTable('events', {
+  id: serial('id').primaryKey(),
   blockNumber: integer('block_number').notNull(),
   txHash: text('tx_hash').notNull(),
   logIndex: integer('log_index').notNull(),
@@ -24,7 +25,7 @@ export const events = sqliteTable('events', {
 });
 
 /** Derived market state (all three modes). mode: 0 Open/Reveal, 1 DirectJob, 2 Bounty. */
-export const markets = sqliteTable('markets', {
+export const markets = pgTable('markets', {
   id: integer('id').primaryKey(), // marketId
   mode: integer('mode').notNull(),
   requester: text('requester').notNull(),
@@ -50,7 +51,7 @@ export const markets = sqliteTable('markets', {
 });
 
 /** Open-market applications (participant ↔ market). */
-export const applications = sqliteTable('applications', {
+export const applications = pgTable('applications', {
   id: text('id').primaryKey(), // `${marketId}-${participant}`
   marketId: integer('market_id').notNull(),
   participant: text('participant').notNull(),
@@ -63,7 +64,7 @@ export const applications = sqliteTable('applications', {
 });
 
 /** Bounty findings. status: 0 Pending, 1 Accepted, 2 Rejected, 3 Disputed. */
-export const findings = sqliteTable('findings', {
+export const findings = pgTable('findings', {
   id: text('id').primaryKey(), // `${marketId}-${idx}`
   marketId: integer('market_id').notNull(),
   idx: integer('idx').notNull(),
@@ -76,7 +77,7 @@ export const findings = sqliteTable('findings', {
 });
 
 /** Direct-job milestones. status: 0 Pending, 1 Submitted, 2 Released. */
-export const milestones = sqliteTable('milestones', {
+export const milestones = pgTable('milestones', {
   id: text('id').primaryKey(), // `${marketId}-${idx}`
   marketId: integer('market_id').notNull(),
   idx: integer('idx').notNull(),
@@ -87,7 +88,7 @@ export const milestones = sqliteTable('milestones', {
 });
 
 /** Mode-A reveal stake holds. status: 0 None, 1 Held, 2 Flagged, 3 Settled. */
-export const revealHolds = sqliteTable('reveal_holds', {
+export const revealHolds = pgTable('reveal_holds', {
   id: text('id').primaryKey(), // `${marketId}-${participant}`
   marketId: integer('market_id').notNull(),
   participant: text('participant').notNull(),
@@ -96,7 +97,7 @@ export const revealHolds = sqliteTable('reveal_holds', {
 });
 
 /** Disputes (DisputeResolver). subject: 0 BountyFinding, 1 ModeAStake. status: 0 Open, 1 Resolved. */
-export const disputes = sqliteTable('disputes', {
+export const disputes = pgTable('disputes', {
   id: integer('id').primaryKey(), // disputeId
   subject: integer('subject').notNull(),
   marketId: integer('market_id'),

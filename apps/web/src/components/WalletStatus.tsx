@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
 import { useAccount, useBlockNumber, useSwitchChain } from 'wagmi';
@@ -10,13 +10,12 @@ import { usdcShort } from '@/lib/format';
 import { CIRCLE_CONNECTOR_ID } from '@/lib/circle';
 import { Bell } from './Bell';
 import { SignInModal } from './SignInModal';
-import { SendButton } from './SendUsdc';
 
 /**
  * Right-side wallet cluster in the nav: USDC balance (auto-refreshing), the notification bell, an
  * active-chain pill / wrong-network switcher, the connect/account control (custom sign-in modal when
- * disconnected, copy-on-click address chip when connected), an explicit Profile button, and a colored
- * avatar that opens the account modal.
+ * disconnected, copy-on-click address chip when connected), and a colored avatar that opens a small
+ * menu (Profile + Account & disconnect) on hover (desktop) or tap (mobile).
  */
 export function WalletStatus() {
   const { sdk, account } = useEcho();
@@ -47,12 +46,21 @@ export function WalletStatus() {
     switchChain({ chainId: arcTestnet.id });
   }, [isConnected, chainId, connector?.id, switchChain]);
 
+  const isPasskey = connector?.id === CIRCLE_CONNECTOR_ID;
+
   return (
     <div className="ml-auto flex items-center gap-2">
       {account && (
-        <span className="text-sm text-gray-700 font-medium tabular-nums">
-          {usdcShort(bal)} <span className="text-xs text-gray-400 font-normal">USDC</span>
-        </span>
+        <div className="flex flex-col items-end leading-tight">
+          <span className="text-sm text-gray-700 font-medium tabular-nums">
+            {usdcShort(bal)} <span className="text-xs text-gray-400 font-normal">USDC</span>
+          </span>
+          {isPasskey && (
+            <Link href={`/u/${account}#send`} className="text-[11px] text-gray-400 hover:text-gray-700">
+              Send to another wallet
+            </Link>
+          )}
+        </div>
       )}
       <Bell />
       <ConnectButton.Custom>
@@ -81,21 +89,12 @@ export function WalletStatus() {
                 <span className="h-2 w-2 rounded-full bg-emerald-500" />
                 {chain?.name ?? arcTestnet.name}
               </span>
-              <SendButton />
               <CopyChip account={account!} displayName={acc.displayName} />
-              {openAccountModal && <ProfileAvatar onClick={openAccountModal} account={account!} />}
+              <AvatarMenu account={account!} onAccount={openAccountModal} />
             </div>
           );
         }}
       </ConnectButton.Custom>
-      {account && (
-        <Link
-          href={`/u/${account}`}
-          className="rounded-md bg-gray-100 px-3 py-1.5 text-sm font-medium text-gray-800 hover:bg-gray-200"
-        >
-          Profile
-        </Link>
-      )}
       {signInOpen && <SignInModal onClose={() => setSignInOpen(false)} />}
     </div>
   );
@@ -120,17 +119,45 @@ function CopyChip({ account, displayName }: { account: `0x${string}`; displayNam
   );
 }
 
-/** Deterministic colored avatar (gradient seeded from the address). Opens the account modal
- *  (details / disconnect); the dedicated Profile button links to the public profile. */
-function ProfileAvatar({ account, onClick }: { account: `0x${string}`; onClick: () => void }) {
+/** Deterministic colored avatar that reveals a small menu: Profile (public profile) and Account
+ *  (RainbowKit modal — details / disconnect). Opens on hover (desktop) AND on click/tap (touch),
+ *  closing on outside click or Escape. Replaces the standalone Profile nav button. */
+function AvatarMenu({ account, onAccount }: { account: `0x${string}`; onAccount?: () => void }) {
   const hue = parseInt(account.slice(2, 8), 16) % 360;
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey); };
+  }, [open]);
+
   return (
-    <button
-      onClick={onClick}
-      title="Account"
-      aria-label="Account"
-      className="h-8 w-8 rounded-full border border-gray-200 shrink-0 ring-2 ring-transparent hover:ring-gray-300 transition"
-      style={{ background: `linear-gradient(135deg, hsl(${hue} 75% 55%), hsl(${(hue + 70) % 360} 75% 45%))` }}
-    />
+    <div ref={ref} className="relative group">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        title="Account menu"
+        aria-label="Account menu"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        className="h-8 w-8 rounded-full border border-gray-200 shrink-0 ring-2 ring-transparent group-hover:ring-gray-300 aria-expanded:ring-gray-300 transition"
+        style={{ background: `linear-gradient(135deg, hsl(${hue} 75% 55%), hsl(${(hue + 70) % 360} 75% 45%))` }}
+      />
+      {/* Hover (desktop) via group-hover; tap (touch) via the `open` state. pt-2 bridges the cursor gap. */}
+      <div className={`absolute right-0 top-full pt-2 z-30 group-hover:block ${open ? 'block' : 'hidden'}`}>
+        <div className="min-w-[150px] rounded-lg border border-gray-200 bg-white py-1 shadow-lg">
+          <Link href={`/u/${account}`} onClick={() => setOpen(false)} className="block px-3 py-1.5 text-sm text-gray-700 hover:bg-gray-50">Profile</Link>
+          {onAccount && (
+            <button onClick={() => { setOpen(false); onAccount(); }} className="block w-full px-3 py-1.5 text-left text-sm text-gray-700 hover:bg-gray-50">
+              Account & disconnect
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }

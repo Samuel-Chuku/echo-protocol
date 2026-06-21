@@ -1,24 +1,24 @@
-import Database from 'better-sqlite3';
-import { drizzle } from 'drizzle-orm/better-sqlite3';
+import postgres from 'postgres';
+import { drizzle } from 'drizzle-orm/postgres-js';
 import * as schema from './schema';
 import { config } from '../config';
 
-const sqlite = new Database(config.dbFile);
-sqlite.pragma('journal_mode = WAL');
+// `max: 10` is plenty for a single-process indexer; Neon's free tier pooler caps far higher.
+const client = postgres(config.databaseUrl, { max: 10 });
 
-export const db = drizzle(sqlite, { schema });
+export const db = drizzle(client, { schema });
 
 /**
  * Create tables on first boot (idempotent). DDL mirrors schema.ts column-for-column so we don't need
- * a separate `drizzle-kit push` to get running — the SQLite file is created and migrated in-process.
+ * a separate `drizzle-kit push` to get running — the database is migrated in-process on startup.
  */
-export function migrate(): void {
-  sqlite.exec(`
+export async function migrate(): Promise<void> {
+  await client.unsafe(`
     CREATE TABLE IF NOT EXISTS cursor (
       id TEXT PRIMARY KEY, last_block INTEGER NOT NULL DEFAULT 0
     );
     CREATE TABLE IF NOT EXISTS events (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       block_number INTEGER NOT NULL, tx_hash TEXT NOT NULL, log_index INTEGER NOT NULL,
       address TEXT NOT NULL, event_name TEXT NOT NULL, market_id INTEGER, actor TEXT,
       args TEXT NOT NULL, created_at INTEGER NOT NULL
@@ -67,12 +67,9 @@ export function migrate(): void {
     );
   `);
 
-  // Additive column migrations for DBs created before the column existed. SQLite has no
-  // `ADD COLUMN IF NOT EXISTS`, so guard each against the "duplicate column" error. Existing rows
-  // get NULL until a full re-index backfills them.
-  for (const ddl of ['ALTER TABLE markets ADD COLUMN ghost_deadline INTEGER']) {
-    try { sqlite.exec(ddl); } catch { /* column already present */ }
-  }
+  // Additive column migrations for DBs created before a column existed. Postgres supports IF NOT
+  // EXISTS on ADD COLUMN, so no guard needed; new rows backfill, old rows get NULL until re-index.
+  await client.unsafe(`ALTER TABLE markets ADD COLUMN IF NOT EXISTS ghost_deadline INTEGER`);
 }
 
 export { schema };
