@@ -1,5 +1,5 @@
 import { and, desc, eq, inArray, or, sql } from 'drizzle-orm';
-import { keccak256, toBytes, type Address } from 'viem';
+import { keccak256, recoverMessageAddress, toBytes, type Address } from 'viem';
 import { AgenticCommerceABI, CONTRACTS } from '@echo/sdk';
 import { db } from '../db/client.js';
 import { markets, applications, findings, milestones, disputes, events, cursor, reputation, contents } from '../db/schema.js';
@@ -10,9 +10,11 @@ const C = CONTRACTS.arcTestnet;
 type ContentAuth = { address: string; message: string; signature: `0x${string}` };
 
 /**
- * Verify a wallet signature (EOA or EIP-1271 smart-account via Circle modular wallets), enforce
- * a freshness window on the embedded `ts=<unix>` field, and return the lowercased address. Used
- * by every content read/write to authenticate the caller; gating policy lives at the call site.
+ * Verify a wallet signature and return the lowercased address. Tries EOA recovery first (cheap,
+ * works for any EOA + handles wallets that mis-route 1271), then falls back to verifyMessage
+ * (which itself dispatches EOA + EIP-1271 / Circle modular wallets). Enforces a 24h freshness
+ * window on the embedded `ts=<unix>` field. Throws with a diagnostic on every failure path so
+ * we can tell EOA-mismatch from contract-call-failed from address-mismatch.
  */
 async function authenticate(auth: ContentAuth): Promise<string> {
   if (!auth?.address || !auth.message || !auth.signature) throw new Error('Auth required');
@@ -20,14 +22,44 @@ async function authenticate(auth: ContentAuth): Promise<string> {
   if (!tsMatch) throw new Error('Auth message missing ts');
   const ts = Number(tsMatch[1]);
   const skew = Math.abs(Math.floor(Date.now() / 1000) - ts);
-  if (skew > 86_400) throw new Error('Auth signature expired'); // 24h window
-  const ok = await publicClient.verifyMessage({
-    address: auth.address as Address,
-    message: auth.message,
-    signature: auth.signature,
-  });
-  if (!ok) throw new Error('Auth signature invalid');
-  return auth.address.toLowerCase();
+  if (skew > 86_400) throw new Error('Auth signature expired (>24h)');
+
+  const claimed = auth.address.toLowerCase();
+
+  // Path 1: EOA recovery. Cheap, no RPC. If the recovered address matches the claim, we're done.
+  // If it doesn't, the wallet might be a smart account — fall through to EIP-1271.
+  let recovered: string | null = null;
+  try {
+    recovered = (await recoverMessageAddress({ message: auth.message, signature: auth.signature })).toLowerCase();
+    if (recovered === claimed) return claimed;
+  } catch (e: unknown) {
+    // recoverMessageAddress throws on malformed signatures (e.g. webauthn blob from passkey).
+    // Not fatal — verifyMessage will handle that via EIP-1271.
+  }
+
+  // Path 2: EIP-1271 (smart account). Calls the SCA's isValidSignature on chain. Needs the SCA
+  // to be deployed at the claimed address; counterfactual SCAs will fail here without factoryData.
+  try {
+    const ok = await publicClient.verifyMessage({
+      address: auth.address as Address,
+      message: auth.message,
+      signature: auth.signature,
+    });
+    if (ok) return claimed;
+  } catch (e: unknown) {
+    // verifyMessage throws when the EIP-1271 contract call reverts — surface a clear hint.
+    const msg = e instanceof Error ? e.message : String(e);
+    throw new Error(
+      `Auth EIP-1271 call failed for ${auth.address}: ${msg.slice(0, 160)}. ` +
+      `If you're on a Circle passkey wallet, make sure the smart account is deployed (any prior tx will deploy it).`,
+    );
+  }
+
+  // Reached when EOA recovered to a different address AND EIP-1271 returned the non-magic value.
+  throw new Error(
+    `Auth signature invalid — recovered ${recovered ?? '(no EOA recovery)'} but claim is ${claimed}. ` +
+    `Likely cause: the wallet that signed is not the wallet you say it is.`,
+  );
 }
 
 // Per-event lifecycle tag for the pending/completed split in the activity feed.

@@ -1,9 +1,9 @@
 'use client';
 
 import { useCallback } from 'react';
-import { useSignMessage } from 'wagmi';
+import { useAccount } from 'wagmi';
 import { gql, useClient } from 'urql';
-import type { Address } from 'viem';
+import { toHex, type Address } from 'viem';
 
 /**
  * Off-chain content channel — talks to the indexer's storeContent mutation and gated content query.
@@ -57,15 +57,31 @@ const FETCH_CONTENT = gql`
  */
 export function useContent() {
   const client = useClient();
-  const { signMessageAsync } = useSignMessage();
+  const { connector } = useAccount();
 
+  /**
+   * Sign the auth message via the connector's raw EIP-1193 provider (`personal_sign`). We bypass
+   * wagmi's useSignMessage / viem walletClient.signMessage because viem's wallet client tries to
+   * resolve a viem `Account` from the connector — for Circle's smart-account connector that
+   * resolution either fails outright (`Invalid account`) or silently picks the EOA owner. Going
+   * direct: viem's account types don't matter, the provider just returns whatever signature its
+   * wallet produces (ECDSA for EOAs, webauthn-wrapped bytes for Circle SCAs verified later via
+   * EIP-1271 in the indexer).
+   */
   const sign = useCallback(async (
     op: 'read' | 'write', marketId: number, kind: ContentKind, key: string, address: Address,
   ): Promise<ContentAuth> => {
+    if (!connector) throw new Error('Connect a wallet first');
+    const provider = await connector.getProvider();
+    if (!provider || typeof (provider as { request?: unknown }).request !== 'function') {
+      throw new Error('Active wallet has no EIP-1193 provider');
+    }
     const message = buildMessage(op, marketId, kind, key);
-    const signature = await signMessageAsync({ message, account: address });
+    const messageHex = toHex(message);
+    const signature = await (provider as { request: (a: { method: string; params: unknown[] }) => Promise<`0x${string}`> })
+      .request({ method: 'personal_sign', params: [messageHex, address] });
     return { address, message, signature };
-  }, [signMessageAsync]);
+  }, [connector]);
 
   const store = useCallback(async (
     marketId: number, kind: ContentKind, key: string, body: string, address: Address,
