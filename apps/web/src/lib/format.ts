@@ -60,13 +60,24 @@ export function duration(seconds: number | undefined): string {
  * Mirror of MarketRegistry._calculateMinEscrow + the reveal-fee floor (MIN_REVEALS = 5), so the
  * console can pre-fill a valid escrow and never hit InsufficientEscrow. tiers = [reveal/R,
  * shortlist, final, ghost] in base units; maxApplicants is a plain count.
+ *
+ * Contract uses probabilistic slot counts (`/5`, `/20`, `/50`) tuned for high-N markets — at
+ * `maxApplicants < 50` the integer-divide collapses each term to zero, which validates onchain
+ * but underestimates realistic payouts. We floor each slot at 1 (whenever `maxApplicants > 0`)
+ * so the recommend reflects "at least one of each tier could happen", which is still onchain-
+ * valid (we round UP from the contract's floor, never down) and keeps small markets fundable.
  */
 export function recommendedEscrow(tiers: [bigint, bigint, bigint, bigint], maxApplicants: bigint): bigint {
-  const sub = maxApplicants / 5n;      // estimatedSubstantive
-  const short = maxApplicants / 20n;   // estimatedShortlist
-  const fin = maxApplicants / 50n;     // estimatedFinal
+  const slot = (count: bigint, divisor: bigint): bigint => {
+    if (count === 0n) return 0n;
+    const est = count / divisor;
+    return est > 0n ? est : 1n;
+  };
+  const sub = slot(maxApplicants, 5n);     // estimatedSubstantive
+  const short = slot(maxApplicants, 20n);  // estimatedShortlist
+  const fin = slot(maxApplicants, 50n);    // estimatedFinal
   const calcMin = sub * tiers[0] + short * tiers[1] + fin * tiers[2] + tiers[3];
-  const revealFloor = tiers[0] * 5n;   // escrow must fund at least MIN_REVEALS reveals
+  const revealFloor = tiers[0] * 5n;       // escrow must fund at least MIN_REVEALS reveals
   return calcMin > revealFloor ? calcMin : revealFloor;
 }
 

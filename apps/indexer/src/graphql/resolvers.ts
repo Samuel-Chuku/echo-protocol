@@ -50,6 +50,13 @@ export const resolvers = {
         .filter((e) => !a.status || e.state === a.status);
     },
 
+    marketActivity: async (_: unknown, a: { marketId: number; limit?: number }) => {
+      // Oldest-first for the timeline UI; the page reads it as a linear progression.
+      const rows = await db.select().from(events).where(eq(events.marketId, a.marketId))
+        .orderBy(events.blockNumber, events.logIndex).limit(a.limit ?? 200);
+      return rows.map((e) => ({ ...e, state: stateOf(e.eventName) }));
+    },
+
     disputes: (_: unknown, a: { status?: number }) =>
       db.select().from(disputes)
         .where(a.status !== undefined && a.status !== null ? eq(disputes.status, a.status) : undefined)

@@ -9,9 +9,10 @@ import { txLink, short } from '@/lib/format';
 import { ACTIVITY_QUERY, eventLabel, summarizeArgs, timeAgo, marketHref, type ActivityRow } from '@/lib/activity';
 
 /**
- * Notification bell. Reads the connected wallet's PENDING activity from the indexer (#10) and badges
- * the count. Pending = something is waiting on an action (a new application, a submitted finding, an
- * open dispute). Hidden until a wallet is connected.
+ * Notification bell. Reads ALL recent activity for the connected wallet (creations, applications,
+ * settlements, disputes — everything the indexer tags as their event). The red badge counts only
+ * PENDING rows (things still needing someone's action); the dropdown shows all of them so the
+ * user sees their own creates and completions as confirmations too. Hidden until connected.
  */
 export function Bell() {
   const { address, isConnected } = useAccount();
@@ -20,10 +21,11 @@ export function Bell() {
 
   const [{ data }] = useQuery<{ activity: ActivityRow[] }>({
     query: ACTIVITY_QUERY,
-    variables: { address: address ?? '', status: 'PENDING', limit: 20 },
+    variables: { address: address ?? '', limit: 20 },
     pause: !isConnected || !address,
   });
   const rows = data?.activity ?? [];
+  const pendingCount = rows.filter((r) => r.state === 'PENDING').length;
 
   // close on outside click
   useEffect(() => {
@@ -44,21 +46,22 @@ export function Bell() {
         aria-label="Notifications"
       >
         <BellIcon className="w-5 h-5" />
-        {rows.length > 0 && (
+        {pendingCount > 0 && (
           <span className="absolute -top-0.5 -right-0.5 min-w-4 h-4 px-1 rounded-full bg-red-500 text-white text-[10px] font-semibold flex items-center justify-center">
-            {rows.length}
+            {pendingCount}
           </span>
         )}
       </button>
 
       {open && (
         <div className="absolute right-0 mt-2 w-80 rounded-xl border border-gray-200 bg-white shadow-lg z-20 overflow-hidden flex flex-col max-h-96">
-          <div className="px-4 py-2.5 border-b border-gray-100 shrink-0">
-            <span className="text-sm font-semibold">Pending</span>
+          <div className="px-4 py-2.5 border-b border-gray-100 shrink-0 flex items-center justify-between">
+            <span className="text-sm font-semibold">Activity</span>
+            {pendingCount > 0 && <span className="text-[10px] font-medium text-red-600">{pendingCount} pending</span>}
           </div>
           <div className="flex-1 overflow-auto">
             {rows.length === 0 ? (
-              <p className="px-4 py-6 text-sm text-gray-400 text-center">Nothing pending.</p>
+              <p className="px-4 py-6 text-sm text-gray-400 text-center">No activity yet.</p>
             ) : (
               <ul className="divide-y divide-gray-100">
                 {rows.map((r) => {
@@ -66,7 +69,10 @@ export function Bell() {
                   const body = (
                     <>
                       <div className="flex items-center justify-between gap-2">
-                        <span className="text-sm font-medium">{eventLabel(r.eventName)}</span>
+                        <span className="text-sm font-medium flex items-center gap-1.5">
+                          {r.state === 'PENDING' && <span className="h-1.5 w-1.5 rounded-full bg-amber-500 shrink-0" />}
+                          {eventLabel(r.eventName)}
+                        </span>
                         <span className="text-xs text-gray-400 shrink-0">{timeAgo(r.createdAt, now)}</span>
                       </div>
                       <div className="text-xs text-gray-500 font-mono mt-0.5 pr-28 truncate">

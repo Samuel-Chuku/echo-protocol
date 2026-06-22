@@ -113,35 +113,56 @@ export default function JobDetailPage({ params }: { params: Promise<{ id: string
 }
 
 /* ──────────────── Open/Reveal: apply ──────────────── */
+const TIER_NAMES = ['Applied', 'Revealed', 'Shortlist', 'Final'];
+
 function OpenApply({ sdk, account, agentId, marketId, closed }: { sdk: ReturnType<typeof useEcho>['sdk']; account?: `0x${string}`; agentId: string; marketId: bigint; closed: boolean }) {
   const [submission, setSubmission] = useState('my-application-v1');
   const [app, setApp] = useState<any>(null);
+  const [loading, setLoading] = useState(false);
   const need = !account || !agentId;
+
+  // Auto-detect: hit getApplication on mount (and whenever the wallet changes) so the user sees
+  // their status right away instead of having to click a "Load my application" button. The SDK
+  // returns a zero-state object when there's no record, so a non-zero agentId means "applied".
+  const refreshApp = async () => {
+    if (!account) { setApp(null); return; }
+    setLoading(true);
+    try { setApp(await sdk.getApplication(marketId, account)); } catch { setApp(null); }
+    finally { setLoading(false); }
+  };
+  useEffect(() => { refreshApp(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [account, marketId.toString()]);
+
+  const hasApplied = !!app && app.agentId !== undefined && BigInt(app.agentId ?? 0) !== 0n;
 
   return (
     <Section title="Apply" desc="Submit your application. The requester reveals, grades, and advances applicants through tiers.">
-      <Card title="Apply to this market" hint="applyToMarket — mints a participation receipt; pulls the stake if the market requires one.">
-        <Field label="submission text → hash" value={submission} onChange={(e) => setSubmission(e.target.value)} />
-        {closed && <p className="text-xs text-amber-600">This market is no longer active.</p>}
-        {need && <p className="text-xs text-amber-600">Register your identity (banner above) first.</p>}
-        <div className="flex flex-wrap gap-2">
-          <Command label="Apply" disabled={need || closed}
-            run={async () => {
-              // If the market requires an applicant stake, approve exactly that much first (no standing allowance).
-              const stake = await sdk.marketStakeRequired(marketId).catch(() => 0n);
-              if (stake > 0n) await sdk.ensureUsdcAllowance(C.marketRegistry, stake, account!);
-              return sdk.applyToMarket(marketId, BigInt(agentId || '0'), scope(submission), account!);
-            }} />
-          <Command label="Load my application" tone="neutral" disabled={!account}
-            run={async () => { setApp(await sdk.getApplication(marketId, account!)); return 'loaded'; }} />
-        </div>
-        {app && (
-          <KV rows={[
-            ['tier reached', String(app.tierReached)],
-            ['agentId', String(app.agentId)],
-            ['receipt #', String(app.receiptTokenId)],
-            ['withdrawn', String(app.withdrawn)],
-          ]} />
+      <Card title={hasApplied ? 'Your application' : 'Apply to this market'} hint={hasApplied ? undefined : 'applyToMarket — mints a participation receipt; pulls the stake if the market requires one.'}>
+        {loading && !app && <p className="text-xs text-gray-400">Checking…</p>}
+        {hasApplied ? (
+          <>
+            <p className="text-sm text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-md px-3 py-2">
+              You&apos;ve already applied to this market. The requester reveals + grades from here.
+            </p>
+            <KV rows={[
+              ['tier reached', TIER_NAMES[Number(app.tierReached)] ?? String(app.tierReached)],
+              ['agentId', String(app.agentId)],
+              ['receipt #', String(app.receiptTokenId)],
+              ['withdrawn', String(app.withdrawn)],
+            ]} />
+          </>
+        ) : (
+          <>
+            <Field label="submission text → hash" value={submission} onChange={(e) => setSubmission(e.target.value)} />
+            {closed && <p className="text-xs text-amber-600">This market is no longer active.</p>}
+            {need && <p className="text-xs text-amber-600">Register your identity (banner above) first.</p>}
+            <Command label="Apply" disabled={need || closed} onDone={refreshApp}
+              run={async () => {
+                // If the market requires an applicant stake, approve exactly that much first (no standing allowance).
+                const stake = await sdk.marketStakeRequired(marketId).catch(() => 0n);
+                if (stake > 0n) await sdk.ensureUsdcAllowance(C.marketRegistry, stake, account!);
+                return sdk.applyToMarket(marketId, BigInt(agentId || '0'), scope(submission), account!);
+              }} />
+          </>
         )}
       </Card>
     </Section>

@@ -1,6 +1,6 @@
 'use client';
 
-import { createConfig, http } from 'wagmi';
+import { createConfig, createStorage, cookieStorage, http } from 'wagmi';
 import type { Chain } from 'viem';
 import { connectorsForWallets } from '@rainbow-me/rainbowkit';
 import {
@@ -39,6 +39,9 @@ const rainbowConnectors = connectorsForWallets(
 // Circle sits alongside (not inside) the RainbowKit connectors so it can be its own modal option.
 const connectors = circleConfigured() ? [circleConnector(), ...rainbowConnectors] : rainbowConnectors;
 
+// Persist connection state to cookies so it survives refresh + Next.js SSR hydration. Without
+// this, wagmi v2 + `ssr: true` loses connector state between renders and randomly disconnects
+// the wallet mid-click. Cookies (not localStorage) so SSR has the state available on first paint.
 export const config = createConfig({
   chains,
   connectors,
@@ -46,4 +49,5 @@ export const config = createConfig({
     [arcTestnet.id]: http('https://rpc.testnet.arc.network'),
   },
   ssr: true,
+  storage: createStorage({ storage: cookieStorage }),
 });

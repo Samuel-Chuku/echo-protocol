@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
+import { Check, ExternalLink } from 'lucide-react';
 import { useQuery, gql } from 'urql';
 import { useAccount } from 'wagmi';
 import { EchoMode, buildMetadata, CONTRACTS } from '@echo/sdk';
@@ -10,7 +11,7 @@ import { useAgent } from '@/lib/agent';
 import { Section, Card, Field } from '@/components/ui';
 import { ApproveCreate } from '@/components/ApproveCreate';
 import { IdentityBanner } from '@/components/IdentityBanner';
-import { toUnits, usdc, recommendedEscrow, scope, modeName, modeTagClass, MODE_BLURBS } from '@/lib/format';
+import { toUnits, usdc, recommendedEscrow, scope, modeName, modeTagClass, MODE_BLURBS, isTxHash, txLink, short } from '@/lib/format';
 
 const C = CONTRACTS.arcTestnet;
 
@@ -22,21 +23,24 @@ const C = CONTRACTS.arcTestnet;
 export default function HirePage() {
   const { sdk, account } = useEcho();
   const { agentId } = useAgent();
+  // Bumped on every successful create. MyMarkets watches it as a query variable so urql treats
+  // it as a fresh query and re-fetches — bypasses the cache cleanly without lifting refetch refs.
+  const [createdAt, setCreatedAt] = useState(0);
 
   return (
     <div>
       <h1 className="text-2xl font-bold mb-1">Post a job</h1>
       <p className="text-sm text-gray-500 mb-6">Create work, then manage it. Your identity: agentId {agentId || '—'}.</p>
       <IdentityBanner />
-      <CreateMarket sdk={sdk} account={account} agentId={agentId} />
-      <MyMarkets account={account} />
+      <CreateMarket sdk={sdk} account={account} agentId={agentId} onCreated={() => setCreatedAt(Date.now())} />
+      <MyMarkets account={account} createdAt={createdAt} />
     </div>
   );
 }
 
 /* ──────────────────────────── create: type picker → form ──────────────────────────── */
 
-function CreateMarket({ sdk, account, agentId }: { sdk: ReturnType<typeof useEcho>['sdk']; account?: `0x${string}`; agentId: string }) {
+function CreateMarket({ sdk, account, agentId, onCreated }: { sdk: ReturnType<typeof useEcho>['sdk']; account?: `0x${string}`; agentId: string; onCreated: () => void }) {
   const [type, setType] = useState<EchoMode | null>(null);
   const need = !account || !agentId;
 
@@ -59,17 +63,45 @@ function CreateMarket({ sdk, account, agentId }: { sdk: ReturnType<typeof useEch
       <div className="sm:col-span-2">
         <button onClick={() => setType(null)} className="text-xs text-gray-500 hover:text-gray-900 mb-3">← pick a different type</button>
         {need && <p className="text-xs text-amber-600 mb-2">Connect a wallet and register your identity (above) first.</p>}
-        {type === EchoMode.OpenMarket && <OpenForm sdk={sdk} account={account} agentId={agentId} disabled={need} />}
-        {type === EchoMode.DirectJob && <DirectForm sdk={sdk} account={account} agentId={agentId} disabled={need} />}
-        {type === EchoMode.Bounty && <BountyForm sdk={sdk} account={account} agentId={agentId} disabled={need} />}
+        {type === EchoMode.OpenMarket && <OpenForm sdk={sdk} account={account} agentId={agentId} disabled={need} onCreated={onCreated} />}
+        {type === EchoMode.DirectJob && <DirectForm sdk={sdk} account={account} agentId={agentId} disabled={need} onCreated={onCreated} />}
+        {type === EchoMode.Bounty && <BountyForm sdk={sdk} account={account} agentId={agentId} disabled={need} onCreated={onCreated} />}
       </div>
     </Section>
   );
 }
 
-type FormProps = { sdk: ReturnType<typeof useEcho>['sdk']; account?: `0x${string}`; agentId: string; disabled: boolean };
+type FormProps = { sdk: ReturnType<typeof useEcho>['sdk']; account?: `0x${string}`; agentId: string; disabled: boolean; onCreated: () => void };
 
-function OpenForm({ sdk, account, agentId, disabled }: FormProps) {
+/** Success banner reused across all three create forms. */
+function CreatedBanner({ txHash, onReset }: { txHash: string | null; onReset: () => void }) {
+  if (!txHash) return null;
+  return (
+    <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-sm flex items-start gap-2">
+      <Check className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+      <div className="flex-1 min-w-0">
+        <p className="text-emerald-800 font-medium">Created on-chain.</p>
+        <p className="text-emerald-700 text-xs mt-0.5">
+          It&apos;ll appear under <a href="#my-markets" className="underline">My markets</a> below
+          as the indexer catches up (a few seconds).
+          {isTxHash(txHash) && (
+            <>
+              {' '}
+              <a href={txLink(txHash)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 underline">
+                Tx: <span className="font-mono">{short(txHash)}</span> <ExternalLink className="w-3 h-3" />
+              </a>
+            </>
+          )}
+        </p>
+      </div>
+      <button onClick={onReset} className="text-xs text-emerald-700 hover:text-emerald-900 underline shrink-0">
+        Create another
+      </button>
+    </div>
+  );
+}
+
+function OpenForm({ sdk, account, agentId, disabled, onCreated }: FormProps) {
   const [subject, setSubject] = useState('');
   const [desc, setDesc] = useState('');
   const [tiers, setTiers] = useState(['5', '50', '250', '1000']);
@@ -80,6 +112,8 @@ function OpenForm({ sdk, account, agentId, disabled }: FormProps) {
   const [stake, setStake] = useState('10');
   const [flagDays, setFlagDays] = useState('2');
   const [requiredProofs, setProofs] = useState('0');
+  const [createdTx, setCreatedTx] = useState<string | null>(null);
+  const reset = () => { setSubject(''); setDesc(''); setEscrowDirty(false); setCreatedTx(null); };
 
   // #7 — mirror the contract's min-escrow so the field pre-fills to a value that can't revert with
   // InsufficientEscrow. Returns undefined if any input isn't yet a valid number.
@@ -149,18 +183,22 @@ function OpenForm({ sdk, account, agentId, disabled }: FormProps) {
             flagWindow: BigInt(Number(flagDays) * 86400),
           },
         }, account!)}
+        onDone={(r) => { setCreatedTx(isTxHash(r) ? (r as string) : 'done'); setSubject(''); setDesc(''); onCreated(); }}
       />
+      <CreatedBanner txHash={createdTx} onReset={reset} />
     </Card>
   );
 }
 
-function DirectForm({ sdk, account, agentId, disabled }: FormProps) {
+function DirectForm({ sdk, account, agentId, disabled, onCreated }: FormProps) {
   const [subject, setSubject] = useState('');
   const [desc, setDesc] = useState('');
   const [worker, setWorker] = useState('');
   const [workerAgentId, setWorkerAgentId] = useState('');
   const [milestones, setMilestones] = useState('100,200,300');
   const [reviewDays, setReviewDays] = useState('3');
+  const [createdTx, setCreatedTx] = useState<string | null>(null);
+  const reset = () => { setSubject(''); setDesc(''); setWorker(''); setWorkerAgentId(''); setCreatedTx(null); };
 
   const amounts = () => milestones.split(',').map((s) => toUnits(s.trim()));
   const total = () => amounts().reduce((a, b) => a + b, 0n);
@@ -189,18 +227,22 @@ function DirectForm({ sdk, account, agentId, disabled }: FormProps) {
           milestoneAmounts: amounts(),
           reviewWindow: BigInt(Number(reviewDays) * 86400),
         }, account!)}
+        onDone={(r) => { setCreatedTx(isTxHash(r) ? (r as string) : 'done'); setSubject(''); setDesc(''); setWorker(''); onCreated(); }}
       />
+      <CreatedBanner txHash={createdTx} onReset={reset} />
     </Card>
   );
 }
 
-function BountyForm({ sdk, account, agentId, disabled }: FormProps) {
+function BountyForm({ sdk, account, agentId, disabled, onCreated }: FormProps) {
   const [subject, setSubject] = useState('');
   const [desc, setDesc] = useState('');
   const [pool, setPool] = useState('1000');
   const [defaultAward, setDefaultAward] = useState('50');
   const [reviewDays, setReviewDays] = useState('3');
   const [requiredProofs, setProofs] = useState('0');
+  const [createdTx, setCreatedTx] = useState<string | null>(null);
+  const reset = () => { setSubject(''); setDesc(''); setCreatedTx(null); };
 
   return (
     <Card title="Bounty" hint="Open submissions, parallel winners. Approves the pool, then creates.">
@@ -229,7 +271,9 @@ function BountyForm({ sdk, account, agentId, disabled }: FormProps) {
           reviewWindow: BigInt(Number(reviewDays) * 86400),
           pool: toUnits(pool),
         }, account!)}
+        onDone={(r) => { setCreatedTx(isTxHash(r) ? (r as string) : 'done'); setSubject(''); setDesc(''); onCreated(); }}
       />
+      <CreatedBanner txHash={createdTx} onReset={reset} />
     </Card>
   );
 }
@@ -250,19 +294,37 @@ const MY_MARKETS = gql`
 
 type MyRow = { id: number; mode: number; subject: string | null; status: string; applicantCount: number };
 
-function MyMarkets({ account }: { account?: `0x${string}` }) {
+function MyMarkets({ account, createdAt }: { account?: `0x${string}`; createdAt: number }) {
   const { isConnected } = useAccount();
-  const [{ data, fetching, error }] = useQuery<{ markets: MyRow[] }>({
+  const [{ data, fetching, error }, refetch] = useQuery<{ markets: MyRow[] }>({
     query: MY_MARKETS,
     variables: { requester: account ?? '' },
     pause: !account,
+    requestPolicy: 'cache-and-network',
   });
   const rows = data?.markets ?? [];
 
+  // Refetch when a new market is created — the indexer needs a few seconds to ingest, so retry
+  // a couple of times in case the first hit lands before the event is reduced.
+  useEffect(() => {
+    if (!createdAt) return;
+    const delays = [3000, 8000, 15000];
+    const timers = delays.map((ms) => setTimeout(() => refetch({ requestPolicy: 'network-only' }), ms));
+    return () => { timers.forEach(clearTimeout); };
+  }, [createdAt, refetch]);
+
   return (
     <Section title="My markets" desc="Markets you created (from the indexer). Click one to manage its lifecycle.">
-      <div className="sm:col-span-2">
+      <div id="my-markets" className="sm:col-span-2 scroll-mt-24">
         <Card title="Your markets">
+          <div className="flex items-center justify-end -mt-1 mb-1">
+            <button
+              onClick={() => refetch({ requestPolicy: 'network-only' })}
+              className="text-xs text-gray-400 hover:text-gray-700 underline"
+            >
+              Refresh
+            </button>
+          </div>
           {!isConnected && <p className="text-xs text-gray-400">Connect a wallet to see your markets.</p>}
           {isConnected && fetching && rows.length === 0 && <p className="text-xs text-gray-400">Loading…</p>}
           {error && <p className="text-xs text-red-600 break-all">{error.message} — is the indexer running on :4000?</p>}

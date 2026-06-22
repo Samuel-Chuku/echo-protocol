@@ -9,6 +9,8 @@ export const typeDefs = /* GraphQL */ `
     milestones(marketId: Int!): [Milestone!]!
     "Activity for a wallet (as actor or as the market's requester). status: PENDING | COMPLETED."
     activity(address: String!, status: String, limit: Int): [Activity!]!
+    "Full event timeline for a single market — oldest → newest. Drives the per-market timeline UI."
+    marketActivity(marketId: Int!, limit: Int): [Activity!]!
     disputes(status: Int): [Dispute!]!
     "Per-address reputation rollup (raw counters from EchoHook). null when no events yet."
     reputation(address: String!): Reputation
