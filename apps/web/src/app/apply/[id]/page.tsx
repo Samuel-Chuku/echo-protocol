@@ -210,7 +210,8 @@ function OpenApply({ sdk, account, agentId, marketId, closed }: { sdk: ReturnTyp
               {bodyError && <p className="text-xs text-red-600">{bodyError}</p>}
               {closed && <p className="text-xs text-amber-600">This market is no longer active.</p>}
               {need && <p className="text-xs text-amber-600">Register your identity (banner above) first.</p>}
-              <Command label="Apply" disabled={need || closed || !submission.trim()} onDone={refreshApp}
+              <Command label="Apply" disabled={need || closed || !submission.trim()}
+                onDone={() => { setSubmission(''); refreshApp(); }}
                 run={async () => {
                   setBodyError(null);
                   const body = submission.trim();
@@ -349,7 +350,8 @@ function TierJobCard({ sdk, account, marketId, job, onChanged }: {
             className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm font-mono"
           />
           {err && <p className="text-xs text-red-600">{err}</p>}
-          <Command label="Submit deliverable" disabled={!deliverable.trim()} onDone={onChanged}
+          <Command label="Submit deliverable" disabled={!deliverable.trim()}
+            onDone={() => { setDeliverable(''); onChanged(); }}
             run={async () => {
               setErr(null);
               const body = deliverable.trim();
@@ -415,7 +417,8 @@ function DirectDeliver({ sdk, account, marketId, worker }: { sdk: ReturnType<typ
           <Field label="index" value={idx} onChange={(e) => setIdx(e.target.value)} />
           <Field label="deliverable text → hash" value={deliver} onChange={(e) => setDeliver(e.target.value)} />
         </div>
-        <Command label="Submit milestone" disabled={!account} onDone={load}
+        <Command label="Submit milestone" disabled={!account}
+          onDone={() => { setDeliver(''); load(); }}
           run={() => sdk.submitMilestone(marketId, BigInt(idx), scope(deliver), account!)} />
         {milestones.length > 0 && (
           <KV rows={milestones.map((ms: any, i: number) => [`#${i} ${usdc(ms.amount)}`, MILESTONE_STATUS[Number(ms.status)] ?? String(ms.status)])} />
@@ -437,6 +440,7 @@ function BountyDeliver({ sdk, account, agentId, marketId, closed }: { sdk: Retur
         {closed && <p className="text-xs text-amber-600">This bounty is closed.</p>}
         {need && <p className="text-xs text-amber-600">Register your identity (banner above) first.</p>}
         <Command label="Submit finding" disabled={need || closed}
+          onDone={() => setDeliver('')}
           run={() => sdk.submitFinding(marketId, BigInt(agentId || '0'), scope(deliver), account!)} />
       </Card>
     </Section>

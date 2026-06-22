@@ -46,7 +46,7 @@ export function SendUsdcCard({ onSent }: { onSent?: () => void }) {
       <Command
         label={amt > 0n && validTo ? `Send ${amount} USDC` : 'Send USDC'}
         disabled={disabled}
-        onDone={() => { loadBal(); onSent?.(); }}
+        onDone={() => { setTo(''); setAmount(''); loadBal(); onSent?.(); }}
         run={() => sdk.transferUsdc(to.trim() as `0x${string}`, amt, account!)}
       />
     </Card>

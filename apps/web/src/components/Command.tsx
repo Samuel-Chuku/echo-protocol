@@ -55,7 +55,7 @@ export function Command({
   }
 
   return (
-    <div className="space-y-1">
+    <div className="space-y-2">
       <button
         onClick={onClick}
         disabled={busy || disabled}
@@ -64,16 +64,28 @@ export function Command({
         {busy && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
         {label}
       </button>
-      {result && (
-        <div className={`text-xs flex items-start gap-1 ${result.ok ? 'text-green-600' : 'text-red-600'}`}>
-          {result.ok ? <Check className="w-3.5 h-3.5 shrink-0 mt-0.5" /> : <X className="w-3.5 h-3.5 shrink-0 mt-0.5" />}
-          {isTxHash(result.msg) ? (
-            <a href={txLink(result.msg)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 underline break-all">
-              {result.msg.slice(0, 10)}…{result.msg.slice(-8)} <ExternalLink className="w-3 h-3" />
-            </a>
-          ) : (
-            <span className="break-all">{result.msg}</span>
-          )}
+      {result?.ok && (
+        <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm flex items-start gap-2">
+          <Check className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+          <div className="flex-1 min-w-0">
+            <p className="text-emerald-800 font-medium">{isWrite ? 'Transaction confirmed' : 'Done'}</p>
+            {isTxHash(result.msg) ? (
+              <a href={txLink(result.msg)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs text-emerald-700 underline mt-0.5 break-all">
+                Tx: <span className="font-mono">{result.msg.slice(0, 10)}…{result.msg.slice(-8)}</span> <ExternalLink className="w-3 h-3" />
+              </a>
+            ) : (
+              <p className="text-xs text-emerald-700 mt-0.5">Action complete.</p>
+            )}
+          </div>
+        </div>
+      )}
+      {result && !result.ok && (
+        <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm flex items-start gap-2">
+          <X className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+          <div className="flex-1 min-w-0">
+            <p className="text-red-800 font-medium">Transaction failed</p>
+            <p className="text-xs text-red-700 mt-0.5 break-all">{result.msg}</p>
+          </div>
         </div>
       )}
     </div>

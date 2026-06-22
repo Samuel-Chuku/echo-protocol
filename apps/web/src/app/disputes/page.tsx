@@ -60,6 +60,7 @@ export default function DisputesPage() {
             <Field label="bond USDC" value={bond} onChange={(e) => setBond(e.target.value)} />
           </div>
           <Command label="Open finding dispute" disabled={!account}
+            onDone={() => { setFindingIndex(''); setBond(''); }}
             run={async () => {
               await sdk.ensureUsdcAllowance(C.disputeResolver, toUnits(bond), account!);
               return sdk.openFindingDispute(BigInt(marketId), BigInt(findingIndex), toUnits(bond), account!);
@@ -73,6 +74,7 @@ export default function DisputesPage() {
           </div>
           <Field label="participant" value={participant} onChange={(e) => setParticipant(e.target.value)} placeholder="0x…" />
           <Command label="Open stake dispute" tone="danger" disabled={!account || !participant}
+            onDone={() => { setParticipant(''); setBond(''); }}
             run={async () => {
               await sdk.ensureUsdcAllowance(C.disputeResolver, toUnits(bond), account!);
               return sdk.openStakeDispute(BigInt(marketId), participant as `0x${string}`, toUnits(bond), account!);
@@ -103,7 +105,9 @@ export default function DisputesPage() {
             <Field label="hint text → hash" value={hint} onChange={(e) => setHint(e.target.value)} />
           </div>
           <div className="flex flex-wrap gap-2">
-            <Command label="Record hint" tone="neutral" disabled={!account} run={() => sdk.recordAgentHint(did(), scope(hint), account!)} />
+            <Command label="Record hint" tone="neutral" disabled={!account}
+              onDone={() => setHint('')}
+              run={() => sdk.recordAgentHint(did(), scope(hint), account!)} />
             <Command label="Load dispute" tone="neutral" run={async () => { setD(await sdk.getDispute(did())); return 'loaded'; }} />
           </div>
           {d && (

@@ -227,9 +227,14 @@ export default function ManageMarketPage({ params }: { params: Promise<{ id: str
           <Card title="Direct Job actions" hint="accept pays the milestone; auto-release after the review window; cancel refunds pending.">
             <Field label="milestone index" value={idx} onChange={(e) => setIdx(e.target.value)} />
             <div className="flex flex-wrap gap-2">
-              <Command label="Accept milestone" disabled={!account} onDone={load} run={() => sdk.acceptMilestone(marketId(), BigInt(idx), account!)} />
-              <Command label="Auto-release" tone="neutral" disabled={!account} onDone={load} run={() => sdk.autoReleaseMilestone(marketId(), BigInt(idx), account!)} />
-              <Command label="Cancel job" tone="danger" disabled={!account} onDone={load} run={() => sdk.cancelDirectJob(marketId(), account!)} />
+              <Command label="Accept milestone" disabled={!account}
+                onDone={() => { setIdx(''); load(); }}
+                run={() => sdk.acceptMilestone(marketId(), BigInt(idx), account!)} />
+              <Command label="Auto-release" tone="neutral" disabled={!account}
+                onDone={() => { setIdx(''); load(); }}
+                run={() => sdk.autoReleaseMilestone(marketId(), BigInt(idx), account!)} />
+              <Command label="Cancel job" tone="danger" disabled={!account} onDone={load}
+                run={() => sdk.cancelDirectJob(marketId(), account!)} />
             </div>
             {data.milestones?.length > 0 && (
               <KV rows={data.milestones.map((m: any, i: number) => [`#${i} ${usdc(m.amount)}`, MILESTONE_STATUS[Number(m.status)] ?? String(m.status)])} />
@@ -245,10 +250,17 @@ export default function ManageMarketPage({ params }: { params: Promise<{ id: str
               <Field label="award USDC" value={award} onChange={(e) => setAward(e.target.value)} />
             </div>
             <div className="flex flex-wrap gap-2">
-              <Command label="Accept finding" disabled={!account} onDone={load} run={() => sdk.acceptFinding(marketId(), BigInt(idx), toUnits(award), account!)} />
-              <Command label="Reject" tone="neutral" disabled={!account} onDone={load} run={() => sdk.rejectFinding(marketId(), BigInt(idx), account!)} />
-              <Command label="Auto-escalate" tone="neutral" disabled={!account} onDone={load} run={() => sdk.autoEscalateFinding(marketId(), BigInt(idx), account!)} />
-              <Command label="Close bounty" tone="danger" disabled={!account} onDone={load} run={() => sdk.closeBounty(marketId(), account!)} />
+              <Command label="Accept finding" disabled={!account}
+                onDone={() => { setIdx(''); setAward(''); load(); }}
+                run={() => sdk.acceptFinding(marketId(), BigInt(idx), toUnits(award), account!)} />
+              <Command label="Reject" tone="neutral" disabled={!account}
+                onDone={() => { setIdx(''); load(); }}
+                run={() => sdk.rejectFinding(marketId(), BigInt(idx), account!)} />
+              <Command label="Auto-escalate" tone="neutral" disabled={!account}
+                onDone={() => { setIdx(''); load(); }}
+                run={() => sdk.autoEscalateFinding(marketId(), BigInt(idx), account!)} />
+              <Command label="Close bounty" tone="danger" disabled={!account} onDone={load}
+                run={() => sdk.closeBounty(marketId(), account!)} />
             </div>
             {data.findings?.length > 0 && (
               <KV rows={data.findings.map((f: any, i: number) => [`#${i} ${short(f.submitter)}`, `${FINDING_STATUS[Number(f.status)] ?? f.status}${f.award ? ' · ' + usdc(f.award) : ''}`])} />
@@ -580,6 +592,7 @@ function AttributionOptIn({ sdk, account, marketId }: { sdk: ReturnType<typeof u
               <p className="text-xs text-gray-400">Approves {amount} USDC to the market, then funds the pool.</p>
               <div className="flex items-center gap-2">
                 <Command label={`Approve ${amount} + fund pool`} disabled={!account}
+                  onDone={() => { setOpen(false); setAmount('100'); setShareBps('500'); }}
                   run={async () => {
                     await sdk.ensureUsdcAllowance(C.marketRegistry, toUnits(amount), account!);
                     return sdk.fundAttributionPool(marketId(), toUnits(amount), Number(shareBps), account!);
