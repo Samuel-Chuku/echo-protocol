@@ -1,16 +1,36 @@
 'use client';
 
-import { use, useEffect, useState, type ReactNode } from 'react';
+import { use, useCallback, useEffect, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useQuery, gql } from 'urql';
 import { EchoMode, CONTRACTS } from '@echo/sdk';
 import { useEcho } from '@/lib/sdk';
 import { useAgent } from '@/lib/agent';
+import { useContent } from '@/lib/content';
 import { Section, Card, Field, KV } from '@/components/ui';
 import { Command } from '@/components/Command';
 import { Receipt } from '@/components/Receipt';
 import { IdentityBanner } from '@/components/IdentityBanner';
 import { usdc, scope, short, modeName, modeTagClass, isZeroAddr, MILESTONE_STATUS } from '@/lib/format';
+
+// Arc AgenticCommerce JobStatus enum (IERC8183.sol:23-30). Drives the per-tier-job UI gates:
+// Open → worker submits, Funded → (Echo skips, budget==0), Submitted → requester accepts, Completed → paid.
+const JOB_STATUS = ['Open', 'Funded', 'Submitted', 'Completed', 'Rejected', 'Expired'];
+const JOB_STATUS_CLASS = [
+  'bg-sky-50 text-sky-700 border-sky-200',
+  'bg-sky-50 text-sky-700 border-sky-200',
+  'bg-amber-50 text-amber-700 border-amber-200',
+  'bg-emerald-50 text-emerald-700 border-emerald-200',
+  'bg-red-50 text-red-700 border-red-200',
+  'bg-gray-100 text-gray-600 border-gray-200',
+];
+
+// EchoHook.Tier enum (EchoHook.sol:38-46) — Substantive/Shortlist/Final are the three Open-mode tiers
+// that get an Arc job. (Ghost/Milestone/Finding are bookkeeping only, never appear in tierJobIds.)
+const HOOK_TIER_LABELS: Record<number, string> = {
+  0: 'Submitted', 1: 'Substantive', 2: 'Shortlist', 3: 'Final',
+  4: 'Ghost', 5: 'Milestone', 6: 'Finding',
+};
 
 const C = CONTRACTS.arcTestnet;
 
@@ -116,56 +136,252 @@ export default function JobDetailPage({ params }: { params: Promise<{ id: string
 const TIER_NAMES = ['Applied', 'Revealed', 'Shortlist', 'Final'];
 
 function OpenApply({ sdk, account, agentId, marketId, closed }: { sdk: ReturnType<typeof useEcho>['sdk']; account?: `0x${string}`; agentId: string; marketId: bigint; closed: boolean }) {
-  const [submission, setSubmission] = useState('my-application-v1');
+  const [submission, setSubmission] = useState('');
   const [app, setApp] = useState<any>(null);
   const [loading, setLoading] = useState(false);
+  const [savedBody, setSavedBody] = useState<string | null>(null);
+  const [bodyError, setBodyError] = useState<string | null>(null);
   const need = !account || !agentId;
+  const { store: storeContent, fetch: fetchContent } = useContent();
 
   // Auto-detect: hit getApplication on mount (and whenever the wallet changes) so the user sees
   // their status right away instead of having to click a "Load my application" button. The SDK
   // returns a zero-state object when there's no record, so a non-zero agentId means "applied".
-  const refreshApp = async () => {
+  const refreshApp = useCallback(async () => {
     if (!account) { setApp(null); return; }
     setLoading(true);
     try { setApp(await sdk.getApplication(marketId, account)); } catch { setApp(null); }
     finally { setLoading(false); }
-  };
-  useEffect(() => { refreshApp(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [account, marketId.toString()]);
+  }, [account, marketId, sdk]);
+  useEffect(() => { refreshApp(); }, [refreshApp]);
 
   const hasApplied = !!app && app.agentId !== undefined && BigInt(app.agentId ?? 0) !== 0n;
 
+  // After applying, pre-load the body the worker stored (so it survives refresh). Failures are
+  // non-fatal — the body is optional context, not the source of truth (the on-chain hash is).
+  useEffect(() => {
+    if (!hasApplied || !account) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const row = await fetchContent(Number(marketId), 'apply', account, account);
+        if (!cancelled) setSavedBody(row?.body ?? null);
+      } catch { /* not stored yet — leave null */ }
+    })();
+    return () => { cancelled = true; };
+  }, [hasApplied, account, marketId, fetchContent]);
+
   return (
-    <Section title="Apply" desc="Submit your application. The requester reveals, grades, and advances applicants through tiers.">
-      <Card title={hasApplied ? 'Your application' : 'Apply to this market'} hint={hasApplied ? undefined : 'applyToMarket — mints a participation receipt; pulls the stake if the market requires one.'}>
-        {loading && !app && <p className="text-xs text-gray-400">Checking…</p>}
-        {hasApplied ? (
-          <>
-            <p className="text-sm text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-md px-3 py-2">
-              You&apos;ve already applied to this market. The requester reveals + grades from here.
-            </p>
-            <KV rows={[
-              ['tier reached', TIER_NAMES[Number(app.tierReached)] ?? String(app.tierReached)],
-              ['agentId', String(app.agentId)],
-              ['receipt #', String(app.receiptTokenId)],
-              ['withdrawn', String(app.withdrawn)],
-            ]} />
-          </>
-        ) : (
-          <>
-            <Field label="submission text → hash" value={submission} onChange={(e) => setSubmission(e.target.value)} />
-            {closed && <p className="text-xs text-amber-600">This market is no longer active.</p>}
-            {need && <p className="text-xs text-amber-600">Register your identity (banner above) first.</p>}
-            <Command label="Apply" disabled={need || closed} onDone={refreshApp}
-              run={async () => {
-                // If the market requires an applicant stake, approve exactly that much first (no standing allowance).
-                const stake = await sdk.marketStakeRequired(marketId).catch(() => 0n);
-                if (stake > 0n) await sdk.ensureUsdcAllowance(C.marketRegistry, stake, account!);
-                return sdk.applyToMarket(marketId, BigInt(agentId || '0'), scope(submission), account!);
-              }} />
-          </>
-        )}
-      </Card>
+    <>
+      <Section title="Apply" desc="Submit your application. The requester reveals, grades, and advances applicants through tiers.">
+        <Card title={hasApplied ? 'Your application' : 'Apply to this market'} hint={hasApplied ? undefined : 'Writes your application text to the indexer (gated to you + requester after reveal), then applyToMarket commits the hash + stake on chain.'}>
+          {loading && !app && <p className="text-xs text-gray-400">Checking…</p>}
+          {hasApplied ? (
+            <>
+              <p className="text-sm text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-md px-3 py-2">
+                You&apos;ve already applied. The requester reveals to read your application, then grades you through the tiers below.
+              </p>
+              <KV rows={[
+                ['tier reached', TIER_NAMES[Number(app.tierReached)] ?? String(app.tierReached)],
+                ['agentId', String(app.agentId)],
+                ['receipt #', String(app.receiptTokenId)],
+                ['withdrawn', String(app.withdrawn)],
+              ]} />
+              {savedBody !== null && (
+                <div className="mt-2 rounded-md border border-gray-200 bg-gray-50 px-3 py-2">
+                  <div className="text-[10px] uppercase tracking-wide text-gray-500 mb-1">Your application body (saved off-chain)</div>
+                  <p className="text-sm text-gray-700 whitespace-pre-wrap">{savedBody}</p>
+                </div>
+              )}
+              {savedBody === null && (
+                <p className="text-xs text-amber-600">No application body found — the chain has your hash but no readable text was stored. Re-submitting requires a fresh application.</p>
+              )}
+            </>
+          ) : (
+            <>
+              <label className="block text-xs uppercase tracking-wide text-gray-500 mb-1">Application body — your pitch / writeup</label>
+              <textarea
+                value={submission}
+                onChange={(e) => setSubmission(e.target.value)}
+                rows={6}
+                placeholder="Write your application here. Hashed on chain; full text stored on the indexer and gated to you + the requester after they pay to reveal."
+                className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm font-mono"
+              />
+              {bodyError && <p className="text-xs text-red-600">{bodyError}</p>}
+              {closed && <p className="text-xs text-amber-600">This market is no longer active.</p>}
+              {need && <p className="text-xs text-amber-600">Register your identity (banner above) first.</p>}
+              <Command label="Apply" disabled={need || closed || !submission.trim()} onDone={refreshApp}
+                run={async () => {
+                  setBodyError(null);
+                  const body = submission.trim();
+                  if (!body) throw new Error('Application body required');
+                  // Off-chain first — if storeContent fails (signature rejected, indexer down) we
+                  // bail before sending a tx the requester can't read anyway.
+                  try {
+                    await storeContent(Number(marketId), 'apply', account!, body, account!);
+                  } catch (e: unknown) {
+                    setBodyError(e instanceof Error ? e.message : 'Failed to store application body');
+                    throw e;
+                  }
+                  const stake = await sdk.marketStakeRequired(marketId).catch(() => 0n);
+                  if (stake > 0n) await sdk.ensureUsdcAllowance(C.marketRegistry, stake, account!);
+                  return sdk.applyToMarket(marketId, BigInt(agentId || '0'), scope(body), account!);
+                }} />
+            </>
+          )}
+        </Card>
+      </Section>
+
+      {hasApplied && account && (
+        <TierJobs
+          sdk={sdk}
+          account={account}
+          marketId={marketId}
+          tierJobIds={(app?.tierJobIds ?? []) as bigint[]}
+          onChanged={refreshApp}
+        />
+      )}
+    </>
+  );
+}
+
+/* ──────────────── Open/Reveal: per-tier deliverables ──────────────── */
+
+type TierJob = {
+  jobId: bigint;
+  arcJob: { provider: `0x${string}`; evaluator: `0x${string}`; status: number; expiredAt: bigint } | null;
+  ctx: { tier: number; tierAmount: bigint; ghostDeadline: bigint } | null;
+};
+
+function TierJobs({ sdk, account, marketId, tierJobIds, onChanged }: {
+  sdk: ReturnType<typeof useEcho>['sdk']; account: `0x${string}`; marketId: bigint;
+  tierJobIds: bigint[]; onChanged: () => void;
+}) {
+  const [jobs, setJobs] = useState<TierJob[]>([]);
+  const [loading, setLoading] = useState(false);
+  const idsKey = tierJobIds.map((j) => j.toString()).join(',');
+
+  const load = useCallback(async () => {
+    if (tierJobIds.length === 0) { setJobs([]); return; }
+    setLoading(true);
+    try {
+      const rows = await Promise.all(tierJobIds.map(async (jobId) => {
+        const [arcJob, ctx] = await Promise.all([
+          sdk.getArcJob(jobId).catch(() => null) as Promise<TierJob['arcJob']>,
+          sdk.getJobContext(jobId).catch(() => null) as Promise<TierJob['ctx']>,
+        ]);
+        return { jobId, arcJob, ctx };
+      }));
+      setJobs(rows);
+    } finally { setLoading(false); }
+  }, [sdk, idsKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => { load(); }, [load]);
+
+  if (tierJobIds.length === 0) {
+    return (
+      <Section title="Tier jobs" desc="Once the requester grades you to a tier, an Arc job is created here. You submit a deliverable to that job; the requester accepts to release payment.">
+        <Card title="No tier jobs yet">
+          <p className="text-sm text-gray-500">Waiting for the requester to reveal + grade your application.</p>
+        </Card>
+      </Section>
+    );
+  }
+
+  return (
+    <Section title="Tier jobs" desc="Each grade spawned an Arc job. Submit your deliverable; the requester accepts to release that tier's payment (or it ghosts after the deadline on the Final job).">
+      {loading && jobs.length === 0 && <p className="text-xs text-gray-400">Loading jobs…</p>}
+      {jobs.map((j) => (
+        <TierJobCard key={j.jobId.toString()} sdk={sdk} account={account} marketId={marketId} job={j} onChanged={() => { load(); onChanged(); }} />
+      ))}
     </Section>
+  );
+}
+
+function TierJobCard({ sdk, account, marketId, job, onChanged }: {
+  sdk: ReturnType<typeof useEcho>['sdk']; account: `0x${string}`; marketId: bigint;
+  job: TierJob; onChanged: () => void;
+}) {
+  const [deliverable, setDeliverable] = useState('');
+  const [savedBody, setSavedBody] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const { store: storeContent, fetch: fetchContent } = useContent();
+  const status = job.arcJob?.status ?? 0;
+  const tier = job.ctx?.tier ?? 0;
+  const amount = job.ctx?.tierAmount ?? 0n;
+  const expiredAt = job.arcJob?.expiredAt ?? 0n;
+  const isProvider = job.arcJob && job.arcJob.provider.toLowerCase() === account.toLowerCase();
+
+  // Pull any deliverable already stored for this job so the worker sees what they submitted.
+  useEffect(() => {
+    if (!isProvider) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const row = await fetchContent(Number(marketId), 'deliver', job.jobId.toString(), account);
+        if (!cancelled) setSavedBody(row?.body ?? null);
+      } catch { /* not stored yet */ }
+    })();
+    return () => { cancelled = true; };
+  }, [isProvider, marketId, job.jobId, account, fetchContent]);
+
+  return (
+    <Card title={`${HOOK_TIER_LABELS[tier] ?? `Tier ${tier}`} — job #${job.jobId.toString()}`} hint={`Pays ${usdc(amount)} USDC on accept.`}>
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className={`rounded border px-2 py-0.5 text-xs font-medium ${JOB_STATUS_CLASS[status] ?? JOB_STATUS_CLASS[0]}`}>
+          {JOB_STATUS[status] ?? `status ${status}`}
+        </span>
+        {expiredAt > 0n && (
+          <span className="text-xs text-gray-500">
+            {tier === 3 ? 'ghosts at' : 'expires at'} {new Date(Number(expiredAt) * 1000).toLocaleString()}
+          </span>
+        )}
+      </div>
+
+      {status === 0 && isProvider && (
+        <>
+          <label className="block text-xs uppercase tracking-wide text-gray-500 mt-2 mb-1">Deliverable for this tier</label>
+          <textarea
+            value={deliverable}
+            onChange={(e) => setDeliverable(e.target.value)}
+            rows={5}
+            placeholder={tier === 3 ? 'Final deliverable — the actual work product the requester is paying for.' : 'Whatever you owe at this stage (case study, take-home, plan, etc).'}
+            className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm font-mono"
+          />
+          {err && <p className="text-xs text-red-600">{err}</p>}
+          <Command label="Submit deliverable" disabled={!deliverable.trim()} onDone={onChanged}
+            run={async () => {
+              setErr(null);
+              const body = deliverable.trim();
+              try {
+                await storeContent(Number(marketId), 'deliver', job.jobId.toString(), body, account);
+              } catch (e: unknown) {
+                setErr(e instanceof Error ? e.message : 'Failed to store deliverable');
+                throw e;
+              }
+              return sdk.submitTierJob(job.jobId, scope(body), account);
+            }} />
+        </>
+      )}
+
+      {status === 0 && !isProvider && (
+        <p className="text-xs text-gray-500 mt-2">Connect as the assigned provider to submit a deliverable here.</p>
+      )}
+
+      {(status === 2 || status === 3) && savedBody !== null && (
+        <div className="mt-2 rounded-md border border-gray-200 bg-gray-50 px-3 py-2">
+          <div className="text-[10px] uppercase tracking-wide text-gray-500 mb-1">Your deliverable (saved off-chain)</div>
+          <p className="text-sm text-gray-700 whitespace-pre-wrap">{savedBody}</p>
+        </div>
+      )}
+
+      {status === 3 && (
+        <p className="text-xs text-emerald-700 mt-2">Accepted — {usdc(amount)} USDC paid out. Tx on-chain via EchoHook settlement.</p>
+      )}
+      {status === 2 && (
+        <p className="text-xs text-amber-700 mt-2">Submitted. Waiting on the requester to accept → release payment.</p>
+      )}
+    </Card>
   );
 }
 

@@ -117,6 +117,27 @@ export const reputation = pgTable('reputation', {
   updatedAt: integer('updated_at').notNull().default(0),
 });
 
+/**
+ * Off-chain content channel — the text-payload layer the contracts deliberately left to the app
+ * ("Content delivery is app-mediated off-chain" — MarketRegistry.sol:458). For demo purposes
+ * we store plaintext and gate reads with a wallet signature; production should replace this
+ * with E2E encryption (see memory: echo-content-channel-gap).
+ *
+ * Two kinds carry all content today:
+ *  - kind='apply'   key=<participant addr lowercase>  text = the application body (revealed to requester after `reveal`)
+ *  - kind='deliver' key=<arc jobId>                  text = per-tier deliverable (visible to provider + evaluator of that job)
+ */
+export const contents = pgTable('contents', {
+  id: text('id').primaryKey(), // `${marketId}-${kind}-${key}`
+  marketId: integer('market_id').notNull(),
+  kind: text('kind').notNull(),
+  key: text('key').notNull(),
+  author: text('author').notNull(), // wallet that signed the storeContent call (lowercased)
+  body: text('body').notNull(),
+  hash: text('hash').notNull(), // keccak256(toUtf8Bytes(body)) — UI can match against on-chain commitment
+  createdAt: integer('created_at').notNull().default(0),
+});
+
 /** Disputes (DisputeResolver). subject: 0 BountyFinding, 1 ModeAStake. status: 0 Open, 1 Resolved. */
 export const disputes = pgTable('disputes', {
   id: integer('id').primaryKey(), // disputeId

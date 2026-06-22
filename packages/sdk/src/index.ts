@@ -17,6 +17,7 @@ import {
   AttributionRegistryABI,
   AttributionPayoutABI,
   DisputeResolverABI,
+  AgenticCommerceABI,
 } from './abis';
 
 export { arcTestnet, publicClient } from './chain';
@@ -28,6 +29,7 @@ export {
   AttributionRegistryABI,
   AttributionPayoutABI,
   DisputeResolverABI,
+  AgenticCommerceABI,
 } from './abis';
 export * from '@echo/types';
 
@@ -524,6 +526,53 @@ export class EchoSdk {
       account,
     });
     return this.send(request);
+  }
+
+  // ── Arc AgenticCommerce tier-job lifecycle (Open mode) ──
+  // Every grade in Open mode (Substantive 0→1 in stake-only path, Reveal 0→1 in reveal path,
+  // Shortlist 1→2, Final 2→3) spawns an Arc ERC-8183 Job. The tier payment ONLY fires when
+  // the worker calls `submit(jobId, deliverableHash)` and the requester calls
+  // `complete(jobId, reasonHash)` — that's the path through EchoHook.afterAction(complete)
+  // → _settle → tier payout. The off-chain content delivery is app-mediated alongside.
+
+  /** Worker submits a deliverable to their tier job. Hash is the on-chain commitment;
+   *  the actual text is stored off-chain via the indexer's storeContent mutation. */
+  async submitTierJob(jobId: bigint, deliverableHash: `0x${string}`, account: Address) {
+    if (!this.walletClient) throw new Error('Wallet not connected');
+    const { request } = await this.publicClient.simulateContract({
+      address: this.contracts.agenticCommerce,
+      abi: AgenticCommerceABI,
+      functionName: 'submit',
+      args: [jobId, deliverableHash, '0x'],
+      account,
+    });
+    return this.send(request);
+  }
+
+  /** Requester accepts a submitted tier job. Fires EchoHook.afterAction(complete) →
+   *  _settle → pays the worker the tier amount net of fees. `reasonHash` is a free-form
+   *  commitment (we pass keccak256("accept") by default). */
+  async completeTierJob(jobId: bigint, reasonHash: `0x${string}`, account: Address) {
+    if (!this.walletClient) throw new Error('Wallet not connected');
+    const { request } = await this.publicClient.simulateContract({
+      address: this.contracts.agenticCommerce,
+      abi: AgenticCommerceABI,
+      functionName: 'complete',
+      args: [jobId, reasonHash, '0x'],
+      account,
+    });
+    return this.send(request);
+  }
+
+  /** Read a single Arc job's full struct — used to gate UI on JobStatus
+   *  (0 Open, 1 Funded, 2 Submitted, 3 Completed, 4 Rejected, 5 Expired). */
+  async getArcJob(jobId: bigint) {
+    return this.publicClient.readContract({
+      address: this.contracts.agenticCommerce,
+      abi: AgenticCommerceABI,
+      functionName: 'getJob',
+      args: [jobId],
+    });
   }
 
   async closeMarket(marketId: bigint, account: Address) {

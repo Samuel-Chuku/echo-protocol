@@ -1,0 +1,108 @@
+[
+  {
+    "type": "function",
+    "name": "submit",
+    "inputs": [
+      { "name": "jobId", "type": "uint256" },
+      { "name": "deliverable", "type": "bytes32" },
+      { "name": "optParams", "type": "bytes" }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "complete",
+    "inputs": [
+      { "name": "jobId", "type": "uint256" },
+      { "name": "reason", "type": "bytes32" },
+      { "name": "optParams", "type": "bytes" }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "reject",
+    "inputs": [
+      { "name": "jobId", "type": "uint256" },
+      { "name": "reason", "type": "bytes32" },
+      { "name": "optParams", "type": "bytes" }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "getJob",
+    "inputs": [{ "name": "jobId", "type": "uint256" }],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "components": [
+          { "name": "id", "type": "uint256" },
+          { "name": "client", "type": "address" },
+          { "name": "provider", "type": "address" },
+          { "name": "evaluator", "type": "address" },
+          { "name": "description", "type": "string" },
+          { "name": "budget", "type": "uint256" },
+          { "name": "expiredAt", "type": "uint256" },
+          { "name": "status", "type": "uint8" },
+          { "name": "hook", "type": "address" }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "jobCounter",
+    "inputs": [],
+    "outputs": [{ "name": "", "type": "uint256" }],
+    "stateMutability": "view"
+  },
+  {
+    "type": "event",
+    "name": "JobCreated",
+    "inputs": [
+      { "indexed": true, "name": "jobId", "type": "uint256" },
+      { "indexed": true, "name": "client", "type": "address" },
+      { "indexed": true, "name": "provider", "type": "address" },
+      { "indexed": false, "name": "evaluator", "type": "address" },
+      { "indexed": false, "name": "expiredAt", "type": "uint256" },
+      { "indexed": false, "name": "hook", "type": "address" }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "JobSubmitted",
+    "inputs": [
+      { "indexed": true, "name": "jobId", "type": "uint256" },
+      { "indexed": true, "name": "provider", "type": "address" },
+      { "indexed": false, "name": "deliverable", "type": "bytes32" }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "JobCompleted",
+    "inputs": [
+      { "indexed": true, "name": "jobId", "type": "uint256" },
+      { "indexed": true, "name": "evaluator", "type": "address" },
+      { "indexed": false, "name": "reason", "type": "bytes32" }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "JobRejected",
+    "inputs": [
+      { "indexed": true, "name": "jobId", "type": "uint256" },
+      { "indexed": true, "name": "rejector", "type": "address" },
+      { "indexed": false, "name": "reason", "type": "bytes32" }
+    ],
+    "anonymous": false
+  }
+]

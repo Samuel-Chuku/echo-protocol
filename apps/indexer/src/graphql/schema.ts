@@ -14,7 +14,34 @@ export const typeDefs = /* GraphQL */ `
     disputes(status: Int): [Dispute!]!
     "Per-address reputation rollup (raw counters from EchoHook). null when no events yet."
     reputation(address: String!): Reputation
+    "Fetch an off-chain content blob (apply body / per-tier deliverable). Caller signs an auth message;"
+    "indexer verifies the signature and gates access: apply readable by participant or by requester after reveal;"
+    "deliver readable by the Arc job's provider or evaluator."
+    content(marketId: Int!, kind: String!, key: String!, auth: ContentAuthInput!): Content
     health: Health!
+  }
+
+  "Wallet-signature auth envelope. Supports EIP-1271 smart accounts (Circle modular wallets) via verifyMessage."
+  input ContentAuthInput {
+    address: String!
+    message: String!
+    signature: String!
+  }
+
+  type Mutation {
+    "Store off-chain content. The caller is the author; their signature proves wallet ownership. Anyone authenticated may store, but only on their own behalf — the application UI gates 'who can write what' (e.g. only the participant POSTs apply content)."
+    storeContent(marketId: Int!, kind: String!, key: String!, body: String!, auth: ContentAuthInput!): Content!
+  }
+
+  type Content {
+    id: String!
+    marketId: Int!
+    kind: String!
+    key: String!
+    author: String!
+    body: String!
+    hash: String!
+    createdAt: Int!
   }
 
   type Market {

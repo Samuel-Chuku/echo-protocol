@@ -1,16 +1,28 @@
 'use client';
 
-import { use, useEffect, useMemo, useState } from 'react';
+import { use, useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { ExternalLink } from 'lucide-react';
 import { useQuery, gql } from 'urql';
 import { EchoMode, CONTRACTS } from '@echo/sdk';
 import { useEcho } from '@/lib/sdk';
+import { useContent } from '@/lib/content';
 import { Section, Card, Field, KV } from '@/components/ui';
 import { Command } from '@/components/Command';
 import { Receipt } from '@/components/Receipt';
-import { usdc, toUnits, short, modeName, txLink, FINDING_STATUS, MILESTONE_STATUS } from '@/lib/format';
+import { usdc, scope, toUnits, short, modeName, txLink, FINDING_STATUS, MILESTONE_STATUS } from '@/lib/format';
 import { eventLabel, summarizeArgs, timeAgo, type ActivityRow } from '@/lib/activity';
+
+// Arc JobStatus pills mirror /apply/[id] so the worker and requester see the same vocabulary.
+const JOB_STATUS = ['Open', 'Funded', 'Submitted', 'Completed', 'Rejected', 'Expired'];
+const JOB_STATUS_CLASS = [
+  'bg-sky-50 text-sky-700 border-sky-200',
+  'bg-sky-50 text-sky-700 border-sky-200',
+  'bg-amber-50 text-amber-700 border-amber-200',
+  'bg-emerald-50 text-emerald-700 border-emerald-200',
+  'bg-red-50 text-red-700 border-red-200',
+  'bg-gray-100 text-gray-600 border-gray-200',
+];
 
 /** Per-participant settlement rollup parsed from TierPayout + GhostPenalty events. */
 type PayoutSummary = {
@@ -184,6 +196,7 @@ export default function ManageMarketPage({ params }: { params: Promise<{ id: str
                       account={account}
                       marketId={marketId()}
                       app={a}
+                      requester={data.market?.requester}
                       revealFee={data.revealFee}
                       hasStake={!!data.market?.stakeRequired && BigInt(data.market.stakeRequired) > 0n}
                       payout={payouts.get(String(a.participant).toLowerCase())}
@@ -304,12 +317,13 @@ const TIER_PILL = [
 ];
 
 function ApplicantRow({
-  sdk, account, marketId, app, revealFee, hasStake, payout, onDone,
+  sdk, account, marketId, app, requester, revealFee, hasStake, payout, onDone,
 }: {
   sdk: ReturnType<typeof useEcho>['sdk'];
   account?: `0x${string}`;
   marketId: bigint;
-  app: { participant: `0x${string}`; tierReached: number; agentId?: bigint | string; receiptTokenId?: bigint | string; submissionHash?: string };
+  app: { participant: `0x${string}`; tierReached: number; agentId?: bigint | string; receiptTokenId?: bigint | string; submissionHash?: string; tierJobIds?: bigint[] };
+  requester?: string;
   revealFee: bigint;
   hasStake: boolean;
   payout?: PayoutSummary;
@@ -322,6 +336,10 @@ function ApplicantRow({
   const agentId = app.agentId ? String(app.agentId) : null;
   const receiptId = app.receiptTokenId ? String(app.receiptTokenId) : null;
   const subHash = app.submissionHash && app.submissionHash !== '0x0000000000000000000000000000000000000000000000000000000000000000' ? app.submissionHash : null;
+  const isRequester = !!account && !!requester && account.toLowerCase() === requester.toLowerCase();
+  const tierJobIds = (app.tierJobIds ?? []) as bigint[];
+  const [showApp, setShowApp] = useState(false);
+  const [showJobs, setShowJobs] = useState(false);
   // Per-tier breakdown for the payouts line, sorted by tier index. EchoHook.Tier indices:
   // 0 Submitted (reveal) · 1 Substantive · 2 Shortlist · 3 Final · 4 Ghost · 5 Milestone · 6 Finding.
   const tierBreakdown = payout
@@ -412,7 +430,122 @@ function ApplicantRow({
       {nextStep && (
         <p className="mt-1 text-[11px] text-gray-500 italic">{nextStep}</p>
       )}
+      {/* Toggles for content + tier jobs — only visible to the requester, and only when there's something to look at. */}
+      {isRequester && (tier >= 1 || tierJobIds.length > 0) && (
+        <div className="mt-1.5 flex flex-wrap gap-3">
+          {tier >= 1 && (
+            <button onClick={() => setShowApp((v) => !v)} className="text-[11px] text-gray-500 hover:text-gray-900 underline">
+              {showApp ? 'Hide application' : 'View application'}
+            </button>
+          )}
+          {tierJobIds.length > 0 && (
+            <button onClick={() => setShowJobs((v) => !v)} className="text-[11px] text-gray-500 hover:text-gray-900 underline">
+              {showJobs ? 'Hide tier jobs' : `Tier jobs (${tierJobIds.length})`}
+            </button>
+          )}
+        </div>
+      )}
+      {showApp && isRequester && (
+        <ContentView marketId={Number(marketId)} kind="apply" contentKey={p} viewer={account!} />
+      )}
+      {showJobs && isRequester && (
+        <ApplicantTierJobs sdk={sdk} account={account!} marketId={marketId} tierJobIds={tierJobIds} onDone={onDone} />
+      )}
     </li>
+  );
+}
+
+/* ──────────────────────────── content viewer + tier-job accept ──────────────────────────── */
+
+/** Lazy-fetch + render a content blob from the indexer. Signs once on click — the indexer
+ *  enforces gating (apply: requester after reveal; deliver: provider or evaluator of the Arc job). */
+function ContentView({ marketId, kind, contentKey, viewer }: {
+  marketId: number; kind: 'apply' | 'deliver'; contentKey: string; viewer: `0x${string}`;
+}) {
+  const { fetch: fetchContent } = useContent();
+  const [body, setBody] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true); setErr(null);
+    (async () => {
+      try {
+        const row = await fetchContent(marketId, kind, contentKey, viewer);
+        if (!cancelled) setBody(row?.body ?? null);
+      } catch (e: unknown) {
+        if (!cancelled) setErr(e instanceof Error ? e.message : 'Failed to read content');
+      } finally { if (!cancelled) setLoading(false); }
+    })();
+    return () => { cancelled = true; };
+  }, [marketId, kind, contentKey, viewer, fetchContent]);
+
+  return (
+    <div className="mt-2 rounded-md border border-gray-200 bg-gray-50 px-3 py-2">
+      <div className="text-[10px] uppercase tracking-wide text-gray-500 mb-1">
+        {kind === 'apply' ? 'Application body' : 'Deliverable body'}
+      </div>
+      {loading && <p className="text-xs text-gray-400">Loading… (sign to authorize read)</p>}
+      {err && <p className="text-xs text-red-600 break-all">{err}</p>}
+      {!loading && !err && body === null && <p className="text-xs text-gray-400 italic">No body stored.</p>}
+      {!loading && body !== null && <p className="text-sm text-gray-700 whitespace-pre-wrap">{body}</p>}
+    </div>
+  );
+}
+
+function ApplicantTierJobs({ sdk, account, marketId, tierJobIds, onDone }: {
+  sdk: ReturnType<typeof useEcho>['sdk']; account: `0x${string}`; marketId: bigint;
+  tierJobIds: bigint[]; onDone: () => void;
+}) {
+  type Job = { jobId: bigint; status: number; tier: number; tierAmount: bigint };
+  const [jobs, setJobs] = useState<Job[]>([]);
+  const idsKey = tierJobIds.map((j) => j.toString()).join(',');
+
+  const load = useCallback(async () => {
+    if (tierJobIds.length === 0) { setJobs([]); return; }
+    const rows = await Promise.all(tierJobIds.map(async (jobId) => {
+      const [arcJob, ctx] = await Promise.all([
+        sdk.getArcJob(jobId).catch(() => null) as Promise<{ status: number } | null>,
+        sdk.getJobContext(jobId).catch(() => null) as Promise<{ tier: number; tierAmount: bigint } | null>,
+      ]);
+      return { jobId, status: arcJob?.status ?? 0, tier: ctx?.tier ?? 0, tierAmount: ctx?.tierAmount ?? 0n };
+    }));
+    setJobs(rows);
+  }, [sdk, idsKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { load(); }, [load]);
+
+  return (
+    <div className="mt-2 rounded-md border border-gray-200 bg-white px-3 py-2 space-y-2">
+      <div className="text-[10px] uppercase tracking-wide text-gray-500">Tier jobs</div>
+      {jobs.length === 0 && <p className="text-xs text-gray-400">Loading…</p>}
+      {jobs.map((j) => (
+        <div key={j.jobId.toString()} className="border-t border-gray-100 first:border-0 pt-2 first:pt-0 space-y-1">
+          <div className="flex items-center gap-2 flex-wrap text-xs">
+            <span className="font-medium text-gray-700">{HOOK_TIER_LABELS[j.tier] ?? `Tier ${j.tier}`}</span>
+            <span className="text-gray-400">job #{j.jobId.toString()}</span>
+            <span className={`rounded border px-1.5 py-0.5 text-[10px] font-medium ${JOB_STATUS_CLASS[j.status] ?? JOB_STATUS_CLASS[0]}`}>
+              {JOB_STATUS[j.status] ?? `status ${j.status}`}
+            </span>
+            <span className="text-gray-400 ml-auto">{usdc(j.tierAmount)} USDC on accept</span>
+          </div>
+          {j.status === 2 && (
+            <>
+              <ContentView marketId={Number(marketId)} kind="deliver" contentKey={j.jobId.toString()} viewer={account} />
+              <Command label={`Accept & pay ${usdc(j.tierAmount)}`} disabled={!account}
+                onDone={() => { load(); onDone(); }}
+                run={() => sdk.completeTierJob(j.jobId, scope('accept'), account)} />
+            </>
+          )}
+          {j.status === 0 && (
+            <p className="text-[11px] text-gray-500 italic">Waiting on the worker to submit a deliverable.</p>
+          )}
+          {j.status === 3 && (
+            <p className="text-[11px] text-emerald-700">Completed — {usdc(j.tierAmount)} USDC paid.</p>
+          )}
+        </div>
+      ))}
+    </div>
   );
 }
 
