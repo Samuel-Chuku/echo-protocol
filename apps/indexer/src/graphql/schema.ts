@@ -14,9 +14,11 @@ export const typeDefs = /* GraphQL */ `
     disputes(status: Int): [Dispute!]!
     "Per-address reputation rollup (raw counters from EchoHook). null when no events yet."
     reputation(address: String!): Reputation
-    "Fetch an off-chain content blob (apply body / per-tier deliverable). Caller signs an auth message;"
-    "indexer verifies the signature and gates access: apply readable by participant or by requester after reveal;"
-    "deliver readable by the Arc job's provider or evaluator."
+    """
+    Fetch an off-chain content blob (apply body / per-tier deliverable). Caller signs an auth message;
+    indexer verifies the signature and gates access: apply readable by participant or by requester
+    after reveal; deliver readable by the Arc job's provider or evaluator.
+    """
     content(marketId: Int!, kind: String!, key: String!, auth: ContentAuthInput!): Content
     health: Health!
   }

@@ -45,7 +45,10 @@ export const resolvers = {
       if (a.mode !== undefined && a.mode !== null) conds.push(eq(markets.mode, a.mode));
       if (a.status) conds.push(eq(markets.status, a.status));
       if (a.openOnly) conds.push(eq(markets.status, 'active'));
-      if (a.requester) conds.push(eq(markets.requester, a.requester));
+      // Address columns aren't normalised on insert (events stay as viem returns them, which is
+      // EIP-55 checksum), so compare case-insensitively here — otherwise My Markets misses every
+      // row when the wallet returns a different case than the indexer stored.
+      if (a.requester) conds.push(sql`LOWER(${markets.requester}) = ${a.requester.toLowerCase()}`);
       const rows = await db.select().from(markets)
         .where(conds.length ? and(...conds) : undefined)
         .orderBy(desc(markets.id)).limit(a.limit ?? 100);
@@ -66,8 +69,10 @@ export const resolvers = {
 
     activity: async (_: unknown, a: { address: string; status?: string; limit?: number }) => {
       const addr = a.address.toLowerCase();
-      // events where the wallet is the actor OR owns the market (requester-side).
-      const mine = await db.select({ id: markets.id }).from(markets).where(eq(markets.requester, a.address));
+      // events where the wallet is the actor OR owns the market (requester-side). Case-insensitive
+      // requester match — markets.requester is stored in whatever case viem returned (checksum).
+      const mine = await db.select({ id: markets.id }).from(markets)
+        .where(sql`LOWER(${markets.requester}) = ${addr}`);
       const ids = mine.map((r) => r.id);
       const ownership = ids.length ? or(eq(events.actor, addr), inArray(events.marketId, ids)) : eq(events.actor, addr);
       const rows = await db.select().from(events).where(ownership)

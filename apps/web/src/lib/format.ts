@@ -57,28 +57,28 @@ export function duration(seconds: number | undefined): string {
 }
 
 /**
- * Mirror of MarketRegistry._calculateMinEscrow + the reveal-fee floor (MIN_REVEALS = 5), so the
- * console can pre-fill a valid escrow and never hit InsufficientEscrow. tiers = [reveal/R,
- * shortlist, final, ghost] in base units; maxApplicants is a plain count.
+ * Worst-case escrow recommendation: covers every applicant being revealed, shortlisted, AND
+ * advanced to Final, plus one ghost reserve. `tiers = [reveal/R, shortlist, final, ghost]` in
+ * base units; `maxApplicants` is a plain count.
  *
- * Contract uses probabilistic slot counts (`/5`, `/20`, `/50`) tuned for high-N markets — at
- * `maxApplicants < 50` the integer-divide collapses each term to zero, which validates onchain
- * but underestimates realistic payouts. We floor each slot at 1 (whenever `maxApplicants > 0`)
- * so the recommend reflects "at least one of each tier could happen", which is still onchain-
- * valid (we round UP from the contract's floor, never down) and keeps small markets fundable.
+ * Contract's `_calculateMinEscrow` is probabilistic (`/5, /20, /50`), tuned for N≥50 — for small
+ * markets it collapses to ~just the ghost reserve, which under-funds the realistic ceiling and
+ * confuses requesters. We instead pre-fill the safe upper bound:
+ *
+ *     n × (tier_reveal + tier_shortlist + tier_final) + tier_ghost
+ *
+ * This is always ≥ the contract's min, so it never reverts InsufficientEscrow. Anything unused
+ * refunds to the requester when they call `closeMarket` (MarketRegistry.sol:571 — EchoHook
+ * pushes `remainingEscrow` back), so over-funding has zero cost beyond opportunity cost.
+ *
+ * Honest limits: ghost is reserved per-market, not per-applicant; if multiple Final-tier
+ * applicants all ghost, only the first triggers payout from the escrow line (subsequent ghosts
+ * eat into the unused tier reserve). Worth funding extra if you're running a really high-stakes
+ * Final round.
  */
 export function recommendedEscrow(tiers: [bigint, bigint, bigint, bigint], maxApplicants: bigint): bigint {
-  const slot = (count: bigint, divisor: bigint): bigint => {
-    if (count === 0n) return 0n;
-    const est = count / divisor;
-    return est > 0n ? est : 1n;
-  };
-  const sub = slot(maxApplicants, 5n);     // estimatedSubstantive
-  const short = slot(maxApplicants, 20n);  // estimatedShortlist
-  const fin = slot(maxApplicants, 50n);    // estimatedFinal
-  const calcMin = sub * tiers[0] + short * tiers[1] + fin * tiers[2] + tiers[3];
-  const revealFloor = tiers[0] * 5n;       // escrow must fund at least MIN_REVEALS reveals
-  return calcMin > revealFloor ? calcMin : revealFloor;
+  const n = maxApplicants > 0n ? maxApplicants : 1n; // floor at 1 — empty markets still need ghost reserve
+  return n * (tiers[0] + tiers[1] + tiers[2]) + tiers[3];
 }
 
 /** Parse a human USDC string ("12.5") into 6-decimal base units. */
