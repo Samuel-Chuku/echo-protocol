@@ -73,6 +73,41 @@ function CreateMarket({ sdk, account, agentId, onCreated }: { sdk: ReturnType<ty
 
 type FormProps = { sdk: ReturnType<typeof useEcho>['sdk']; account?: `0x${string}`; agentId: string; disabled: boolean; onCreated: () => void };
 
+/**
+ * Number-plus-unit input for time durations. The contract takes seconds, but typing fractional
+ * days for a 2-hour smoke-test window is awful — this lets the requester pick minutes / hours /
+ * days explicitly and converts at submit time via toSeconds.
+ */
+type DurationUnit = 'minutes' | 'hours' | 'days';
+const UNIT_SECONDS: Record<DurationUnit, number> = { minutes: 60, hours: 3600, days: 86400 };
+const toSeconds = (amount: string, unit: DurationUnit): number => Math.max(0, Math.round(Number(amount || '0') * UNIT_SECONDS[unit]));
+
+function DurationField({ label, amount, unit, onAmount, onUnit, hint }: {
+  label: string; amount: string; unit: DurationUnit; onAmount: (v: string) => void; onUnit: (u: DurationUnit) => void; hint?: string;
+}) {
+  return (
+    <label className="block" title={hint}>
+      <span className="text-[10px] uppercase tracking-wide text-gray-500">{label}</span>
+      <div className="mt-0.5 flex gap-1">
+        <input
+          value={amount}
+          onChange={(e) => onAmount(e.target.value)}
+          className="flex-1 min-w-0 rounded-md border border-gray-300 px-2 py-1.5 text-sm focus:border-gray-500 focus:outline-none"
+        />
+        <select
+          value={unit}
+          onChange={(e) => onUnit(e.target.value as DurationUnit)}
+          className="rounded-md border border-gray-300 px-2 py-1.5 text-sm bg-white focus:border-gray-500 focus:outline-none"
+        >
+          <option value="minutes">min</option>
+          <option value="hours">hours</option>
+          <option value="days">days</option>
+        </select>
+      </div>
+    </label>
+  );
+}
+
 /** Success banner reused across all three create forms. */
 function CreatedBanner({ txHash, onReset }: { txHash: string | null; onReset: () => void }) {
   if (!txHash) return null;
@@ -108,9 +143,13 @@ function OpenForm({ sdk, account, agentId, disabled, onCreated }: FormProps) {
   const [escrow, setEscrow] = useState('2000');
   const [escrowDirty, setEscrowDirty] = useState(false);
   const [maxApplicants, setMax] = useState('50');
-  const [ghostDays, setGhostDays] = useState('7');
+  // Ghost + flag windows now take a unit so smoke tests can pick hours/minutes without
+  // typing fractional days. Defaults still encode the spec-recommended values (7d, 2d).
+  const [ghostAmount, setGhostAmount] = useState('7');
+  const [ghostUnit, setGhostUnit] = useState<DurationUnit>('days');
   const [stake, setStake] = useState('10');
-  const [flagDays, setFlagDays] = useState('2');
+  const [flagAmount, setFlagAmount] = useState('2');
+  const [flagUnit, setFlagUnit] = useState<DurationUnit>('days');
   const [requiredProofs, setProofs] = useState('0');
   const [createdTx, setCreatedTx] = useState<string | null>(null);
   const reset = () => { setSubject(''); setDesc(''); setEscrowDirty(false); setCreatedTx(null); };
@@ -144,11 +183,25 @@ function OpenForm({ sdk, account, agentId, disabled, onCreated }: FormProps) {
       <div className="grid grid-cols-3 gap-1">
         <Field label="escrow USDC" value={escrow} onChange={(e) => { setEscrowDirty(true); setEscrow(e.target.value); }} />
         <Field label="max applicants" value={maxApplicants} onChange={(e) => setMax(e.target.value)} />
-        <Field label="ghost (days)" value={ghostDays} onChange={(e) => setGhostDays(e.target.value)} />
+        <DurationField
+          label="ghost deadline"
+          amount={ghostAmount}
+          unit={ghostUnit}
+          onAmount={setGhostAmount}
+          onUnit={setGhostUnit}
+          hint="Final-tier window before triggerGhost can fire"
+        />
       </div>
       <div className="grid grid-cols-3 gap-1">
         <Field label="stake USDC (0=none)" value={stake} onChange={(e) => setStake(e.target.value)} />
-        <Field label="flag window (days)" value={flagDays} onChange={(e) => setFlagDays(e.target.value)} />
+        <DurationField
+          label="flag window"
+          amount={flagAmount}
+          unit={flagUnit}
+          onAmount={setFlagAmount}
+          onUnit={setFlagUnit}
+          hint="How long the reveal stake is held before it auto-returns"
+        />
         <Field label="requiredProofs" value={requiredProofs} onChange={(e) => setProofs(e.target.value)} />
       </div>
       {recommended !== undefined && (
@@ -176,14 +229,14 @@ function OpenForm({ sdk, account, agentId, disabled, onCreated }: FormProps) {
           tierAmounts: tiers.map(toUnits) as unknown as [bigint, bigint, bigint, bigint],
           minPRep: 0n,
           maxApplicants: BigInt(maxApplicants),
-          ghostDeadline: BigInt(Number(ghostDays) * 86400),
+          ghostDeadline: BigInt(toSeconds(ghostAmount, ghostUnit)),
           escrowTotal: toUnits(escrow),
           requesterAgentId: BigInt(agentId || '0'),
           cfg: {
             mode: EchoMode.OpenMarket,
             requiredProofs: BigInt(requiredProofs),
             stakeRequired: toUnits(stake),
-            flagWindow: BigInt(Number(flagDays) * 86400),
+            flagWindow: BigInt(toSeconds(flagAmount, flagUnit)),
           },
         }, account!)}
         onDone={(r) => { setCreatedTx(isTxHash(r) ? (r as string) : 'done'); setSubject(''); setDesc(''); onCreated(); }}

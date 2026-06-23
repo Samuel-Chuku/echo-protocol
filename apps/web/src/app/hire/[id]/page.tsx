@@ -10,7 +10,7 @@ import { useContent } from '@/lib/content';
 import { Section, Card, Field, KV } from '@/components/ui';
 import { Command } from '@/components/Command';
 import { Receipt } from '@/components/Receipt';
-import { usdc, scope, toUnits, short, modeName, txLink, FINDING_STATUS, MILESTONE_STATUS } from '@/lib/format';
+import { usdc, scope, toUnits, short, modeName, txLink, duration, FINDING_STATUS, MILESTONE_STATUS } from '@/lib/format';
 import { eventLabel, summarizeArgs, timeAgo, type ActivityRow } from '@/lib/activity';
 
 // Arc JobStatus pills mirror /apply/[id] so the worker and requester see the same vocabulary.
@@ -114,6 +114,23 @@ export default function ManageMarketPage({ params }: { params: Promise<{ id: str
     return m;
   }, [activityRows]);
 
+  // When was each applicant revealed? Derived from indexed `Revealed` events so the UI can show
+  // "Flag window elapses in 1d 4h" / "Settle ready" on the stake row without an extra contract
+  // read. The map is participant-lowercased → unix seconds.
+  const revealedAtMap = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const r of activityRows) {
+      if (r.eventName !== 'Revealed') continue;
+      let args: Record<string, unknown>;
+      try { args = JSON.parse(r.args); } catch { continue; }
+      const who = String(args.participant ?? '').toLowerCase();
+      if (!who.startsWith('0x')) continue;
+      // First Revealed event wins (re-reveal isn't a thing on-chain, but be defensive).
+      if (!m.has(who)) m.set(who, r.createdAt);
+    }
+    return m;
+  }, [activityRows]);
+
   async function load() {
     setErr('');
     try {
@@ -199,6 +216,8 @@ export default function ManageMarketPage({ params }: { params: Promise<{ id: str
                       requester={data.market?.requester}
                       revealFee={data.revealFee}
                       hasStake={!!data.market?.stakeRequired && BigInt(data.market.stakeRequired) > 0n}
+                      flagWindowSec={Number(data.flagWindow)}
+                      revealedAt={revealedAtMap.get(String(a.participant).toLowerCase())}
                       payout={payouts.get(String(a.participant).toLowerCase())}
                       onDone={load}
                     />
@@ -214,7 +233,7 @@ export default function ManageMarketPage({ params }: { params: Promise<{ id: str
               <dl className="text-xs text-gray-600 space-y-1.5">
                 <div><dt className="inline font-semibold text-gray-800">Reveal</dt><dd className="inline"> — you pay the reveal fee R to unlock this applicant&apos;s submission. Available only on reveal markets (R &gt; 0). Advances them to tier 1.</dd></div>
                 <div><dt className="inline font-semibold text-gray-800">Substantive / Shortlist / Final</dt><dd className="inline"> — grade up to the next tier. Each tier payout funds an on-chain job.</dd></div>
-                <div><dt className="inline font-semibold text-gray-800">Settle stake</dt><dd className="inline"> — release the held reveal stake back to the applicant. Permissionless; only after the flag window elapses without dispute. Shows only when the market required a stake.</dd></div>
+                <div><dt className="inline font-semibold text-gray-800">Settle stake</dt><dd className="inline"> — when you reveal an applicant, their anti-bait stake is locked for the market&apos;s flag window (set at create time). During the lock you can flag a bait-and-switch reveal as a dispute; once the window elapses, anyone can call Settle stake to return it. The row shows a countdown until then, and the button enables itself when the window&apos;s up. This is a separate clock from the ghost deadline.</dd></div>
                 <div><dt className="inline font-semibold text-gray-800">Trigger ghost</dt><dd className="inline"> — penalize a Final-tier applicant who failed to deliver before the ghost deadline. Slashes part of their reward as `ghostAmount` and credits the requester.</dd></div>
                 <div className="pt-1.5 mt-1.5 border-t border-gray-100"><dd className="text-gray-500">Suspect a bait-and-switch reveal? <Link href="/disputes" className="underline hover:text-gray-700">Open a bonded stake dispute</Link> while the flag window is open.</dd></div>
               </dl>
@@ -342,7 +361,7 @@ const TIER_PILL = [
 ];
 
 function ApplicantRow({
-  sdk, account, marketId, app, requester, revealFee, hasStake, payout, onDone,
+  sdk, account, marketId, app, requester, revealFee, hasStake, flagWindowSec, revealedAt, payout, onDone,
 }: {
   sdk: ReturnType<typeof useEcho>['sdk'];
   account?: `0x${string}`;
@@ -351,6 +370,10 @@ function ApplicantRow({
   requester?: string;
   revealFee: bigint;
   hasStake: boolean;
+  /** Market-level flag window in seconds (from `revealFlagWindow(marketId)`). */
+  flagWindowSec: number;
+  /** Unix seconds when this applicant was revealed (from the indexer's `Revealed` event). */
+  revealedAt?: number;
   payout?: PayoutSummary;
   onDone: () => void;
 }) {
@@ -397,6 +420,20 @@ function ApplicantRow({
     return null;
   })();
 
+  // Stake-hold lifecycle: at reveal the contract holds the applicant's stake for `flagWindowSec`
+  // seconds, during which the requester may flag it as bait (opens a bonded dispute). Once that
+  // window elapses, anyone may call `settleRevealStake` to return the stake. Calling earlier
+  // reverts with `FlagWindowNotElapsed` — we surface that as a disabled button + countdown so
+  // the requester sees what they're waiting on. `now` is read once per render; the UI doesn't
+  // auto-tick (cheap to refresh manually if the user lingers on the page).
+  const stakeReady = (() => {
+    if (!hasStake || tier < 1) return { show: false } as const;
+    if (!revealedAt || !flagWindowSec) return { show: true, ready: true } as const;
+    const elapsesAt = revealedAt + flagWindowSec;
+    const remaining = elapsesAt - Math.floor(Date.now() / 1000);
+    return { show: true, ready: remaining <= 0, remainingSec: Math.max(0, remaining) } as const;
+  })();
+
   return (
     <li className="py-2.5">
       <div className="flex items-center gap-3 flex-wrap">
@@ -408,14 +445,23 @@ function ApplicantRow({
           {advance && (
             <Command label={advance.label} disabled={!ready} onDone={onDone} run={advance.run} />
           )}
-          {tier >= 1 && hasStake && (
-            <Command
-              label="Settle stake"
-              tone="neutral"
-              disabled={!ready}
-              onDone={onDone}
-              run={() => sdk.settleRevealStake(marketId, p, account!)}
-            />
+          {stakeReady.show && (
+            stakeReady.ready ? (
+              <Command
+                label="Settle stake"
+                tone="neutral"
+                disabled={!ready}
+                onDone={onDone}
+                run={() => sdk.settleRevealStake(marketId, p, account!)}
+              />
+            ) : (
+              <span
+                className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] text-gray-500 rounded-md bg-gray-50 border border-gray-200"
+                title="Stake auto-returns once the flag window elapses; until then it's locked so a bait-and-switch dispute can still be opened."
+              >
+                Stake locked · {duration(stakeReady.remainingSec ?? 0)} left
+              </span>
+            )
           )}
           {tier === 3 && (
             <Command
