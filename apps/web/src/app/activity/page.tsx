@@ -259,7 +259,10 @@ function StatPill({ label, value, tone = 'gray', active, onClick }: {
   );
 }
 
-/** One activity row rendered as a card. Whole surface clickable when there's a deep link. */
+/** One activity row rendered as a card. Whole surface is the deep link (when one exists); the
+ *  Tx ↗ link sits ABOVE the card via absolute positioning so it isn't nested inside the card's
+ *  anchor (HTML forbids nested <a> — Next/Link renders one, so the inner <a href={txLink}> in
+ *  the original version blew up at runtime). */
 function ActivityCard({ row: r, now, myAddress }: { row: ActivityRow; now: number; myAddress?: string }) {
   const href = marketHref(r, myAddress);
   const category = categoryOf(r.eventName);
@@ -268,7 +271,6 @@ function ActivityCard({ row: r, now, myAddress }: { row: ActivityRow; now: numbe
 
   const inner = (
     <div className="flex items-start gap-3 p-3">
-      {/* Category icon — tinted square. */}
       <div className={`h-9 w-9 rounded-lg ${bg} ${fg} flex items-center justify-center shrink-0`}>
         <Icon className="w-4 h-4" />
       </div>
@@ -290,23 +292,35 @@ function ActivityCard({ row: r, now, myAddress }: { row: ActivityRow; now: numbe
           <span>{timeAgo(r.createdAt, now)}</span>
           <span>·</span>
           <span>block {r.blockNumber}</span>
-          <a
-            href={txLink(r.txHash)}
-            target="_blank"
-            rel="noreferrer"
-            onClick={(e) => e.stopPropagation()}
-            className="inline-flex items-center gap-1 hover:text-gray-700"
-          >
-            Tx: <span className="font-mono">{short(r.txHash)}</span> <ExternalLink className="w-3 h-3" />
-          </a>
+          {/* Tx label only — the actual link is rendered outside this anchor to avoid <a><a/></a>. */}
+          <span className="inline-flex items-center gap-1">
+            Tx: <span className="font-mono">{short(r.txHash)}</span>
+          </span>
         </div>
       </div>
 
-      {/* Chevron — only shown when the row is actually clickable, so it advertises the affordance. */}
       {href && <ChevronRight className="w-4 h-4 text-gray-300 group-hover:text-gray-700 self-center shrink-0" />}
     </div>
   );
 
-  const cls = 'group block rounded-xl border border-gray-200 bg-white hover:border-gray-300 hover:shadow-sm transition';
-  return href ? <Link href={href} className={cls}>{inner}</Link> : <div className={cls.replace('hover:border-gray-300 hover:shadow-sm', '')}>{inner}</div>;
+  const cls = 'group block rounded-xl border border-gray-200 bg-white transition';
+  const interactiveCls = `${cls} hover:border-gray-300 hover:shadow-sm`;
+
+  return (
+    <div className="relative">
+      {href ? <Link href={href} className={interactiveCls}>{inner}</Link> : <div className={cls}>{inner}</div>}
+      {/* Tx ↗ overlay — sits over the card's bottom-right footer line, intercepts its own click so
+       *  the surrounding card link doesn't fire. Hover surfaces the icon. */}
+      <a
+        href={txLink(r.txHash)}
+        target="_blank"
+        rel="noreferrer"
+        onClick={(e) => e.stopPropagation()}
+        className="absolute bottom-2 right-3 p-1 text-gray-300 hover:text-gray-700"
+        title="View transaction on Arcscan"
+      >
+        <ExternalLink className="w-3.5 h-3.5" />
+      </a>
+    </div>
+  );
 }

@@ -2,7 +2,7 @@
 
 import { use, useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { ExternalLink } from 'lucide-react';
+import { ChevronUp, ChevronDown, ExternalLink } from 'lucide-react';
 import { useQuery, gql } from 'urql';
 import { EchoMode, CONTRACTS } from '@echo/sdk';
 import { useEcho } from '@/lib/sdk';
@@ -279,21 +279,34 @@ export default function ManageMarketPage({ params }: { params: Promise<{ id: str
 /* ──────────────────────────── per-market timeline ──────────────────────────── */
 
 /** Chronological event log for a market. Data + refetch handler come from the parent so we share
- *  one fetch with the per-applicant payout rollup. */
+ *  one fetch with the per-applicant payout rollup. Sort defaults to newest-first; the requester
+ *  usually wants to see what just happened, not scroll past stale events to find it. */
 function MarketTimeline({ rows, fetching, onRefresh }: { rows: ActivityRow[]; fetching: boolean; onRefresh: () => void }) {
   const now = Math.floor(Date.now() / 1000);
+  const [order, setOrder] = useState<'desc' | 'asc'>('desc');
+  // Indexer returns oldest-first; reverse client-side rather than passing a sort to GraphQL so the
+  // toggle is instant (no refetch). Build a shallow copy — never mutate the parent's array.
+  const sorted = useMemo(() => (order === 'desc' ? [...rows].reverse() : rows), [rows, order]);
   return (
-    <Section title="Timeline" desc="Every on-chain event for this market, oldest first.">
+    <Section title="Timeline" desc={`Every on-chain event for this market, ${order === 'desc' ? 'newest first' : 'oldest first'}.`}>
       <div className="sm:col-span-2">
         <Card title="What's happened">
-          <div className="flex items-center justify-end -mt-1 mb-1">
+          <div className="flex items-center justify-end gap-3 -mt-1 mb-1">
+            <button
+              onClick={() => setOrder((o) => (o === 'desc' ? 'asc' : 'desc'))}
+              className="inline-flex items-center gap-1 text-xs text-gray-500 hover:text-gray-900"
+              title={order === 'desc' ? 'Show oldest first' : 'Show newest first'}
+            >
+              {order === 'desc' ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronUp className="w-3.5 h-3.5" />}
+              {order === 'desc' ? 'Newest first' : 'Oldest first'}
+            </button>
             <button onClick={onRefresh} className="text-xs text-gray-400 hover:text-gray-700 underline">Refresh</button>
           </div>
-          {fetching && rows.length === 0 && <p className="text-xs text-gray-400">Loading…</p>}
-          {!fetching && rows.length === 0 && <p className="text-xs text-gray-400">No events yet.</p>}
-          {rows.length > 0 && (
+          {fetching && sorted.length === 0 && <p className="text-xs text-gray-400">Loading…</p>}
+          {!fetching && sorted.length === 0 && <p className="text-xs text-gray-400">No events yet.</p>}
+          {sorted.length > 0 && (
             <ol className="relative border-l border-gray-200 ml-2 space-y-3">
-              {rows.map((r) => (
+              {sorted.map((r) => (
                 <li key={r.id} className="ml-4">
                   <span className="absolute -left-1.5 mt-1.5 h-3 w-3 rounded-full bg-gray-900 border border-white" />
                   <div className="flex items-start gap-2">
