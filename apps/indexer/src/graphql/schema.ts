@@ -15,24 +15,19 @@ export const typeDefs = /* GraphQL */ `
     "Per-address reputation rollup (raw counters from EchoHook). null when no events yet."
     reputation(address: String!): Reputation
     """
-    Fetch an off-chain content blob (apply body / per-tier deliverable). Caller signs an auth message;
-    indexer verifies the signature and gates access: apply readable by participant or by requester
-    after reveal; deliver readable by the Arc job's provider or evaluator.
+    Fetch an off-chain content blob (apply body / per-tier deliverable). The indexer trusts the
+    client-claimed viewer address and enforces role gating against on-chain state: apply readable
+    by participant always or by requester after reveal; deliver readable by the Arc job's provider
+    or evaluator. Demo-grade — there is no cryptographic proof the caller is 'viewer'; gating is
+    UX, not privacy. Replace with E2E encryption before mainnet (see memory: echo-content-channel-gap).
     """
-    content(marketId: Int!, kind: String!, key: String!, auth: ContentAuthInput!): Content
+    content(marketId: Int!, kind: String!, key: String!, viewer: String!): Content
     health: Health!
   }
 
-  "Wallet-signature auth envelope. Supports EIP-1271 smart accounts (Circle modular wallets) via verifyMessage."
-  input ContentAuthInput {
-    address: String!
-    message: String!
-    signature: String!
-  }
-
   type Mutation {
-    "Store off-chain content. The caller is the author; their signature proves wallet ownership. Anyone authenticated may store, but only on their own behalf — the application UI gates 'who can write what' (e.g. only the participant POSTs apply content)."
-    storeContent(marketId: Int!, kind: String!, key: String!, body: String!, auth: ContentAuthInput!): Content!
+    "Store off-chain content. Caller passes the claimed author address; the indexer enforces author-rules against on-chain state (apply → must equal the key; deliver → must equal the Arc job's provider) but does NOT verify the caller actually controls that address. Demo-grade."
+    storeContent(marketId: Int!, kind: String!, key: String!, body: String!, author: String!): Content!
   }
 
   type Content {

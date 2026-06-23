@@ -34,6 +34,36 @@ export type CircleMode = 'register' | 'login';
 let pendingMode: CircleMode | undefined;
 export function setCircleMode(mode: CircleMode | undefined) { pendingMode = mode; }
 
+/**
+ * Persisted "last Circle session" — the email + smart-account address from the most recent
+ * successful passkey connect, stashed in localStorage. We can't silently restore on refresh (the
+ * webauthn API requires a user gesture for every passkey challenge), but we CAN make the
+ * reconnect a single tap from anywhere by surfacing a "Continue as 0x… →" chip in the nav.
+ */
+type CachedSession = { email: string; address: `0x${string}` };
+const CACHE_KEY = 'echo.circle.lastSession';
+
+export function rememberCircleSession(session: CachedSession): void {
+  if (typeof window === 'undefined') return;
+  try { window.localStorage.setItem(CACHE_KEY, JSON.stringify(session)); } catch { /* private mode */ }
+}
+
+export function readCircleSession(): CachedSession | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.localStorage.getItem(CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as CachedSession;
+    if (!parsed?.email || !parsed?.address) return null;
+    return parsed;
+  } catch { return null; }
+}
+
+export function forgetCircleSession(): void {
+  if (typeof window === 'undefined') return;
+  try { window.localStorage.removeItem(CACHE_KEY); } catch { /* ignore */ }
+}
+
 /** Build the Circle Smart Account EIP-1193 provider via passkey (login, else register). Dynamic-imports
  *  the Circle + viem AA SDKs so the connector module stays light and SSR-safe. */
 async function buildCircleProvider(username?: string): Promise<{ provider: any; address: `0x${string}` }> {
@@ -102,7 +132,11 @@ async function buildCircleProvider(username?: string): Promise<{ provider: any; 
 
   const publicClient = viem.createPublicClient({ chain: arcTestnet, transport: viem.http('https://rpc.testnet.arc.network') });
   const provider = wrapWithDiagnostics(new core.EIP1193Provider(bundlerClient, publicClient));
-  return { provider, address: smartAccount.address as `0x${string}` };
+  const address = smartAccount.address as `0x${string}`;
+  // Cache email + SCA for the "Continue as 0x… →" chip. Skips when no email (rare —
+  // login-mode users may have left the field blank if reusing a passkey on a fresh browser).
+  if (username) rememberCircleSession({ email: username, address });
+  return { provider, address };
 }
 
 /**

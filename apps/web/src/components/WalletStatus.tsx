@@ -5,9 +5,11 @@ import Link from 'next/link';
 import { ConnectButton } from '@rainbow-me/rainbowkit';
 import { useAccount, useBlockNumber, useSwitchChain } from 'wagmi';
 import { arcTestnet } from '@echo/sdk';
+import { useConnect } from 'wagmi';
+import { Loader2, X } from 'lucide-react';
 import { useEcho } from '@/lib/sdk';
-import { usdcShort } from '@/lib/format';
-import { CIRCLE_CONNECTOR_ID } from '@/lib/circle';
+import { usdcShort, short } from '@/lib/format';
+import { CIRCLE_CONNECTOR_ID, forgetCircleSession, readCircleSession, setCircleMode, setCircleUsername } from '@/lib/circle';
 import { Bell } from './Bell';
 import { SignInModal } from './SignInModal';
 
@@ -68,9 +70,12 @@ export function WalletStatus() {
           if (!mounted) return null;
           if (!acc) {
             return (
-              <button onClick={() => setSignInOpen(true)} className="rounded-md bg-gray-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-700">
-                Sign in
-              </button>
+              <div className="flex items-center gap-2">
+                <ContinueAsChip />
+                <button onClick={() => setSignInOpen(true)} className="rounded-md bg-gray-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-700">
+                  Sign in
+                </button>
+              </div>
             );
           }
           if (chain?.unsupported) {
@@ -116,6 +121,67 @@ function CopyChip({ account, displayName }: { account: `0x${string}`; displayNam
     >
       {copied ? 'Copied' : displayName}
     </button>
+  );
+}
+
+/**
+ * Quick-reconnect chip for returning Circle passkey users. Webauthn can't reconnect silently on
+ * refresh (it requires a user gesture for every credential challenge), so we cache the email + SCA
+ * address on the first connect and offer a single-tap "Continue as 0x… →" button anywhere the
+ * Sign-in button would appear. Clicking it re-runs the passkey login flow with the cached email,
+ * so it's at most one Face/Touch prompt instead of opening the modal and re-typing the email.
+ *
+ * Hidden whenever there's no cached session, no Circle connector registered, or the Circle env
+ * vars aren't configured.
+ */
+function ContinueAsChip() {
+  const { connectors, connectAsync } = useConnect();
+  const [session, setSession] = useState<ReturnType<typeof readCircleSession>>(null);
+  const [busy, setBusy] = useState(false);
+
+  // Read fresh on mount so a disconnect → forget on another tab is reflected here too.
+  useEffect(() => { setSession(readCircleSession()); }, []);
+
+  const circle = connectors.find((c) => c.id === CIRCLE_CONNECTOR_ID);
+  if (!session || !circle) return null;
+
+  async function reconnect() {
+    if (!session) return; // narrows for TS — guarded by the early-return above
+    setBusy(true);
+    try {
+      setCircleMode('login');
+      setCircleUsername(session.email);
+      await connectAsync({ connector: circle! });
+    } catch {
+      // Either the user cancelled the prompt or the cached passkey is gone. Surface a hint by
+      // forgetting the session so we don't keep offering a dead chip.
+      forgetCircleSession();
+      setSession(null);
+    } finally {
+      setCircleMode(undefined);
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="inline-flex items-center rounded-md border border-gray-200 bg-white">
+      <button
+        onClick={reconnect}
+        disabled={busy}
+        title={`Sign in with the passkey for ${session.email}`}
+        className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-gray-800 hover:bg-gray-50 disabled:opacity-60"
+      >
+        {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
+        Continue as <span className="font-mono">{short(session.address)}</span>
+      </button>
+      <button
+        onClick={() => { forgetCircleSession(); setSession(null); }}
+        title="Forget this passkey session"
+        className="px-2 py-1.5 text-gray-400 hover:text-gray-700 border-l border-gray-200"
+      >
+        <X className="w-3.5 h-3.5" />
+      </button>
+    </div>
   );
 }
 

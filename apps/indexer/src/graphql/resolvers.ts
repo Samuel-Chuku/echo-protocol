@@ -1,5 +1,5 @@
 import { and, desc, eq, inArray, or, sql } from 'drizzle-orm';
-import { keccak256, recoverMessageAddress, toBytes, type Address } from 'viem';
+import { keccak256, toBytes, type Address } from 'viem';
 import { AgenticCommerceABI, CONTRACTS } from '@echo/sdk';
 import { db } from '../db/client.js';
 import { markets, applications, findings, milestones, disputes, events, cursor, reputation, contents } from '../db/schema.js';
@@ -7,60 +7,10 @@ import { publicClient } from '../chain.js';
 
 const C = CONTRACTS.arcTestnet;
 
-type ContentAuth = { address: string; message: string; signature: `0x${string}` };
-
-/**
- * Verify a wallet signature and return the lowercased address. Tries EOA recovery first (cheap,
- * works for any EOA + handles wallets that mis-route 1271), then falls back to verifyMessage
- * (which itself dispatches EOA + EIP-1271 / Circle modular wallets). Enforces a 24h freshness
- * window on the embedded `ts=<unix>` field. Throws with a diagnostic on every failure path so
- * we can tell EOA-mismatch from contract-call-failed from address-mismatch.
- */
-async function authenticate(auth: ContentAuth): Promise<string> {
-  if (!auth?.address || !auth.message || !auth.signature) throw new Error('Auth required');
-  const tsMatch = auth.message.match(/ts=(\d+)/);
-  if (!tsMatch) throw new Error('Auth message missing ts');
-  const ts = Number(tsMatch[1]);
-  const skew = Math.abs(Math.floor(Date.now() / 1000) - ts);
-  if (skew > 86_400) throw new Error('Auth signature expired (>24h)');
-
-  const claimed = auth.address.toLowerCase();
-
-  // Path 1: EOA recovery. Cheap, no RPC. If the recovered address matches the claim, we're done.
-  // If it doesn't, the wallet might be a smart account — fall through to EIP-1271.
-  let recovered: string | null = null;
-  try {
-    recovered = (await recoverMessageAddress({ message: auth.message, signature: auth.signature })).toLowerCase();
-    if (recovered === claimed) return claimed;
-  } catch (e: unknown) {
-    // recoverMessageAddress throws on malformed signatures (e.g. webauthn blob from passkey).
-    // Not fatal — verifyMessage will handle that via EIP-1271.
-  }
-
-  // Path 2: EIP-1271 (smart account). Calls the SCA's isValidSignature on chain. Needs the SCA
-  // to be deployed at the claimed address; counterfactual SCAs will fail here without factoryData.
-  try {
-    const ok = await publicClient.verifyMessage({
-      address: auth.address as Address,
-      message: auth.message,
-      signature: auth.signature,
-    });
-    if (ok) return claimed;
-  } catch (e: unknown) {
-    // verifyMessage throws when the EIP-1271 contract call reverts — surface a clear hint.
-    const msg = e instanceof Error ? e.message : String(e);
-    throw new Error(
-      `Auth EIP-1271 call failed for ${auth.address}: ${msg.slice(0, 160)}. ` +
-      `If you're on a Circle passkey wallet, make sure the smart account is deployed (any prior tx will deploy it).`,
-    );
-  }
-
-  // Reached when EOA recovered to a different address AND EIP-1271 returned the non-magic value.
-  throw new Error(
-    `Auth signature invalid — recovered ${recovered ?? '(no EOA recovery)'} but claim is ${claimed}. ` +
-    `Likely cause: the wallet that signed is not the wallet you say it is.`,
-  );
-}
+// Demo simplification: we trust the client-claimed viewer/author address. Role gating against
+// on-chain state still runs (apply → key match, deliver → provider match, reveal-gate for reads)
+// but a malicious client could spoof their address and read other people's bodies. Acceptable for
+// testnet; replace with E2E encryption before mainnet. See memory: echo-content-channel-gap.
 
 // Per-event lifecycle tag for the pending/completed split in the activity feed.
 const PENDING = new Set([
@@ -135,37 +85,36 @@ export const resolvers = {
 
     content: async (
       _: unknown,
-      a: { marketId: number; kind: string; key: string; auth: ContentAuth },
+      a: { marketId: number; kind: string; key: string; viewer: string },
     ) => {
-      const caller = await authenticate(a.auth);
+      if (!a.viewer) throw new Error('viewer required');
+      const viewer = a.viewer.toLowerCase();
       const key = a.key.toLowerCase();
       const id = `${a.marketId}-${a.kind}-${key}`;
       const [row] = await db.select().from(contents).where(eq(contents.id, id)).limit(1);
       if (!row) return null;
 
-      // Gating: apply content is the participant's own writeup, visible to them always; visible
-      // to the requester once the on-chain reveal has happened (applications.tierReached >= 1).
-      // Deliver content is keyed by Arc jobId — both the job's provider and evaluator may read.
+      // Role gating against on-chain / indexed state. Apply: participant always; requester only
+      // after a `Revealed` event lifts the application's tierReached to ≥ 1. Deliver: keyed by
+      // Arc jobId — provider or evaluator only (looked up live from AgenticCommerce).
       if (a.kind === 'apply') {
         const [m] = await db.select().from(markets).where(eq(markets.id, a.marketId)).limit(1);
         if (!m) throw new Error('Market not found');
-        const isParticipant = caller === key;
-        const isRequester = caller === m.requester.toLowerCase();
+        const isParticipant = viewer === key;
+        const isRequester = viewer === m.requester.toLowerCase();
         if (!isParticipant && !isRequester) throw new Error('Forbidden');
         if (isRequester) {
-          // Reveal-gate: requester sees apply text only after they've revealed THIS participant.
           const [app] = await db.select().from(applications)
             .where(eq(applications.id, `${a.marketId}-${key}`)).limit(1);
           if (!app || app.tierReached < 1) throw new Error('Reveal required');
         }
       } else if (a.kind === 'deliver') {
-        // Read the Arc job from chain — UI guarantees jobId is valid; check provider/evaluator.
         const job = await publicClient.readContract({
           address: C.agenticCommerce, abi: AgenticCommerceABI,
           functionName: 'getJob', args: [BigInt(a.key)],
         }) as { provider: Address; evaluator: Address };
         const allowed = [job.provider.toLowerCase(), job.evaluator.toLowerCase()];
-        if (!allowed.includes(caller)) throw new Error('Forbidden');
+        if (!allowed.includes(viewer)) throw new Error('Forbidden');
       } else {
         throw new Error('Unknown content kind');
       }
@@ -189,40 +138,42 @@ export const resolvers = {
   Mutation: {
     storeContent: async (
       _: unknown,
-      a: { marketId: number; kind: string; key: string; body: string; auth: ContentAuth },
+      a: { marketId: number; kind: string; key: string; body: string; author: string },
     ) => {
-      const caller = await authenticate(a.auth);
+      if (!a.author) throw new Error('author required');
       if (!['apply', 'deliver'].includes(a.kind)) throw new Error('Unknown content kind');
 
+      const author = a.author.toLowerCase();
       const key = a.key.toLowerCase();
       const id = `${a.marketId}-${a.kind}-${key}`;
       const hash = keccak256(toBytes(a.body));
       const createdAt = Math.floor(Date.now() / 1000);
 
-      // Authorship gate — the worker writes their own apply text; for deliverables we trust the
-      // worker (provider) to be the author, verified against the Arc job. Anyone else gets a 403.
+      // Authorship gate against on-chain state. Apply: author must equal the participant address
+      // (which the UI uses as `key`). Deliver: author must equal the Arc job's provider. Demo
+      // simplification: we don't cryptographically prove the caller IS the author.
       if (a.kind === 'apply') {
-        if (caller !== key) throw new Error('Only the applicant may store their apply content');
+        if (author !== key) throw new Error('apply content: author must equal the participant address');
       } else {
         const job = await publicClient.readContract({
           address: C.agenticCommerce, abi: AgenticCommerceABI,
           functionName: 'getJob', args: [BigInt(a.key)],
         }) as { provider: Address };
-        if (job.provider.toLowerCase() !== caller) {
-          throw new Error('Only the tier job provider may store deliverable content');
+        if (job.provider.toLowerCase() !== author) {
+          throw new Error('deliver content: author must equal the tier-job provider');
         }
       }
 
-      // Upsert (the worker may rewrite their text before grading; once an Arc job is Submitted on
-      // chain the deliverable hash is locked, but the off-chain body is editable until then —
-      // UI hides the editor after submit).
+      // Upsert — the worker may rewrite the body before submitting on chain; once an Arc job is
+      // Submitted the deliverable hash is locked, but the off-chain body is editable until then
+      // (UI hides the editor after submit).
       const row = {
-        id, marketId: a.marketId, kind: a.kind, key, author: caller,
+        id, marketId: a.marketId, kind: a.kind, key, author,
         body: a.body, hash, createdAt,
       };
       await db.insert(contents).values(row).onConflictDoUpdate({
         target: contents.id,
-        set: { body: a.body, hash, author: caller, createdAt },
+        set: { body: a.body, hash, author, createdAt },
       });
       return row;
     },

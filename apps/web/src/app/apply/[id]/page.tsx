@@ -97,6 +97,18 @@ export default function JobDetailPage({ params }: { params: Promise<{ id: string
 
       <div className="mt-4"><IdentityBanner /></div>
 
+      {/* /apply/[id] is the public worker-facing view; when the connected wallet owns this market we
+       *  surface a banner that links to /hire/[id] (the management view). We DON'T auto-redirect —
+       *  the requester might legitimately want to preview their market the way applicants see it. */}
+      {m && account && account.toLowerCase() === m.requester.toLowerCase() && (
+        <div className="mt-3 rounded-md border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm flex items-center gap-2">
+          <span className="text-indigo-900">You created this market — you&apos;re viewing the applicant page.</span>
+          <Link href={`/hire/${id}`} className="ml-auto inline-flex items-center gap-1 text-indigo-700 font-medium underline">
+            Manage instead →
+          </Link>
+        </div>
+      )}
+
       {fetching && !m && <p className="text-sm text-gray-400">Loading…</p>}
       {error && <p className="text-sm text-red-600 break-all">{error.message} — is the indexer running on :4000?</p>}
       {!fetching && !error && !m && <p className="text-sm text-gray-400">No market #{id} in the indexer.</p>}
