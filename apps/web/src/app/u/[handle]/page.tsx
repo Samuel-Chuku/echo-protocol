@@ -167,29 +167,39 @@ export default function ProfilePage({ params }: { params: Promise<{ handle: stri
         <div className="sm:col-span-2">
           <Card title="Activity">
             {activity.length === 0 ? <p className="text-xs text-gray-400">None.</p> : (
-              <ul className="divide-y divide-gray-100">
-                {activity.map((r) => {
-                  const href = marketHref(r, address);
-                  const body = (
-                    <>
-                      <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase shrink-0 ${r.state === 'PENDING' ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-500'}`}>
-                        {r.state === 'PENDING' ? 'Pending' : 'Done'}
-                      </span>
-                      <span className="flex-1 min-w-0">
-                        <b className="font-medium">{eventLabel(r.eventName)}</b>
-                        <span className="text-gray-500 font-mono text-xs ml-2">{r.marketId !== null && `#${r.marketId} `}{summarizeArgs(r.args)}</span>
-                      </span>
-                      <span className="text-xs text-gray-400 shrink-0">{timeAgo(r.createdAt, now)}</span>
-                    </>
-                  );
-                  return (
-                    <li key={r.id} className="flex items-center gap-3 py-2">
-                      {href ? <Link href={href} className="flex items-center gap-3 flex-1 min-w-0 hover:opacity-70">{body}</Link> : <span className="flex items-center gap-3 flex-1 min-w-0">{body}</span>}
-                      <a href={txLink(r.txHash)} target="_blank" rel="noreferrer" className="text-gray-300 hover:text-gray-700 shrink-0"><ExternalLink className="w-3.5 h-3.5" /></a>
-                    </li>
-                  );
-                })}
-              </ul>
+              <>
+                <ul className="divide-y divide-gray-100">
+                  {activity.slice(0, 10).map((r) => {
+                    const href = marketHref(r, address);
+                    const body = (
+                      <>
+                        <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase shrink-0 ${r.state === 'PENDING' ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-500'}`}>
+                          {r.state === 'PENDING' ? 'Pending' : 'Done'}
+                        </span>
+                        <span className="flex-1 min-w-0">
+                          <b className="font-medium">{eventLabel(r.eventName)}</b>
+                          <span className="text-gray-500 font-mono text-xs ml-2">{r.marketId !== null && `#${r.marketId} `}{summarizeArgs(r.args)}</span>
+                        </span>
+                        <span className="text-xs text-gray-400 shrink-0">{timeAgo(r.createdAt, now)}</span>
+                      </>
+                    );
+                    return (
+                      <li key={r.id} className="flex items-center gap-3 py-2">
+                        {href ? <Link href={href} className="flex items-center gap-3 flex-1 min-w-0 hover:opacity-70">{body}</Link> : <span className="flex items-center gap-3 flex-1 min-w-0">{body}</span>}
+                        <a href={txLink(r.txHash)} target="_blank" rel="noreferrer" className="text-gray-300 hover:text-gray-700 shrink-0"><ExternalLink className="w-3.5 h-3.5" /></a>
+                      </li>
+                    );
+                  })}
+                </ul>
+                {activity.length > 10 && (
+                  <Link
+                    href="/activity"
+                    className="mt-2 -mx-1 px-1 inline-flex items-center justify-center text-sm font-medium text-gray-700 hover:text-gray-900 w-full pt-2 border-t border-gray-100"
+                  >
+                    View all activity ({activity.length}) →
+                  </Link>
+                )}
+              </>
             )}
           </Card>
         </div>
