@@ -215,7 +215,7 @@ function OpenForm({ sdk, account, agentId, disabled, onCreated }: FormProps) {
         </p>
       )}
       <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-        <span className="font-medium">Unused USDC refunds to you.</span> When you click <span className="font-mono">Close market</span> on the manage page, any escrow that wasn&apos;t paid out (e.g. you funded for {maxApplicants || '0'} applicants but only 2 applied) is returned in the same tx. Caveat: if a Final-tier worker misses the ghost deadline, the ghost reserve pays them (it&apos;s a worker-protection mechanism, not a refund to you).
+        <span className="font-medium">Unused USDC refunds to you.</span> When you click <span className="font-mono">Close market</span> on the manage page, any escrow that wasn&apos;t paid out (e.g. you funded for {maxApplicants || '0'} applicants but only 2 applied) is returned in the same tx. Note: at the Final tier the ghost reserve only pays out if the worker submitted and you didn&apos;t accept (worker-protection). If the worker never submits, the reserve stays in escrow and refunds with the rest on close.
       </div>
       <p className="text-xs text-gray-400">Two steps: approve {escrow} USDC, then create — two wallet confirmations.</p>
       <ApproveCreate

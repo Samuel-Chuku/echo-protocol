@@ -34,6 +34,9 @@ const EVENT_CATEGORY: Record<string, Category> = {
   MilestoneSubmitted: 'Milestones', MilestoneReleased: 'Milestones',
   DisputeOpened: 'Disputes', DisputeCountered: 'Disputes', Voted: 'Disputes', DisputeResolved: 'Disputes',
   RevealFlagged: 'Reveal stake', RevealStakeReturned: 'Reveal stake', RevealStakeResolved: 'Reveal stake',
+  // Settlement events ride with Applications (they describe the lifecycle of an application,
+  // even when the outcome is no-payment or ghost).
+  TierPayout: 'Applications', GhostPenalty: 'Applications', WorkerGhosted: 'Applications', RRepSlashed: 'Applications',
 };
 const categoryOf = (eventName: string): Category | null => EVENT_CATEGORY[eventName] ?? null;
 

@@ -24,6 +24,12 @@ import {MockUSDC, MockIdentityRegistry, MockReputationRegistry} from "./mocks/Mo
  *         live); the point here is the AgenticCommerce boundary.
  */
 contract ArcIntegrationTest is Test {
+    // Mirror of EchoHook's events so vm.expectEmit can match by topic0 without going through the
+    // cross-contract `Contract.Event(...)` syntax (which has hashing quirks across forge versions).
+    event GhostPenalty(uint256 indexed marketId, uint256 indexed jobId, address indexed participant, uint256 amount, address requester);
+    event WorkerGhosted(uint256 indexed marketId, uint256 indexed jobId, address indexed participant, uint256 participantAgentId);
+    event RRepSlashed(uint256 indexed requesterAgentId, uint256 indexed marketId, uint256 amount);
+
     MarketRegistry public registry;
     EchoHook public echoHook;
     ParticipationReceipt public receipts;
@@ -241,5 +247,111 @@ contract ArcIntegrationTest is Test {
         vm.prank(requester);
         ac2.complete(jobId, keccak256("ok"), hex"");
         assertEq(usdc.balanceOf(participant), 4.75e6, "settled via repointed AC");
+    }
+
+    // ─── triggerGhost: status-branched penalty (spec-honest worker-protection) ───────────────
+    //
+    // Both ghost paths share setup: applicant graded to Final, then time elapses past the
+    // ghostDeadline without complete() being called. The branching is on the Arc job's status:
+    //   - Submitted at deadline → requester ghosted: pay worker, slash requester R-Rep
+    //   - Open at deadline → worker ghosted: NO payout, slash worker P-Rep, ghost reserve stays
+    //                                          in escrow and refunds on close
+    //
+    // We assert balances, ghost-state flags, AND that the right event fired (GhostPenalty vs
+    // WorkerGhosted) so a future regression in the branch would surface as the wrong event.
+
+    function test_TriggerGhost_RequesterGhosted_WhenJobSubmitted() public {
+        uint256 marketId = _createMarket();
+        _apply(marketId);
+
+        // Walk up to Final via Substantive → Shortlist → Final, completing each lower-tier job
+        // so the lifecycle is realistic. Worker SUBMITS the Final tier but requester never
+        // accepts; the ghost deadline elapses → requester-ghost path.
+        _gradeSubmitComplete(marketId, 1);
+        _gradeSubmitComplete(marketId, 2);
+
+        vm.prank(requester);
+        registry.gradeFinal(marketId, participant);
+        uint256 finalJobId = agentic.jobCounter();
+
+        // Worker submitted but requester didn't complete.
+        vm.prank(participant);
+        agentic.submit(finalJobId, keccak256("final-deliverable"), hex"");
+        assertEq(uint8(agentic.getJob(finalJobId).status), uint8(AgenticCommerce.JobStatus.Submitted));
+
+        uint256 workerBefore = usdc.balanceOf(participant);
+
+        // Past the ghost deadline.
+        vm.warp(block.timestamp + GHOST_DEADLINE + 1);
+
+        // recordLogs over expectEmit so we can be precise about WHICH events from echoHook fired
+        // without depending on the order forge inspects them (expectEmit semantics shifted across
+        // versions). Asserts: GhostPenalty present, RRepSlashed present, WorkerGhosted absent.
+        vm.recordLogs();
+        registry.triggerGhost(marketId, participant);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+
+        bytes32 ghostPenaltyTopic = keccak256("GhostPenalty(uint256,uint256,address,uint256,address)");
+        bytes32 rRepSlashedTopic = keccak256("RRepSlashed(uint256,uint256,uint256)");
+        bytes32 workerGhostedTopic = keccak256("WorkerGhosted(uint256,uint256,address,uint256)");
+        bool sawGhostPenalty;
+        bool sawRRepSlashed;
+        bool sawWorkerGhosted;
+        for (uint256 i; i < logs.length; ++i) {
+            if (logs[i].emitter != address(echoHook)) continue;
+            bytes32 t0 = logs[i].topics[0];
+            if (t0 == ghostPenaltyTopic) sawGhostPenalty = true;
+            else if (t0 == rRepSlashedTopic) sawRRepSlashed = true;
+            else if (t0 == workerGhostedTopic) sawWorkerGhosted = true;
+        }
+        assertTrue(sawGhostPenalty, "GhostPenalty must fire on requester-ghost path");
+        assertTrue(sawRRepSlashed, "RRepSlashed must fire on requester-ghost path");
+        assertFalse(sawWorkerGhosted, "WorkerGhosted must NOT fire on requester-ghost path");
+
+        assertEq(usdc.balanceOf(participant) - workerBefore, tierAmounts[3], "worker paid ghost amount");
+    }
+
+    function test_TriggerGhost_WorkerGhosted_WhenJobStillOpen() public {
+        uint256 marketId = _createMarket();
+        _apply(marketId);
+
+        _gradeSubmitComplete(marketId, 1);
+        _gradeSubmitComplete(marketId, 2);
+
+        vm.prank(requester);
+        registry.gradeFinal(marketId, participant);
+        uint256 finalJobId = agentic.jobCounter();
+
+        // Worker never submits — job stays Open.
+        assertEq(uint8(agentic.getJob(finalJobId).status), uint8(AgenticCommerce.JobStatus.Open));
+
+        uint256 workerBefore = usdc.balanceOf(participant);
+        uint256 escrowBefore = usdc.balanceOf(address(echoHook));
+
+        vm.warp(block.timestamp + GHOST_DEADLINE + 1);
+
+        vm.recordLogs();
+        registry.triggerGhost(marketId, participant);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+
+        bytes32 ghostPenaltyTopic = keccak256("GhostPenalty(uint256,uint256,address,uint256,address)");
+        bytes32 rRepSlashedTopic = keccak256("RRepSlashed(uint256,uint256,uint256)");
+        bytes32 workerGhostedTopic = keccak256("WorkerGhosted(uint256,uint256,address,uint256)");
+        bool sawGhostPenalty;
+        bool sawRRepSlashed;
+        bool sawWorkerGhosted;
+        for (uint256 i; i < logs.length; ++i) {
+            if (logs[i].emitter != address(echoHook)) continue;
+            bytes32 t0 = logs[i].topics[0];
+            if (t0 == ghostPenaltyTopic) sawGhostPenalty = true;
+            else if (t0 == rRepSlashedTopic) sawRRepSlashed = true;
+            else if (t0 == workerGhostedTopic) sawWorkerGhosted = true;
+        }
+        assertTrue(sawWorkerGhosted, "WorkerGhosted must fire on worker-ghost path");
+        assertFalse(sawGhostPenalty, "GhostPenalty must NOT fire on worker-ghost path");
+        assertFalse(sawRRepSlashed, "RRepSlashed must NOT fire on worker-ghost path");
+
+        assertEq(usdc.balanceOf(participant), workerBefore, "worker NOT paid on worker-ghost");
+        assertEq(usdc.balanceOf(address(echoHook)), escrowBefore, "escrow untouched on worker-ghost");
     }
 }

@@ -101,6 +101,17 @@ contract EchoHook is Initializable, OwnableUpgradeable, UUPSUpgradeable, IACPHoo
         uint256 indexed marketId,
         uint256 amount
     );
+    /// @notice Worker-side ghost: Final-tier deadline elapsed while the Arc job was still Open
+    ///         (worker never submitted). No payout moves; the ghost reserve stays in escrow and
+    ///         refunds on closeMarket. Worker's P-Rep gets a -1 "worker_ghosted" feedback;
+    ///         requester is untouched. Emitted instead of GhostPenalty in this branch so the
+    ///         indexer can tell the two cases apart.
+    event WorkerGhosted(
+        uint256 indexed marketId,
+        uint256 indexed jobId,
+        address indexed participant,
+        uint256 participantAgentId
+    );
     event RegistrySet(address indexed registry);
     event AgenticCommerceSet(address indexed agenticCommerce);
     event ProtocolConfigured(uint16 feeBps, address treasury);
@@ -449,21 +460,50 @@ contract EchoHook is Initializable, OwnableUpgradeable, UUPSUpgradeable, IACPHoo
         try reputationRegistry.giveFeedback(agentId, value, 0, "echo", tag, "", "", hash) {} catch {}
     }
 
-    /// @notice Echo-native ghost penalty. Arc fires no expiry hook, so MarketRegistry drives
-    ///         this once a Final-tier job's ghost deadline passes without completion.
+    /// @notice Echo-native ghost penalty. Arc fires no expiry hook, so MarketRegistry drives this
+    ///         once a Final-tier job's ghost deadline passes without completion. Branches on the
+    ///         Arc job's current status to assign blame to the actual silent party:
+    ///           Submitted   → worker did their part, requester never accepted. Pay the worker the
+    ///                         ghost reserve, slash requester R-Rep ("ghosted"). The original
+    ///                         worker-protection path.
+    ///           Open        → worker never submitted. No USDC moves (ghost reserve stays in escrow
+    ///                         and refunds on closeMarket), worker's P-Rep gets -1 "worker_ghosted",
+    ///                         requester is untouched. WorkerGhosted emitted instead of GhostPenalty
+    ///                         so indexers can distinguish.
+    ///           Funded      → treated as Submitted for backward compat (Echo never funds, so this
+    ///                         path is unreachable today; conservative default if it ever changes).
+    ///           Completed   → no-op (a happy completion already settled via afterAction).
+    ///           Rejected/Expired → no-op (terminal states; no further action).
     function triggerGhost(uint256 jobId) external onlyRegistry {
         MarketContext storage c = ctx[jobId];
         if (c.marketId == 0) revert JobNotFound();
         if (c.ghostTriggered) revert AlreadyWithdrawn();
         if (c.tier != Tier.Final || block.timestamp < c.ghostDeadline) return;
 
+        IAgenticCommerce.Job memory job = agenticCommerce.getJob(jobId);
+        IAgenticCommerce.JobStatus status = job.status;
+
+        // Worker never delivered → no payout, slash the worker, leave the requester out of it.
+        if (status == IAgenticCommerce.JobStatus.Open) {
+            c.ghostTriggered = true;
+            _feedback(c.participantAgentId, int128(-1), "worker_ghosted", bytes32(0));
+            emit WorkerGhosted(c.marketId, jobId, job.provider, c.participantAgentId);
+            return;
+        }
+
+        // Anything except a Submitted Arc job at deadline is terminal — settle paths already ran or
+        // the job is in a no-action terminal state. Bail without touching escrow or reputation.
+        if (status != IAgenticCommerce.JobStatus.Submitted && status != IAgenticCommerce.JobStatus.Funded) {
+            return;
+        }
+
+        // Worker submitted but the requester never accepted → original requester-ghost path.
         uint256 ghostAmount = tierAmounts[c.marketId][3];
         if (distributed[c.marketId] + ghostAmount > escrowed[c.marketId]) revert InsufficientEscrow();
 
         distributed[c.marketId] += ghostAmount;
         c.ghostTriggered = true;
 
-        IAgenticCommerce.Job memory job = agenticCommerce.getJob(jobId);
         usdc.safeTransfer(job.provider, ghostAmount);
 
         _feedback(c.requesterAgentId, int128(-1), "ghosted", bytes32(0));

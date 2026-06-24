@@ -59,6 +59,10 @@ const EVENT_LABELS: Record<string, string> = {
   DisputeCountered: 'Dispute countered',
   Voted: 'Juror voted',
   DisputeResolved: 'Dispute resolved',
+  GhostPenalty: 'Worker compensated (requester ghosted)',
+  WorkerGhosted: 'Worker ghosted (no payout)',
+  RRepSlashed: 'Requester R-Rep slashed',
+  TierPayout: 'Tier payout',
 };
 export const eventLabel = (name: string) => EVENT_LABELS[name] ?? name;
 

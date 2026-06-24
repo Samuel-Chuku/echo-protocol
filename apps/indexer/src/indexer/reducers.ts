@@ -211,14 +211,30 @@ export async function applyEvent(
     }
 
     case 'GhostPenalty': {
-      // Provider ghosted at the final tier — slash R-Rep on the provider side.
+      // REQUESTER-ghost path: worker submitted but requester never accepted before the deadline.
+      // The worker got paid the ghost reserve as compensation — it's a positive cash signal for
+      // them (totalEarned bump), NOT a slash. Requester-side slash is handled by RRepSlashed.
+      // (Older builds incorrectly incremented the worker's ghost_count here; if you see
+      // pre-2026-06-24 rollups skewed, drop the reputation table and re-index from cursor=0.)
       const provider = String(args.provider).toLowerCase();
       const amount = String(args.ghostAmount ?? '0');
       await upsertReputation(provider, ctx, {
-        ghostCountDelta: 1,
-        totalSlashedDelta: amount,
+        totalEarnedDelta: amount,
       });
       return { marketId: mid, actor: provider };
+    }
+
+    case 'WorkerGhosted': {
+      // WORKER-ghost path: applicant graded to Final never submitted before the deadline. No
+      // payouts moved. The worker's ghost_count is the right slot for this — it now exclusively
+      // tracks "times the worker no-showed at Final" rather than the legacy conflated signal.
+      const participant = String(args.participant).toLowerCase();
+      const agentId = args.participantAgentId !== undefined ? String(args.participantAgentId) : undefined;
+      await upsertReputation(participant, ctx, {
+        ghostCountDelta: 1,
+        agentId,
+      });
+      return { marketId: mid, actor: participant };
     }
 
     case 'RRepSlashed': {

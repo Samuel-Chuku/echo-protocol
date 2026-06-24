@@ -234,7 +234,15 @@ export default function ManageMarketPage({ params }: { params: Promise<{ id: str
                 <div><dt className="inline font-semibold text-gray-800">Reveal</dt><dd className="inline"> — you pay the reveal fee R to unlock this applicant&apos;s submission. Available only on reveal markets (R &gt; 0). Advances them to tier 1.</dd></div>
                 <div><dt className="inline font-semibold text-gray-800">Substantive / Shortlist / Final</dt><dd className="inline"> — grade up to the next tier. Each tier payout funds an on-chain job.</dd></div>
                 <div><dt className="inline font-semibold text-gray-800">Settle stake</dt><dd className="inline"> — when you reveal an applicant, their anti-bait stake is locked for the market&apos;s flag window (set at create time). During the lock you can flag a bait-and-switch reveal as a dispute; once the window elapses, anyone can call Settle stake to return it. The row shows a countdown until then, and the button enables itself when the window&apos;s up. This is a separate clock from the ghost deadline.</dd></div>
-                <div><dt className="inline font-semibold text-gray-800">Trigger ghost</dt><dd className="inline"> — penalize a Final-tier applicant who failed to deliver before the ghost deadline. Slashes part of their reward as `ghostAmount` and credits the requester.</dd></div>
+                <div>
+                  <dt className="inline font-semibold text-gray-800">Trigger ghost / Mark worker abandoned</dt>
+                  <dd className="inline"> — when the Final-tier deadline passes without completion, this routes to the right penalty based on the Arc job&apos;s status:
+                    <ul className="mt-1 ml-4 list-disc space-y-0.5">
+                      <li><b>Worker never submitted</b> (job Open) → no USDC moves; the ghost reserve refunds to you on close, the worker takes a -1 P-Rep slash. <i>You are not charged.</i></li>
+                      <li><b>Worker submitted but you didn&apos;t accept</b> (job Submitted) → the ghost reserve pays the worker as compensation and your R-Rep takes a -1 slash. Worker-protection path.</li>
+                    </ul>
+                  </dd>
+                </div>
                 <div className="pt-1.5 mt-1.5 border-t border-gray-100"><dd className="text-gray-500">Suspect a bait-and-switch reveal? <Link href="/disputes" className="underline hover:text-gray-700">Open a bonded stake dispute</Link> while the flag window is open.</dd></div>
               </dl>
             </Card>
@@ -388,6 +396,23 @@ function ApplicantRow({
   const tierJobIds = (app.tierJobIds ?? []) as bigint[];
   const [showApp, setShowApp] = useState(false);
   const [showJobs, setShowJobs] = useState(false);
+  // Read the latest tier job's Arc status for the Trigger-ghost branch label. EchoHook now
+  // routes the penalty based on this status: Submitted → requester ghosted (pays the worker,
+  // slashes you), Open → worker ghosted (no payout, slashes the worker). We surface that
+  // BEFORE the click so the requester isn't surprised.
+  const finalJobId = tierJobIds.length > 0 ? tierJobIds[tierJobIds.length - 1] : null;
+  const [finalJobStatus, setFinalJobStatus] = useState<number | null>(null);
+  useEffect(() => {
+    if (tier !== 3 || finalJobId === null) { setFinalJobStatus(null); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const job = await sdk.getArcJob(finalJobId) as { status: number };
+        if (!cancelled) setFinalJobStatus(job?.status ?? null);
+      } catch { if (!cancelled) setFinalJobStatus(null); }
+    })();
+    return () => { cancelled = true; };
+  }, [sdk, tier, finalJobId]);
   // Per-tier breakdown for the payouts line, sorted by tier index. EchoHook.Tier indices:
   // 0 Submitted (reveal) · 1 Substantive · 2 Shortlist · 3 Final · 4 Ghost · 5 Milestone · 6 Finding.
   const tierBreakdown = payout
@@ -400,7 +425,13 @@ function ApplicantRow({
       : 'Grade them up to Substantive — pays out tier[0].';
     if (tier === 1) return 'Grade up to Shortlist (pays tier[1]), or settle the held stake once the flag window elapses.';
     if (tier === 2) return 'Grade up to Final (creates the delivery job at AgenticCommerce with the ghost deadline).';
-    if (tier === 3) return 'Awaiting delivery — they auto-receive tier[2] on completion. If they miss the deadline, Trigger ghost slashes ghostAmount back to you.';
+    if (tier === 3) {
+      // Status-aware "what happens next" — mirrors the contract's two ghost paths.
+      if (finalJobStatus === 2) return 'Worker submitted. Accept & pay on the Tier jobs panel to release tier[2]. If you let the ghost deadline pass without accepting, the ghost reserve pays the worker and you get an R-Rep slash.';
+      if (finalJobStatus === 0) return 'Waiting on the worker to submit. If they miss the ghost deadline, Mark worker abandoned costs no USDC (reserve refunds on close) and slashes the worker, not you.';
+      if (finalJobStatus === 3) return 'Final job completed — paid out.';
+      return 'Awaiting delivery — the worker must submit a deliverable to the Final tier job, then you accept.';
+    }
     return null;
   })();
 
@@ -463,15 +494,24 @@ function ApplicantRow({
               </span>
             )
           )}
-          {tier === 3 && (
-            <Command
-              label="Trigger ghost"
-              tone="neutral"
-              disabled={!ready}
-              onDone={onDone}
-              run={() => sdk.triggerGhost(marketId, p, account!)}
-            />
-          )}
+          {tier === 3 && (() => {
+            // Arc JobStatus: 0 Open · 1 Funded · 2 Submitted · 3 Completed · 4 Rejected · 5 Expired.
+            // EchoHook.triggerGhost now branches on this: Open → worker no-show (no payout, slash
+            // worker), Submitted → requester ghost (pay worker, slash you). The button label
+            // reflects which path will fire so the requester isn't surprised.
+            const label = finalJobStatus === 0
+              ? 'Mark worker abandoned'
+              : finalJobStatus === 2 ? 'Trigger ghost (pay worker, slash you)' : 'Trigger ghost';
+            return (
+              <Command
+                label={label}
+                tone="neutral"
+                disabled={!ready || finalJobStatus === 3 /* Completed */}
+                onDone={onDone}
+                run={() => sdk.triggerGhost(marketId, p, account!)}
+              />
+            );
+          })()}
         </div>
       </div>
       {/* Details line — appears once we know who they are (always for revealed+; useful at tier 0 too). */}
