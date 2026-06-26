@@ -52,13 +52,15 @@ export const LIBRARIES = {
   },
 } as const;
 
-// Implementations (for upgrade transactions only). Latest = P6 Engine unification + reputation
-// (2026-06-13): MarketRegistry impl is linked against the EchoBounty + EchoDirectJob + EchoReveal
-// libraries (see LIBRARIES). Proxies in CONTRACTS are unchanged.
+// Implementations (for upgrade transactions only). Proxies in CONTRACTS are unchanged.
+// Latest EchoHook impl: ghost status-branch (2026-06-24, UpgradeGhostStatusBranch) — triggerGhost
+// now penalises the actual silent party (worker no-show → slash worker, no USDC moved; requester
+// no-accept → existing pay-worker / slash-requester worker-protection path). Storage unchanged.
+// MarketRegistry / DisputeResolver / etc still on P6 (2026-06-13).
 export const IMPLEMENTATIONS = {
   arcTestnet: {
     marketRegistry: '0xe21A7E5227D983911f38CED379d8E7d5f8E9Df29' as Address,
-    echoHook: '0x35f6202e8c39ce7e70D87Ea2D008F5177F058A8A' as Address,
+    echoHook: '0x8C2863EFa618d4ea5c30c9C9431F8e88d6D2F4dE' as Address,
     participationReceipt: '0x2bA8ED70dEe63351d2fF739E36182972e9a695C4' as Address,
     validationGate: '0x5590Fa35b3E75A9cC3b12Edb7858936Aca383E32' as Address,
     disputeResolver: '0xF8F05Dc0Ae083754721419dA91C3A4FAD77d7061' as Address,
