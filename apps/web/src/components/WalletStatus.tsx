@@ -28,8 +28,11 @@ export function WalletStatus() {
   return (
     <div className="ml-auto flex items-center gap-2">
       {account && (
-        <span className="text-sm text-gray-700 font-medium tabular-nums">
-          {usdcShort(bal)} <span className="text-xs text-gray-400 font-normal">USDC</span>
+        <span className="flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5">
+          <span className="h-2 w-2 rounded-full bg-success shrink-0" title="Connected" />
+          <span className="text-sm text-white font-medium tabular-nums">
+            {usdcShort(bal)} <span className="text-xs text-white/40 font-normal">USDC</span>
+          </span>
         </span>
       )}
       <Bell />
@@ -38,20 +41,20 @@ export function WalletStatus() {
           if (!mounted) return null;
           if (!acc) {
             return (
-              <button onClick={() => setSignInOpen(true)} className="rounded-md bg-gray-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-700">
+              <button onClick={() => setSignInOpen(true)} className="rounded-full bg-teal-500 px-3.5 py-1.5 text-sm font-semibold text-ink hover:bg-teal-400 transition">
                 Sign in
               </button>
             );
           }
           if (chain?.unsupported) {
             return (
-              <button onClick={openChainModal} className="rounded-md bg-red-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-500">
+              <button onClick={openChainModal} className="rounded-full bg-danger px-3.5 py-1.5 text-sm font-medium text-white hover:bg-danger/80 transition">
                 Wrong network
               </button>
             );
           }
           return (
-            <button onClick={openAccountModal} className="rounded-md bg-gray-100 px-3 py-1.5 text-sm font-medium text-gray-800 hover:bg-gray-200">
+            <button onClick={openAccountModal} className="rounded-full border border-white/10 bg-white/[0.04] px-3.5 py-1.5 text-sm font-medium text-white hover:bg-white/[0.08] transition">
               {acc.displayName}
             </button>
           );
@@ -71,7 +74,7 @@ function ProfileAvatar({ account }: { account: `0x${string}` }) {
       href={`/u/${account}`}
       title="Your profile"
       aria-label="Your profile"
-      className="h-8 w-8 rounded-full border border-gray-200 shrink-0 ring-2 ring-transparent hover:ring-gray-300 transition"
+      className="h-8 w-8 rounded-full border border-white/10 shrink-0 ring-2 ring-transparent hover:ring-teal-500/40 transition"
       style={{ background: `linear-gradient(135deg, hsl(${hue} 75% 55%), hsl(${(hue + 70) % 360} 75% 45%))` }}
     />
   );

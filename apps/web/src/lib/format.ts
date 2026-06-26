@@ -47,14 +47,9 @@ export const isTxHash = (s: unknown): s is string => typeof s === 'string' && /^
 export const MODE_NAMES = ['Open / Reveal', 'Direct Job', 'Bounty'] as const;
 export const modeName = (m: number | bigint) => MODE_NAMES[Number(m)] ?? `mode ${m}`;
 
-/** Tailwind classes for a mode pill: 0 Open/Reveal (indigo), 1 DirectJob (emerald), 2 Bounty (amber). */
-export const MODE_TAG_CLASS = [
-  'bg-indigo-100 text-indigo-700',
-  'bg-emerald-100 text-emerald-700',
-  'bg-amber-100 text-amber-700',
-] as const;
-export const modeTagClass = (m: number | bigint) =>
-  MODE_TAG_CLASS[Number(m)] ?? 'bg-gray-100 text-gray-600';
+/** Badge tone for a mode pill: 0 Open/Reveal -> teal, 1 DirectJob -> success (green), 2 Bounty -> warning (amber). */
+export const MODE_BADGE_TONE = ['teal', 'success', 'warning'] as const;
+export const modeBadgeTone = (m: number | bigint) => MODE_BADGE_TONE[Number(m)] ?? 'neutral';
 
 /** One-line "when to use this" blurb for the create type-picker (index = EchoMode). */
 export const MODE_BLURBS = [

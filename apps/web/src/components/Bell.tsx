@@ -39,36 +39,36 @@ export function Bell() {
     <div className="relative" ref={ref}>
       <button
         onClick={() => setOpen((v) => !v)}
-        className="relative p-2 rounded-md text-gray-500 hover:bg-gray-100 hover:text-gray-800 transition"
+        className="relative p-2 rounded-full text-white/50 hover:bg-white/[0.06] hover:text-white transition"
         aria-label="Notifications"
       >
         <BellIcon className="w-5 h-5" />
         {rows.length > 0 && (
-          <span className="absolute -top-0.5 -right-0.5 min-w-4 h-4 px-1 rounded-full bg-red-500 text-white text-[10px] font-semibold flex items-center justify-center">
+          <span className="absolute -top-0.5 -right-0.5 min-w-4 h-4 px-1 rounded-full bg-danger text-white text-[10px] font-semibold flex items-center justify-center">
             {rows.length}
           </span>
         )}
       </button>
 
       {open && (
-        <div className="absolute right-0 mt-2 w-80 rounded-xl border border-gray-200 bg-white shadow-lg z-20 overflow-hidden flex flex-col max-h-96">
-          <div className="px-4 py-2.5 border-b border-gray-100 shrink-0">
-            <span className="text-sm font-semibold">Pending</span>
+        <div className="absolute right-0 mt-2 w-80 rounded-2xl border border-white/10 bg-[#0d2d4a] shadow-2xl z-20 overflow-hidden flex flex-col max-h-96">
+          <div className="px-4 py-2.5 border-b border-white/[0.08] shrink-0">
+            <span className="text-sm font-semibold text-white">Pending</span>
           </div>
           <div className="flex-1 overflow-auto">
             {rows.length === 0 ? (
-              <p className="px-4 py-6 text-sm text-gray-400 text-center">Nothing pending.</p>
+              <p className="px-4 py-6 text-sm text-white/40 text-center">Nothing pending.</p>
             ) : (
-              <ul className="divide-y divide-gray-100">
+              <ul className="divide-y divide-white/[0.08]">
                 {rows.map((r) => {
                   const href = marketHref(r, address);
                   const body = (
                     <>
                       <div className="flex items-center justify-between gap-2">
-                        <span className="text-sm font-medium">{eventLabel(r.eventName)}</span>
-                        <span className="text-xs text-gray-400 shrink-0">{timeAgo(r.createdAt, now)}</span>
+                        <span className="text-sm font-medium text-white">{eventLabel(r.eventName)}</span>
+                        <span className="text-xs text-white/40 shrink-0">{timeAgo(r.createdAt, now)}</span>
                       </div>
-                      <div className="text-xs text-gray-500 font-mono mt-0.5">
+                      <div className="text-xs text-white/50 font-mono mt-0.5">
                         {r.marketId !== null && `#${r.marketId} `}{summarizeArgs(r.args)}
                       </div>
                     </>
@@ -76,7 +76,7 @@ export function Bell() {
                   return (
                     <li key={r.id}>
                       {href ? (
-                        <Link href={href} onClick={() => setOpen(false)} className="block px-4 py-2.5 hover:bg-gray-50">{body}</Link>
+                        <Link href={href} onClick={() => setOpen(false)} className="block px-4 py-2.5 hover:bg-white/[0.04]">{body}</Link>
                       ) : (
                         <div className="px-4 py-2.5">{body}</div>
                       )}
@@ -90,7 +90,7 @@ export function Bell() {
           <Link
             href="/activity"
             onClick={() => setOpen(false)}
-            className="shrink-0 border-t border-gray-100 px-4 py-2.5 text-center text-sm font-medium text-gray-700 hover:bg-gray-50"
+            className="shrink-0 border-t border-white/[0.08] px-4 py-2.5 text-center text-sm font-medium text-teal-400 hover:bg-white/[0.04]"
           >
             View all activity →
           </Link>

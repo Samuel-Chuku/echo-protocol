@@ -1,5 +1,6 @@
 'use client';
 
+import Image from 'next/image';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { WalletStatus } from './WalletStatus';
@@ -15,16 +16,20 @@ const LINKS = [
 export function Nav() {
   const path = usePathname();
   return (
-    <nav className="border-b border-gray-200">
-      <div className="max-w-6xl mx-auto px-6 flex items-center gap-1 h-14">
-        <Link href="/" className="font-bold tracking-tight mr-4">Echo<span className="text-gray-400"> console</span></Link>
+    <nav className="border-b border-white/[0.08] bg-ink/80 backdrop-blur sticky top-0 z-30">
+      <div className="max-w-6xl mx-auto px-6 flex items-center gap-1 h-16">
+        <Link href="/" className="mr-4 flex items-center shrink-0">
+          <Image src="/logo-color.png" alt="Echo Protocol" width={120} height={28} priority className="h-7 w-auto" />
+        </Link>
         {LINKS.map((l) => {
           const active = path.startsWith(l.href);
           return (
             <Link
               key={l.href}
               href={l.href}
-              className={`px-3 py-1.5 text-sm rounded-md transition ${active ? 'bg-gray-900 text-white' : 'text-gray-600 hover:bg-gray-100'}`}
+              className={`px-3 py-1.5 text-sm font-medium rounded-full transition ${
+                active ? 'bg-teal-500 text-ink' : 'text-white/50 hover:text-white hover:bg-white/[0.06]'
+              }`}
             >
               {l.label}
             </Link>
@@ -34,10 +39,10 @@ export function Nav() {
         {/* Reputation lives in profiles for now; scoring is deferred. Show it as coming soon. */}
         <span
           title="Coming soon — reputation currently shows on profiles"
-          className="px-3 py-1.5 text-sm rounded-md text-gray-400 cursor-default inline-flex items-center gap-1.5"
+          className="px-3 py-1.5 text-sm rounded-full text-white/30 cursor-default inline-flex items-center gap-1.5"
         >
           Reputation
-          <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-gray-500">Soon</span>
+          <span className="rounded bg-white/[0.06] px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white/40">Soon</span>
         </span>
 
         {/* USDC balance + bell + wallet + profile avatar, pinned right (#4). */}

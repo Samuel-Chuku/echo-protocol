@@ -17,10 +17,10 @@ export function IdentityBanner() {
   if (!account || agentId) return null;
 
   return (
-    <div className="mb-6 flex flex-wrap items-center gap-3 rounded-xl border border-gray-200 bg-gray-50 px-4 py-3">
-      <UserPlus className="h-4 w-4 shrink-0 text-gray-500" />
-      <p className="flex-1 min-w-[12rem] text-sm text-gray-700">
-        <b className="font-semibold">Register an Echo identity</b> to post or apply — a one-time on-chain
+    <div className="mb-6 flex flex-wrap items-center gap-3 rounded-xl border border-teal-500/20 bg-teal-500/[0.06] px-4 py-3">
+      <UserPlus className="h-4 w-4 shrink-0 text-teal-400" />
+      <p className="flex-1 min-w-[12rem] text-sm text-white/70">
+        <b className="font-semibold text-white">Register an Echo identity</b> to post or apply, a one-time on-chain
         registration (~$0.006 in USDC gas). Required before any market action.
       </p>
       <Command

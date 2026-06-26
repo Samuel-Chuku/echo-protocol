@@ -6,9 +6,9 @@ import { isTxHash, txLink } from '@/lib/format';
 
 type Tone = 'primary' | 'neutral' | 'danger';
 const TONES: Record<Tone, string> = {
-  primary: 'bg-gray-900 text-white hover:bg-gray-700',
-  neutral: 'bg-gray-100 text-gray-800 hover:bg-gray-200',
-  danger: 'bg-red-600 text-white hover:bg-red-500',
+  primary: 'bg-teal-500 text-ink font-semibold hover:bg-teal-400',
+  neutral: 'bg-transparent border border-white/20 text-white hover:border-white/40',
+  danger: 'bg-danger/10 border border-danger/30 text-danger hover:bg-danger/20',
 };
 
 /**
@@ -60,7 +60,7 @@ export function Command({
         {label}
       </button>
       {result && (
-        <div className={`text-xs flex items-start gap-1 ${result.ok ? 'text-green-600' : 'text-red-600'}`}>
+        <div className={`text-xs flex items-start gap-1 ${result.ok ? 'text-success' : 'text-danger'}`}>
           {result.ok ? <Check className="w-3.5 h-3.5 shrink-0 mt-0.5" /> : <X className="w-3.5 h-3.5 shrink-0 mt-0.5" />}
           {isTxHash(result.msg) ? (
             <a href={txLink(result.msg)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 underline break-all">
