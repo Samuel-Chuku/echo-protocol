@@ -36,6 +36,70 @@ body {
   background: rgba(255, 255, 255, 0.2);
 }
 
+/* Echo flow graphic (homepage hero): floating nodes, dashed flow lines, pulse rings. */
+@keyframes echo-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-8px);
+  }
+}
+.echo-node-float {
+  animation: echo-float 4s ease-in-out infinite;
+}
+
+@keyframes echo-dash {
+  to {
+    stroke-dashoffset: -24;
+  }
+}
+.echo-flow-line {
+  stroke-dasharray: 6 6;
+  animation: echo-dash 1.6s linear infinite;
+}
+
+@keyframes echo-pulse {
+  0% {
+    r: 74px;
+    opacity: 0.45;
+  }
+  100% {
+    r: 190px;
+    opacity: 0;
+  }
+}
+.echo-pulse-ring {
+  animation: echo-pulse 3s ease-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .echo-node-float,
+  .echo-flow-line,
+  .echo-pulse-ring {
+    animation: none;
+  }
+}
+
+/* Modal slides up as a bottom sheet on mobile; sm: and up it's a centered card, so the animation is a no-op there. */
+@keyframes sheet-up {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+.modal-sheet {
+  animation: sheet-up 0.25s ease-out;
+}
+@media (min-width: 640px) {
+  .modal-sheet {
+    animation: none;
+  }
+}
+
 /* Subtle wave pattern reserved for hero sections only. */
 .hero-waves {
   background-image:

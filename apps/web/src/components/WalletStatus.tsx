@@ -49,7 +49,7 @@ export function WalletStatus() {
   const isPasskey = connector?.id === CIRCLE_CONNECTOR_ID;
 
   return (
-    <div className="ml-auto flex items-center gap-2">
+    <div className="flex items-center gap-2 flex-wrap">
       {account && (
         <div className="flex flex-col items-end leading-tight">
           <span className="text-sm text-white font-medium tabular-nums">
@@ -70,7 +70,7 @@ export function WalletStatus() {
             return (
               <div className="flex items-center gap-2">
                 <ContinueAsChip />
-                <button onClick={() => setSignInOpen(true)} className="rounded-full bg-teal-500 px-3.5 py-1.5 text-sm font-semibold text-ink hover:bg-teal-400 transition">
+                <button onClick={() => setSignInOpen(true)} className="rounded-full bg-teal-500 px-3.5 py-1.5 min-h-[44px] text-sm font-semibold text-ink hover:bg-teal-400 transition">
                   Sign in
                 </button>
               </div>
@@ -80,7 +80,7 @@ export function WalletStatus() {
             return (
               <button
                 onClick={() => switchChain({ chainId: arcTestnet.id }, { onError: openChainModal })}
-                className="rounded-full bg-danger px-3.5 py-1.5 text-sm font-medium text-white hover:bg-danger/80 transition"
+                className="rounded-full bg-danger px-3.5 py-1.5 min-h-[44px] text-sm font-medium text-white hover:bg-danger/80 transition"
               >
                 Wrong network
               </button>

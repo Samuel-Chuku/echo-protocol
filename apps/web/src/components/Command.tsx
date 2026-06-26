@@ -24,17 +24,20 @@ export function Command({
   tone = 'primary',
   disabled,
   onDone,
+  successText,
 }: {
   label: string;
   run: () => Promise<unknown>;
   tone?: Tone;
   disabled?: boolean;
-  /** Called after a successful run — use it to refresh adjacent read panels. */
+  /** Called after a successful run, use it to refresh adjacent read panels. */
   onDone?: (result: unknown) => void;
+  /** Optional custom success message (e.g. "AR proposed successfully, AR #3") in place of the raw tx hash. */
+  successText?: (result: unknown) => Promise<string> | string;
 }) {
   const { run: runTx } = useTx();
   const [busy, setBusy] = useState(false);
-  const [result, setResult] = useState<{ ok: boolean; msg: string } | null>(null);
+  const [result, setResult] = useState<{ ok: boolean; raw: unknown; msg: string } | null>(null);
 
   // Reads/utility buttons (Refresh, Load …) use tone="neutral" and shouldn't pop the tx overlay.
   const isWrite = tone !== 'neutral';
@@ -43,12 +46,13 @@ export function Command({
     setBusy(true);
     setResult(null);
     try {
-      const r = isWrite ? await runTx({ title: label, kind: 'action' }, run) : await run();
-      const msg = isTxHash(r) ? (r as string) : 'done';
-      setResult({ ok: true, msg });
+      const r = await run();
+      const msg = successText ? await successText(r) : isTxHash(r) ? (r as string) : 'done';
+      setResult({ ok: true, raw: r, msg });
       onDone?.(r);
     } catch (e: unknown) {
-      setResult({ ok: false, msg: formatTxError(e) });
+      const err = e as { shortMessage?: string; details?: string; message?: string };
+      setResult({ ok: false, raw: null, msg: err.shortMessage || err.details || err.message || String(e) });
     } finally {
       setBusy(false);
     }
@@ -59,33 +63,35 @@ export function Command({
       <button
         onClick={onClick}
         disabled={busy || disabled}
-        className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md transition disabled:opacity-40 disabled:cursor-not-allowed ${TONES[tone]}`}
+        className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md transition disabled:opacity-40 disabled:cursor-not-allowed min-h-[44px] ${TONES[tone]}`}
       >
         {busy && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
         {label}
       </button>
-      {result?.ok && (
-        <div className="rounded-md border border-success/20 bg-success/10 px-3 py-2 text-sm flex items-start gap-2">
-          <Check className="w-4 h-4 text-success shrink-0 mt-0.5" />
-          <div className="flex-1 min-w-0">
-            <p className="text-success font-medium">{isWrite ? 'Transaction confirmed' : 'Done'}</p>
-            {isTxHash(result.msg) ? (
-              <a href={txLink(result.msg)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs text-success/70 underline mt-0.5 break-all">
-                Tx: <span className="font-mono">{result.msg.slice(0, 10)}...{result.msg.slice(-8)}</span> <ExternalLink className="w-3 h-3" />
-              </a>
-            ) : (
-              <p className="text-xs text-success/70 mt-0.5">Action complete.</p>
-            )}
-          </div>
+      {result && result.ok && (
+        <div className="text-xs flex items-start gap-1 text-success">
+          <Check className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+          {isTxHash(result.msg) ? (
+            <a href={txLink(result.msg)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 underline break-all">
+              {result.msg.slice(0, 10)}…{result.msg.slice(-8)} <ExternalLink className="w-3 h-3" />
+            </a>
+          ) : (
+            <span className="break-all">
+              {result.msg}
+              {isTxHash(result.raw) && (
+                <a href={txLink(result.raw as string)} target="_blank" rel="noreferrer" className="ml-1.5 inline-flex items-center gap-1 underline">
+                  view tx <ExternalLink className="w-3 h-3" />
+                </a>
+              )}
+            </span>
+          )}
         </div>
       )}
       {result && !result.ok && (
-        <div className="rounded-md border border-danger/20 bg-danger/10 px-3 py-2 text-sm flex items-start gap-2">
-          <X className="w-4 h-4 text-danger shrink-0 mt-0.5" />
-          <div className="flex-1 min-w-0">
-            <p className="text-danger font-medium">Transaction failed</p>
-            <p className="text-xs text-danger/70 mt-0.5 break-all">{result.msg}</p>
-          </div>
+        <div className="text-xs flex items-start gap-1 text-danger">
+          <X className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+          <span className="break-all">{result.msg}</span>
+          <button onClick={onClick} className="underline shrink-0 hover:text-danger/80">Retry</button>
         </div>
       )}
     </div>
