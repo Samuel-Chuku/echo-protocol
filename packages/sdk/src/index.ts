@@ -564,6 +564,25 @@ export class EchoSdk {
     return this.send(request);
   }
 
+  /** Requester rejects a submitted tier job (wrong/invalid deliverable). Arc moves the job to
+   *  Rejected; EchoHook.afterAction ignores `reject`, so NO payout fires and NO party is slashed —
+   *  the tier amount + ghost reserve stay escrowed and refund to the requester on closeMarket.
+   *  Rejecting also makes triggerGhost a no-op (Rejected is terminal), so an honest reject avoids
+   *  the ghost R-Rep slash. NOTE: the worker currently has no on-chain recourse for an unfair
+   *  reject — a deliverable-quality dispute subject is not yet implemented (testnet caveat).
+   *  `reasonHash` is a free-form commitment (UI passes keccak256("reject") by default). */
+  async rejectTierJob(jobId: bigint, reasonHash: `0x${string}`, account: Address) {
+    if (!this.walletClient) throw new Error('Wallet not connected');
+    const { request } = await this.publicClient.simulateContract({
+      address: this.contracts.agenticCommerce,
+      abi: AgenticCommerceABI,
+      functionName: 'reject',
+      args: [jobId, reasonHash, '0x'],
+      account,
+    });
+    return this.send(request);
+  }
+
   /** Read a single Arc job's full struct — used to gate UI on JobStatus
    *  (0 Open, 1 Funded, 2 Submitted, 3 Completed, 4 Rejected, 5 Expired). */
   async getArcJob(jobId: bigint) {

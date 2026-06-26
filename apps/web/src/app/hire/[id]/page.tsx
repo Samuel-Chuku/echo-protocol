@@ -434,7 +434,7 @@ function ApplicantRow({
     if (tier === 2) return 'Grade up to Final (creates the delivery job at AgenticCommerce with the ghost deadline).';
     if (tier === 3) {
       // Status-aware "what happens next" — mirrors the contract's two ghost paths.
-      if (finalJobStatus === 2) return 'Worker submitted. Accept & pay on the Tier jobs panel to release tier[2]. If you let the ghost deadline pass without accepting, the ghost reserve pays the worker and you get an R-Rep slash.';
+      if (finalJobStatus === 2) return 'Worker submitted. On the Tier jobs panel: Accept & pay to release tier[2], or Reject if the work is wrong/invalid (no payout, no slash, refunds on close). Only letting the ghost deadline pass without acting pays the worker the reserve and slashes your R-Rep.';
       if (finalJobStatus === 0) return 'Waiting on the worker to submit. If they miss the ghost deadline, Mark worker abandoned costs no USDC (reserve refunds on close) and slashes the worker, not you.';
       if (finalJobStatus === 3) return 'Final job completed — paid out.';
       return 'Awaiting delivery — the worker must submit a deliverable to the Final tier job, then you accept.';
@@ -651,9 +651,18 @@ function ApplicantTierJobs({ sdk, account, marketId, tierJobIds, onDone }: {
           {j.status === 2 && (
             <>
               <ContentView marketId={Number(marketId)} kind="deliver" contentKey={j.jobId.toString()} viewer={account} />
-              <Command label={`Accept & pay ${usdc(j.tierAmount)}`} disabled={!account}
-                onDone={() => { load(); onDone(); }}
-                run={() => sdk.completeTierJob(j.jobId, scope('accept'), account)} />
+              <div className="flex flex-wrap gap-1.5">
+                <Command label={`Accept & pay ${usdc(j.tierAmount)}`} disabled={!account}
+                  onDone={() => { load(); onDone(); }}
+                  run={() => sdk.completeTierJob(j.jobId, scope('accept'), account)} />
+                <Command label="Reject" tone="neutral" disabled={!account}
+                  onDone={() => { load(); onDone(); }}
+                  run={() => sdk.rejectTierJob(j.jobId, scope('reject'), account)} />
+              </div>
+              <p className="text-[11px] text-gray-500 italic">
+                Reject if the deliverable is wrong/invalid — no USDC moves, nobody is slashed, and the
+                amount refunds to you on Close market. (Reject is also safe from the ghost penalty.)
+              </p>
             </>
           )}
           {j.status === 0 && (
@@ -661,6 +670,9 @@ function ApplicantTierJobs({ sdk, account, marketId, tierJobIds, onDone }: {
           )}
           {j.status === 3 && (
             <p className="text-[11px] text-emerald-700">Completed — {usdc(j.tierAmount)} USDC paid.</p>
+          )}
+          {j.status === 4 && (
+            <p className="text-[11px] text-amber-700">Rejected — no payout; the amount refunds to you on Close market.</p>
           )}
         </div>
       ))}
