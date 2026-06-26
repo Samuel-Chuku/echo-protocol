@@ -199,8 +199,8 @@ export async function applyEvent(
     // ── EchoHook (settlement + reputation) ──
     case 'TierPayout': {
       // Provider got paid at tier T (0 reveal, 1 shortlist, 2 final). Bump P-Rep totals.
-      const provider = String(args.provider).toLowerCase();
-      const net = String(args.net ?? '0');
+      const provider = String(args.participant).toLowerCase();
+      const net = String(args.amount ?? '0');
       const tier = Number(args.tier ?? 0);
       await upsertReputation(provider, ctx, {
         jobsCompleted: 1,
@@ -216,8 +216,8 @@ export async function applyEvent(
       // them (totalEarned bump), NOT a slash. Requester-side slash is handled by RRepSlashed.
       // (Older builds incorrectly incremented the worker's ghost_count here; if you see
       // pre-2026-06-24 rollups skewed, drop the reputation table and re-index from cursor=0.)
-      const provider = String(args.provider).toLowerCase();
-      const amount = String(args.ghostAmount ?? '0');
+      const provider = String(args.participant).toLowerCase();
+      const amount = String(args.amount ?? '0');
       await upsertReputation(provider, ctx, {
         totalEarnedDelta: amount,
       });
