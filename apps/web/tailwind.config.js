@@ -3,6 +3,12 @@ module.exports = {
   content: ['./src/**/*.{js,ts,jsx,tsx,mdx}'],
   theme: {
     extend: {
+      // Breakpoints: mobile 0-767, tablet 768-1023, desktop 1024+. `sm` is realigned to 768px so every
+      // existing `sm:` utility across the app (the codebase's de facto "wider than phone" breakpoint)
+      // lines up with the tablet boundary instead of Tailwind's default 640px.
+      screens: {
+        sm: '768px',
+      },
       colors: {
         ink: '#0A2540',
         teal: {

@@ -26,7 +26,7 @@ export function WalletStatus() {
   }, [sdk, account]);
 
   return (
-    <div className="ml-auto flex items-center gap-2">
+    <div className="flex items-center gap-2 flex-wrap">
       {account && (
         <span className="flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5">
           <span className="h-2 w-2 rounded-full bg-success shrink-0" title="Connected" />
@@ -41,20 +41,20 @@ export function WalletStatus() {
           if (!mounted) return null;
           if (!acc) {
             return (
-              <button onClick={() => setSignInOpen(true)} className="rounded-full bg-teal-500 px-3.5 py-1.5 text-sm font-semibold text-ink hover:bg-teal-400 transition">
+              <button onClick={() => setSignInOpen(true)} className="rounded-full bg-teal-500 px-3.5 py-1.5 min-h-[44px] text-sm font-semibold text-ink hover:bg-teal-400 transition">
                 Sign in
               </button>
             );
           }
           if (chain?.unsupported) {
             return (
-              <button onClick={openChainModal} className="rounded-full bg-danger px-3.5 py-1.5 text-sm font-medium text-white hover:bg-danger/80 transition">
+              <button onClick={openChainModal} className="rounded-full bg-danger px-3.5 py-1.5 min-h-[44px] text-sm font-medium text-white hover:bg-danger/80 transition">
                 Wrong network
               </button>
             );
           }
           return (
-            <button onClick={openAccountModal} className="rounded-full border border-white/10 bg-white/[0.04] px-3.5 py-1.5 text-sm font-medium text-white hover:bg-white/[0.08] transition">
+            <button onClick={openAccountModal} className="rounded-full border border-white/10 bg-white/[0.04] px-3.5 py-1.5 min-h-[44px] text-sm font-medium text-white hover:bg-white/[0.08] transition">
               {acc.displayName}
             </button>
           );

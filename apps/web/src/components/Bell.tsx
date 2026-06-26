@@ -39,7 +39,7 @@ export function Bell() {
     <div className="relative" ref={ref}>
       <button
         onClick={() => setOpen((v) => !v)}
-        className="relative p-2 rounded-full text-white/50 hover:bg-white/[0.06] hover:text-white transition"
+        className="relative flex h-11 w-11 items-center justify-center rounded-full text-white/50 hover:bg-white/[0.06] hover:text-white transition"
         aria-label="Notifications"
       >
         <BellIcon className="w-5 h-5" />

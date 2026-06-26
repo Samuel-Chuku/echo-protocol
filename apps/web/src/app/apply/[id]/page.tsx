@@ -1,8 +1,8 @@
 'use client';
 
-import { use, useEffect, useState, type ReactNode } from 'react';
+import { use, useCallback, useEffect, useState, type ReactNode } from 'react';
 import Link from 'next/link';
-import { ChevronLeft, ShieldCheck } from 'lucide-react';
+import { ChevronLeft, ShieldCheck, CheckCircle2 } from 'lucide-react';
 import { useQuery, gql } from 'urql';
 import { EchoMode, CONTRACTS } from '@echo/sdk';
 import { useEcho } from '@/lib/sdk';
@@ -113,7 +113,7 @@ export default function JobDetailPage({ params }: { params: Promise<{ id: string
 
           {m.mode === EchoMode.OpenMarket && tierSteps.length > 0 && (
             <Section title="Payout ladder" desc="What you earn as you advance through each round.">
-              <div className={`${CARD_CLASS} sm:col-span-2 py-6`}>
+              <div className={`${CARD_CLASS} sm:col-span-2 py-4 sm:py-6`}>
                 <TierTrack steps={tierSteps} />
               </div>
             </Section>
@@ -132,54 +132,85 @@ export default function JobDetailPage({ params }: { params: Promise<{ id: string
 function OpenApply({ sdk, account, agentId, marketId, closed }: { sdk: ReturnType<typeof useEcho>['sdk']; account?: `0x${string}`; agentId: string; marketId: bigint; closed: boolean }) {
   const [submission, setSubmission] = useState('my-application-v1');
   const [app, setApp] = useState<any>(null);
+  const [appLoading, setAppLoading] = useState(false);
   const [applyOpen, setApplyOpen] = useState(false);
   const [identityOpen, setIdentityOpen] = useState(false);
   const need = !account;
 
+  const loadApp = useCallback(async () => {
+    if (!account) return;
+    setAppLoading(true);
+    try {
+      setApp(await sdk.getApplication(marketId, account));
+    } finally {
+      setAppLoading(false);
+    }
+  }, [sdk, marketId, account]);
+
+  useEffect(() => { loadApp(); }, [loadApp]);
+
+  const applied = !!app && Number(app.appliedAt) > 0;
+
   return (
     <Section title="Apply" desc="Submit your application. The requester reveals, grades, and advances applicants through tiers.">
       <div className="sm:col-span-2 space-y-3">
-        <div className="rounded-xl border border-warning/20 bg-warning/[0.06] px-4 py-3 text-sm text-white/70">
-          <b className="font-semibold text-white">$5 stake required to apply.</b> It is held until you are revealed.
-          Withdraw before being revealed and the full stake is refunded. Get revealed and fail to deliver, and the
-          stake is forfeited to cover the requester&apos;s review cost.
-        </div>
-
-        <Card title="Apply to this market" hint="Mints a participation receipt; pulls the stake if the market requires one.">
-          <Field label="submission text → hash" value={submission} onChange={(e) => setSubmission(e.target.value)} />
-          {closed && <p className="text-xs text-warning">This market is no longer active.</p>}
-          {!account && <p className="text-xs text-warning">Connect a wallet to apply.</p>}
-          <div className="flex flex-wrap gap-2">
-            <Button
-              onClick={() => (agentId ? setApplyOpen(true) : setIdentityOpen(true))}
-              disabled={need || closed}
-            >
-              Apply — pay $5 stake
-            </Button>
-            <Command label="Load my application" tone="neutral" disabled={!account}
-              run={async () => { setApp(await sdk.getApplication(marketId, account!)); return 'loaded'; }} />
+        {applied ? (
+          <div className="rounded-xl border border-success/20 bg-success/[0.06] px-4 py-3 text-sm">
+            <span className="inline-flex items-center gap-1.5 font-semibold text-success">
+              <CheckCircle2 className="w-4 h-4" /> Stake paid
+            </span>
+            <span className="text-white/60"> held until you are revealed, refunded in full if you withdraw first.</span>
           </div>
-          {app && (
+        ) : (
+          <div className="rounded-xl border border-warning/20 bg-warning/[0.06] px-4 py-3 text-sm text-white/70">
+            <b className="font-semibold text-white">$5 stake required to apply.</b> It is held until you are revealed.
+            Withdraw before being revealed and the full stake is refunded. Get revealed and fail to deliver, and the
+            stake is forfeited to cover the requester&apos;s review cost.
+          </div>
+        )}
+
+        {applied ? (
+          <Card title="Your application">
+            <div className="flex items-center gap-2">
+              <CheckCircle2 className="w-5 h-5 text-success shrink-0" />
+              <span className="text-sm font-semibold text-white">Application submitted</span>
+            </div>
             <KV rows={[
-              ['tier reached', String(app.tierReached)],
-              ['agentId', String(app.agentId)],
-              ['receipt #', String(app.receiptTokenId)],
-              ['withdrawn', String(app.withdrawn)],
+              ['submission hash', short(app.submissionHash)],
+              ['tier status', TIER_NAMES[Number(app.tierReached)] ?? `Tier ${app.tierReached}`],
             ]} />
-          )}
-        </Card>
+            <Button variant="secondary" busy={appLoading} onClick={loadApp}>Load my application</Button>
+          </Card>
+        ) : (
+          <Card title="Apply to this market" hint="Mints a participation receipt; pulls the stake if the market requires one.">
+            <Field label="submission text → hash" value={submission} onChange={(e) => setSubmission(e.target.value)} />
+            {closed && <p className="text-xs text-warning">This market is no longer active.</p>}
+            {!account && <p className="text-xs text-warning">Connect a wallet to apply.</p>}
+            <div className="flex flex-wrap gap-2">
+              <Button
+                onClick={() => (agentId ? setApplyOpen(true) : setIdentityOpen(true))}
+                disabled={need || closed}
+              >
+                Apply, pay $5 stake
+              </Button>
+              <Command label="Load my application" tone="neutral" disabled={!account} onDone={() => loadApp()}
+                run={async () => { setApp(await sdk.getApplication(marketId, account!)); return 'loaded'; }} />
+            </div>
+          </Card>
+        )}
 
         {applyOpen && (
           <TxModal
             title="Apply to this market"
             description="This pulls your $5 USDC stake into the market escrow. It is refunded if you withdraw before being revealed."
-            confirmLabel="Apply — pay $5 stake"
+            confirmLabel="Apply, pay $5 stake"
             run={async () => {
               const stake = await sdk.marketStakeRequired(marketId).catch(() => 0n);
               if (stake > 0n) await sdk.ensureUsdcAllowance(C.marketRegistry, stake, account!);
               return sdk.applyToMarket(marketId, BigInt(agentId || '0'), scope(submission), account!);
             }}
             onClose={() => setApplyOpen(false)}
+            onDone={() => loadApp()}
           />
         )}
         {identityOpen && <RegisterIdentityModal onClose={() => setIdentityOpen(false)} onRegistered={() => { setIdentityOpen(false); setApplyOpen(true); }} />}

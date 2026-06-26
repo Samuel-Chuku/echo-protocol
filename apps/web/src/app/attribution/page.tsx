@@ -62,7 +62,7 @@ export default function AttributionPage() {
 
       <div className="grid gap-4 sm:grid-cols-2 mb-8">
         <Card title="Propose AR" hint="You become the originator, paid on each of the worker's settlements.">
-          <div className="grid grid-cols-2 gap-1">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-1">
             <Field label="worker agentId" value={workerAgentId} onChange={(e) => setWorker(e.target.value)} />
             <Field label="slice bps (≤ 5000)" value={sliceBps} onChange={(e) => setSlice(e.target.value)} />
           </div>
@@ -72,7 +72,7 @@ export default function AttributionPage() {
             <option value={CurveType.FlatPerpetual}>Flat perpetual</option>
             <option value={CurveType.VolumeCap}>Volume cap</option>
           </Select>
-          <div className="grid grid-cols-2 gap-1">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-1">
             <Field label="duration (days)" value={durationDays} onChange={(e) => setDuration(e.target.value)} />
             <Field label="volume cap USDC" value={volumeCap} onChange={(e) => setCap(e.target.value)} />
           </div>
@@ -84,17 +84,25 @@ export default function AttributionPage() {
               curve: Number(curve),
               durationSecs: Number(durationDays) * 86400,
               volumeCap: BigInt(Math.round(Number(volumeCap) * 1e6)),
-            }, account!)} />
+            }, account!)}
+            successText={async () => {
+              const count = await sdk.arCount().catch(() => null);
+              return count !== null ? `AR proposed successfully, AR #${count}` : 'AR proposed successfully';
+            }} />
         </Card>
 
         <Card title="Confirm or revoke AR" hint="Confirming must come from an independent requester who graded the worker (anti-sybil).">
-          <div className="grid grid-cols-2 gap-1">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-1">
             <Field label="AR id" value={arId} onChange={(e) => setArId(e.target.value)} />
             <Field label="confirming requester" value={confirmer} onChange={(e) => setConfirmer(e.target.value)} placeholder="0x…" />
           </div>
           <div className="flex flex-wrap gap-2">
-            <Command label="Confirm AR" disabled={!account || !confirmer} run={() => sdk.confirmAR(BigInt(arId), confirmer as `0x${string}`, account!)} />
-            <Command label="Revoke AR" tone="danger" disabled={!account} run={() => sdk.revokeAR(BigInt(arId), account!)} />
+            <Command label="Confirm AR" disabled={!account || !confirmer}
+              run={() => sdk.confirmAR(BigInt(arId), confirmer as `0x${string}`, account!)}
+              successText={() => `AR #${arId} confirmed successfully`} />
+            <Command label="Revoke AR" tone="danger" disabled={!account}
+              run={() => sdk.revokeAR(BigInt(arId), account!)}
+              successText={() => `AR #${arId} revoked successfully`} />
           </div>
         </Card>
       </div>

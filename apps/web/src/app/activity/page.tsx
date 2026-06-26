@@ -83,10 +83,10 @@ export default function ActivityPage() {
         <EmptyState icon={Inbox} title="Connect a wallet" desc="Connect a wallet to see your activity across markets and jobs." />
       ) : (
         <>
-          <div className="grid grid-cols-3 gap-3 mb-6">
-            <StatCard label="Active" value={pending.length} sub="needs attention" />
-            <StatCard label="Total earned" value={`$${totalEarned.toFixed(2)}`} sub="USDC, completed" />
-            <StatCard label="Completed" value={completed.length} sub="all time" />
+          <div className="flex gap-3 mb-6 overflow-x-auto sm:grid sm:grid-cols-3 -mx-6 px-6 sm:mx-0 sm:px-0">
+            <div className="min-w-[160px] shrink-0 sm:min-w-0 sm:shrink"><StatCard label="Active" value={pending.length} sub="needs attention" /></div>
+            <div className="min-w-[160px] shrink-0 sm:min-w-0 sm:shrink"><StatCard label="Total earned" value={`$${totalEarned.toFixed(2)}`} sub="USDC, completed" /></div>
+            <div className="min-w-[160px] shrink-0 sm:min-w-0 sm:shrink"><StatCard label="Completed" value={completed.length} sub="all time" /></div>
           </div>
 
           <div className="mb-4"><Tabs options={FILTERS} value={filter} onChange={setFilter} counts={counts} /></div>
@@ -96,14 +96,23 @@ export default function ActivityPage() {
           {!fetching && !error && all.length === 0 && (
             <EmptyState
               icon={Inbox}
-              title="Nothing here yet"
-              desc="Once you apply to a market or post a job, your activity will show up here."
+              title="No activity yet"
+              desc="Submit to a market or post a job to get started."
               action={
                 <div className="flex gap-2">
                   <Button href="/apply">Browse markets</Button>
                   <Button variant="secondary" href="/hire">Post a job</Button>
                 </div>
               }
+            />
+          )}
+
+          {!fetching && !error && all.length > 0 && filtered.length === 0 && (
+            <EmptyState
+              icon={Inbox}
+              title="No activity here"
+              desc={`Nothing in ${FILTERS.find((f) => f.value === filter)?.label.toLowerCase()} right now.`}
+              action={<Button variant="secondary" onClick={() => setFilter('ALL')}>View all activity</Button>}
             />
           )}
 
@@ -147,16 +156,17 @@ function ActivityGroup({
                     {r.marketId !== null && `#${r.marketId} `}{summarizeArgs(r.args)}
                   </span>
                 </span>
-                <span className="text-xs text-white/40 shrink-0">{timeAgo(r.createdAt, now)}</span>
+                <span className="text-xs text-white/40 shrink-0 sm:inline hidden">{timeAgo(r.createdAt, now)}</span>
               </>
             );
             return (
-              <li key={r.id} className="flex items-center gap-3 py-2.5">
+              <li key={r.id} className="flex flex-wrap items-center gap-3 py-2.5">
                 {href ? (
                   <Link href={href} className="flex items-center gap-3 flex-1 min-w-0 hover:opacity-80">{body}</Link>
                 ) : (
                   <span className="flex items-center gap-3 flex-1 min-w-0">{body}</span>
                 )}
+                <span className="text-xs text-white/40 shrink-0 sm:hidden basis-full pl-7">{timeAgo(r.createdAt, now)}</span>
                 <a href={txLink(r.txHash)} target="_blank" rel="noreferrer" className="text-white/20 hover:text-white shrink-0">
                   <ExternalLink className="w-3.5 h-3.5" />
                 </a>

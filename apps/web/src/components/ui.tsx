@@ -117,7 +117,7 @@ type ButtonProps = {
 
 /** Primary/secondary/danger button, optionally rendered as a Link when `href` is given. */
 export function Button({ variant = 'primary', href, busy, children, className = '', disabled, ...props }: ButtonProps) {
-  const cls = `inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm transition disabled:opacity-40 disabled:cursor-not-allowed ${BUTTON_VARIANTS[variant]} ${className}`;
+  const cls = `inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2.5 min-h-[44px] text-sm transition disabled:opacity-40 disabled:cursor-not-allowed ${BUTTON_VARIANTS[variant]} ${className}`;
   if (href) {
     return (
       <Link href={href} className={cls}>
@@ -179,14 +179,14 @@ export function Tabs<T extends string>({
   counts?: Record<string, number>;
 }) {
   return (
-    <div className="flex flex-wrap gap-1">
+    <div className="flex gap-1 overflow-x-auto -mx-1 px-1 sm:flex-wrap sm:overflow-visible sm:mx-0 sm:px-0">
       {options.map((o) => {
         const active = o.value === value;
         return (
           <button
             key={o.value}
             onClick={() => onChange(o.value)}
-            className={`px-3 py-1.5 text-sm rounded-full transition font-medium ${
+            className={`px-3 py-1.5 min-h-[44px] text-sm rounded-full transition font-medium shrink-0 ${
               active ? 'bg-teal-500 text-ink' : 'text-white/50 hover:bg-white/[0.06] hover:text-white'
             }`}
           >
@@ -217,7 +217,7 @@ export function ProgressSteps({ steps, current }: { steps: string[]; current: nu
             >
               {i + 1}
             </span>
-            <span className={`text-sm font-medium ${active ? 'text-white' : 'text-white/40'}`}>{label}</span>
+            <span className={`hidden sm:inline text-sm font-medium ${active ? 'text-white' : 'text-white/40'}`}>{label}</span>
             {i < steps.length - 1 && <span className="h-px flex-1 bg-white/10" />}
           </li>
         );

@@ -22,28 +22,31 @@ export function Command({
   tone = 'primary',
   disabled,
   onDone,
+  successText,
 }: {
   label: string;
   run: () => Promise<unknown>;
   tone?: Tone;
   disabled?: boolean;
-  /** Called after a successful run — use it to refresh adjacent read panels. */
+  /** Called after a successful run, use it to refresh adjacent read panels. */
   onDone?: (result: unknown) => void;
+  /** Optional custom success message (e.g. "AR proposed successfully, AR #3") in place of the raw tx hash. */
+  successText?: (result: unknown) => Promise<string> | string;
 }) {
   const [busy, setBusy] = useState(false);
-  const [result, setResult] = useState<{ ok: boolean; msg: string } | null>(null);
+  const [result, setResult] = useState<{ ok: boolean; raw: unknown; msg: string } | null>(null);
 
   async function onClick() {
     setBusy(true);
     setResult(null);
     try {
       const r = await run();
-      const msg = isTxHash(r) ? (r as string) : 'done';
-      setResult({ ok: true, msg });
+      const msg = successText ? await successText(r) : isTxHash(r) ? (r as string) : 'done';
+      setResult({ ok: true, raw: r, msg });
       onDone?.(r);
     } catch (e: unknown) {
       const err = e as { shortMessage?: string; details?: string; message?: string };
-      setResult({ ok: false, msg: err.shortMessage || err.details || err.message || String(e) });
+      setResult({ ok: false, raw: null, msg: err.shortMessage || err.details || err.message || String(e) });
     } finally {
       setBusy(false);
     }
@@ -54,21 +57,35 @@ export function Command({
       <button
         onClick={onClick}
         disabled={busy || disabled}
-        className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md transition disabled:opacity-40 disabled:cursor-not-allowed ${TONES[tone]}`}
+        className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md transition disabled:opacity-40 disabled:cursor-not-allowed min-h-[44px] ${TONES[tone]}`}
       >
         {busy && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
         {label}
       </button>
-      {result && (
-        <div className={`text-xs flex items-start gap-1 ${result.ok ? 'text-success' : 'text-danger'}`}>
-          {result.ok ? <Check className="w-3.5 h-3.5 shrink-0 mt-0.5" /> : <X className="w-3.5 h-3.5 shrink-0 mt-0.5" />}
+      {result && result.ok && (
+        <div className="text-xs flex items-start gap-1 text-success">
+          <Check className="w-3.5 h-3.5 shrink-0 mt-0.5" />
           {isTxHash(result.msg) ? (
             <a href={txLink(result.msg)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 underline break-all">
               {result.msg.slice(0, 10)}…{result.msg.slice(-8)} <ExternalLink className="w-3 h-3" />
             </a>
           ) : (
-            <span className="break-all">{result.msg}</span>
+            <span className="break-all">
+              {result.msg}
+              {isTxHash(result.raw) && (
+                <a href={txLink(result.raw as string)} target="_blank" rel="noreferrer" className="ml-1.5 inline-flex items-center gap-1 underline">
+                  view tx <ExternalLink className="w-3 h-3" />
+                </a>
+              )}
+            </span>
           )}
+        </div>
+      )}
+      {result && !result.ok && (
+        <div className="text-xs flex items-start gap-1 text-danger">
+          <X className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+          <span className="break-all">{result.msg}</span>
+          <button onClick={onClick} className="underline shrink-0 hover:text-danger/80">Retry</button>
         </div>
       )}
     </div>

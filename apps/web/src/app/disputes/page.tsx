@@ -54,7 +54,7 @@ export default function DisputesPage() {
 
       <Section title="Open a dispute">
         <Card title="Open finding dispute" hint="openFindingDispute — submitter contests a REJECTED bounty finding.">
-          <div className="grid grid-cols-3 gap-1">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-1">
             <Field label="marketId" value={marketId} onChange={(e) => setMarketId(e.target.value)} />
             <Field label="finding idx" value={findingIndex} onChange={(e) => setFindingIndex(e.target.value)} />
             <Field label="bond USDC" value={bond} onChange={(e) => setBond(e.target.value)} />

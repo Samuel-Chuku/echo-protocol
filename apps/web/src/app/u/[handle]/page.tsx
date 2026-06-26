@@ -89,16 +89,18 @@ export default function ProfilePage({ params }: { params: Promise<{ handle: stri
     URL.revokeObjectURL(url);
   }
 
+  const isNewUser = !agentId && markets.length === 0 && apps.length === 0;
+
   return (
     <div>
-      <div className="flex items-start gap-4 mb-6">
+      <div className="flex flex-col items-center text-center gap-4 mb-6 sm:flex-row sm:items-start sm:text-left">
         <span
           className="h-16 w-16 rounded-full border border-white/10 shrink-0 flex items-center justify-center text-lg font-bold text-white/90"
           style={{ background: `linear-gradient(135deg, hsl(${hue} 75% 55%), hsl(${(hue + 70) % 360} 75% 45%))` }}
         >
           {address.slice(2, 4).toUpperCase()}
         </span>
-        <div className="flex-1 min-w-0">
+        <div className="flex-1 min-w-0 flex flex-col items-center sm:items-start">
           <div className="flex items-center gap-2">
             <h1 className="text-xl font-bold text-white font-mono truncate">{short(address)}</h1>
             <a href={addrLink(address)} target="_blank" rel="noreferrer" className="text-white/30 hover:text-white"><ExternalLink className="w-4 h-4" /></a>
@@ -111,13 +113,13 @@ export default function ProfilePage({ params }: { params: Promise<{ handle: stri
             <Badge tone="neutral">Arc Testnet</Badge>
           </div>
         </div>
-        <div className="flex flex-col gap-2 shrink-0">
+        <div className="flex flex-row gap-2 shrink-0 sm:flex-col">
           <Button variant="secondary" onClick={shareProfile}><Share2 className="w-3.5 h-3.5" /> {shared ? 'Copied!' : 'Share profile'}</Button>
           <Button variant="secondary" onClick={exportData}><Download className="w-3.5 h-3.5" /> Export data</Button>
         </div>
       </div>
 
-      <div className="grid grid-cols-3 gap-3 mb-6">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-6">
         <StatCard label="Total earned" value={`$${totalEarned.toFixed(2)}`} sub="USDC, completed" />
         <StatCard label="Applications" value={apps.length} />
         <StatCard label="Markets created" value={markets.length} />
@@ -127,14 +129,24 @@ export default function ProfilePage({ params }: { params: Promise<{ handle: stri
         <h2 className="text-lg font-bold text-white">Reputation</h2>
         <p className="text-sm text-white/50 mt-0.5 mb-3">Score, breakdown, and badges land once on-chain reputation scoring ships.</p>
         <div className={CARD_CLASS}>
-          <EmptyState
-            icon={Award}
-            title="Reputation scoring coming soon"
-            desc="Echo will compute a 0-1000 score from on-chain history once scoring goes live. For now, the activity below is the real record."
-          />
-          <div className="mt-2 flex items-center justify-center gap-2 text-white/20">
+          {isNewUser ? (
+            <div className="flex flex-col items-center text-center py-6 px-4">
+              <div className="h-28 w-28 rounded-full border-4 border-teal-500/30 flex items-center justify-center">
+                <span className="text-lg font-bold text-white">0<span className="text-white/30 text-sm font-normal"> / 1000</span></span>
+              </div>
+              <h3 className="mt-4 text-base font-semibold text-white">Start building your reputation</h3>
+              <p className="mt-1 text-sm text-white/50 max-w-sm">Complete your first market to earn points.</p>
+            </div>
+          ) : (
+            <EmptyState
+              icon={Award}
+              title="Reputation scoring coming soon"
+              desc="Echo will compute a 0-1000 score from on-chain history once scoring goes live. For now, the activity below is the real record."
+            />
+          )}
+          <div className="mt-2 grid grid-cols-2 sm:grid-cols-4 gap-2 justify-items-center max-w-xs mx-auto sm:max-w-none">
             {Array.from({ length: 4 }).map((_, i) => (
-              <span key={i} className="flex h-9 w-9 items-center justify-center rounded-full border border-white/10">
+              <span key={i} className="flex h-9 w-9 items-center justify-center rounded-full border border-white/10 text-white/20">
                 <Lock className="w-4 h-4" />
               </span>
             ))}
@@ -145,6 +157,21 @@ export default function ProfilePage({ params }: { params: Promise<{ handle: stri
       {fetching && !data && <p className="text-sm text-white/40">Loading…</p>}
       {error && <p className="text-sm text-danger break-all">{error.message} — is the indexer running on :4000?</p>}
 
+      {isNewUser ? (
+        <section className="mb-8">
+          <h2 className="text-lg font-bold text-white">History</h2>
+          <p className="text-sm text-white/50 mt-0.5 mb-3">Markets created and applications submitted by this address.</p>
+          <div className={CARD_CLASS}>
+            <EmptyState
+              icon={Award}
+              title="Your on-chain history will appear here"
+              desc="Browse open markets to get started."
+              action={<Button href="/apply">Browse markets</Button>}
+            />
+          </div>
+        </section>
+      ) : (
+      <>
       <section className="mb-8">
         <h2 className="text-lg font-bold text-white">As requester</h2>
         <p className="text-sm text-white/50 mt-0.5 mb-3">Markets this address created.</p>
@@ -189,6 +216,8 @@ export default function ProfilePage({ params }: { params: Promise<{ handle: stri
           )}
         </div>
       </section>
+      </>
+      )}
 
       <section>
         <h2 className="text-lg font-bold text-white">Recent activity</h2>
