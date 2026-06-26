@@ -72,6 +72,11 @@ export default function ManageMarketPage({ params }: { params: Promise<{ id: str
 
   const marketId = () => BigInt(id || '0');
 
+  // Requester-only actions (Close market, grading, ghost) revert for anyone else on-chain, so we
+  // hide them from non-requesters (e.g. a worker viewing their own market page).
+  const isRequester =
+    !!account && !!data?.market?.requester && account.toLowerCase() === data.market.requester.toLowerCase();
+
   // Single source of truth for marketActivity rows — used by both the Timeline AND the per-applicant
   // payout rollup (so we only hit the indexer once per refresh).
   const [{ data: actData, fetching: actFetching }, refetchActivity] = useQuery<{ marketActivity: ActivityRow[] }>({
@@ -224,9 +229,11 @@ export default function ManageMarketPage({ params }: { params: Promise<{ id: str
                   ))}
                 </ul>
               )}
-              <div className="pt-2 border-t border-gray-100 mt-2">
-                <Command label="Close market" tone="neutral" disabled={!account} onDone={load} run={() => sdk.closeMarket(marketId(), account!)} />
-              </div>
+              {isRequester && (
+                <div className="pt-2 border-t border-gray-100 mt-2">
+                  <Command label="Close market" tone="neutral" disabled={!account} onDone={load} run={() => sdk.closeMarket(marketId(), account!)} />
+                </div>
+              )}
             </Card>
 
             <Card title="What do these actions mean?">
@@ -473,7 +480,7 @@ function ApplicantRow({
           {TIER_LABELS[tier] ?? `tier ${tier}`}
         </span>
         <div className="flex flex-wrap gap-1.5 ml-auto">
-          {advance && (
+          {advance && isRequester && (
             <Command label={advance.label} disabled={!ready} onDone={onDone} run={advance.run} />
           )}
           {stakeReady.show && (
@@ -494,11 +501,12 @@ function ApplicantRow({
               </span>
             )
           )}
-          {tier === 3 && (() => {
+          {tier === 3 && isRequester && (() => {
             // Arc JobStatus: 0 Open · 1 Funded · 2 Submitted · 3 Completed · 4 Rejected · 5 Expired.
             // EchoHook.triggerGhost now branches on this: Open → worker no-show (no payout, slash
             // worker), Submitted → requester ghost (pay worker, slash you). The button label
-            // reflects which path will fire so the requester isn't surprised.
+            // reflects which path will fire so the requester isn't surprised. Requester-only:
+            // triggerGhost reverts NotRequester for anyone else, so don't show it to the worker.
             const label = finalJobStatus === 0
               ? 'Mark worker abandoned'
               : finalJobStatus === 2 ? 'Trigger ghost (pay worker, slash you)' : 'Trigger ghost';

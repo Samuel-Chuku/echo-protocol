@@ -104,8 +104,12 @@ export const resolvers = {
         const isRequester = viewer === m.requester.toLowerCase();
         if (!isParticipant && !isRequester) throw new Error('Forbidden');
         if (isRequester) {
+          // `key` is lowercased above, but applications.id is built from the checksummed
+          // participant address in the Applied reducer — match on lower(participant) so the
+          // reveal gate doesn't false-negative on address casing.
           const [app] = await db.select().from(applications)
-            .where(eq(applications.id, `${a.marketId}-${key}`)).limit(1);
+            .where(and(eq(applications.marketId, a.marketId), eq(sql`lower(${applications.participant})`, key)))
+            .limit(1);
           if (!app || app.tierReached < 1) throw new Error('Reveal required');
         }
       } else if (a.kind === 'deliver') {

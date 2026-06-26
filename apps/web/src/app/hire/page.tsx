@@ -152,7 +152,16 @@ function OpenForm({ sdk, account, agentId, disabled, onCreated }: FormProps) {
   const [flagUnit, setFlagUnit] = useState<DurationUnit>('days');
   const [requiredProofs, setProofs] = useState('0');
   const [createdTx, setCreatedTx] = useState<string | null>(null);
-  const reset = () => { setSubject(''); setDesc(''); setEscrowDirty(false); setCreatedTx(null); };
+  // Restore every field to its default so a fresh create doesn't inherit the last market's values.
+  const resetFields = () => {
+    setSubject(''); setDesc('');
+    setTiers(['5', '50', '250', '1000']);
+    setEscrowDirty(false); setMax('50');
+    setGhostAmount('7'); setGhostUnit('days');
+    setStake('10'); setFlagAmount('2'); setFlagUnit('days');
+    setProofs('0');
+  };
+  const reset = () => { resetFields(); setCreatedTx(null); };
 
   // #7 — mirror the contract's min-escrow so the field pre-fills to a value that can't revert with
   // InsufficientEscrow. Returns undefined if any input isn't yet a valid number.
@@ -239,7 +248,7 @@ function OpenForm({ sdk, account, agentId, disabled, onCreated }: FormProps) {
             flagWindow: BigInt(toSeconds(flagAmount, flagUnit)),
           },
         }, account!)}
-        onDone={(r) => { setCreatedTx(isTxHash(r) ? (r as string) : 'done'); setSubject(''); setDesc(''); onCreated(); }}
+        onDone={(r) => { setCreatedTx(isTxHash(r) ? (r as string) : 'done'); resetFields(); onCreated(); }}
       />
       <CreatedBanner txHash={createdTx} onReset={reset} />
     </Card>
