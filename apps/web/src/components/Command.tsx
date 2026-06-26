@@ -8,9 +8,9 @@ import { useTx } from '@/lib/tx';
 
 type Tone = 'primary' | 'neutral' | 'danger';
 const TONES: Record<Tone, string> = {
-  primary: 'bg-gray-900 text-white hover:bg-gray-700',
-  neutral: 'bg-gray-100 text-gray-800 hover:bg-gray-200',
-  danger: 'bg-red-600 text-white hover:bg-red-500',
+  primary: 'bg-teal-500 text-ink font-semibold hover:bg-teal-400',
+  neutral: 'bg-transparent border border-white/20 text-white hover:border-white/40',
+  danger: 'bg-danger/10 border border-danger/30 text-danger hover:bg-danger/20',
 };
 
 /**
@@ -65,26 +65,26 @@ export function Command({
         {label}
       </button>
       {result?.ok && (
-        <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm flex items-start gap-2">
-          <Check className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+        <div className="rounded-md border border-success/20 bg-success/10 px-3 py-2 text-sm flex items-start gap-2">
+          <Check className="w-4 h-4 text-success shrink-0 mt-0.5" />
           <div className="flex-1 min-w-0">
-            <p className="text-emerald-800 font-medium">{isWrite ? 'Transaction confirmed' : 'Done'}</p>
+            <p className="text-success font-medium">{isWrite ? 'Transaction confirmed' : 'Done'}</p>
             {isTxHash(result.msg) ? (
-              <a href={txLink(result.msg)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs text-emerald-700 underline mt-0.5 break-all">
-                Tx: <span className="font-mono">{result.msg.slice(0, 10)}…{result.msg.slice(-8)}</span> <ExternalLink className="w-3 h-3" />
+              <a href={txLink(result.msg)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs text-success/70 underline mt-0.5 break-all">
+                Tx: <span className="font-mono">{result.msg.slice(0, 10)}...{result.msg.slice(-8)}</span> <ExternalLink className="w-3 h-3" />
               </a>
             ) : (
-              <p className="text-xs text-emerald-700 mt-0.5">Action complete.</p>
+              <p className="text-xs text-success/70 mt-0.5">Action complete.</p>
             )}
           </div>
         </div>
       )}
       {result && !result.ok && (
-        <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm flex items-start gap-2">
-          <X className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+        <div className="rounded-md border border-danger/20 bg-danger/10 px-3 py-2 text-sm flex items-start gap-2">
+          <X className="w-4 h-4 text-danger shrink-0 mt-0.5" />
           <div className="flex-1 min-w-0">
-            <p className="text-red-800 font-medium">Transaction failed</p>
-            <p className="text-xs text-red-700 mt-0.5 break-all">{result.msg}</p>
+            <p className="text-danger font-medium">Transaction failed</p>
+            <p className="text-xs text-danger/70 mt-0.5 break-all">{result.msg}</p>
           </div>
         </div>
       )}

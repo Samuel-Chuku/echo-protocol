@@ -2,40 +2,37 @@
 
 import { use, useCallback, useEffect, useState, type ReactNode } from 'react';
 import Link from 'next/link';
+import { ChevronLeft, ShieldCheck } from 'lucide-react';
 import { useQuery, useClient, gql } from 'urql';
 import { EchoMode, CONTRACTS } from '@echo/sdk';
 import { useEcho } from '@/lib/sdk';
 import { useAgent } from '@/lib/agent';
 import { useContent } from '@/lib/content';
 import { ACTIVITY_QUERY, type ActivityRow } from '@/lib/activity';
-import { Section, Card, Field, KV } from '@/components/ui';
+import { Section, Card, Field, KV, Badge, Button, CARD_CLASS, TierTrack, type TierStep } from '@/components/ui';
 import { Command } from '@/components/Command';
 import { Receipt } from '@/components/Receipt';
+import { TxModal } from '@/components/TxModal';
+import { RegisterIdentityModal } from '@/components/RegisterIdentityModal';
 import { IdentityBanner } from '@/components/IdentityBanner';
-import { usdc, scope, short, modeName, modeTagClass, isZeroAddr, txLink, toUnits, MILESTONE_STATUS } from '@/lib/format';
+import { usdc, scope, short, modeName, modeBadgeTone, isZeroAddr, txLink, toUnits, MILESTONE_STATUS } from '@/lib/format';
 
-// Worker-recourse: an open/resolved tier-rejection dispute for a given job, read from the indexer.
-// subject 2 = TierJobRejection; target = the Arc jobId.
 const TIER_DISPUTES_QUERY = gql`
   query TierDisputes {
     disputes { id subject target opener counter status forOpener against }
   }
 `;
 
-// Arc AgenticCommerce JobStatus enum (IERC8183.sol:23-30). Drives the per-tier-job UI gates:
-// Open → worker submits, Funded → (Echo skips, budget==0), Submitted → requester accepts, Completed → paid.
 const JOB_STATUS = ['Open', 'Funded', 'Submitted', 'Completed', 'Rejected', 'Expired'];
 const JOB_STATUS_CLASS = [
-  'bg-sky-50 text-sky-700 border-sky-200',
-  'bg-sky-50 text-sky-700 border-sky-200',
-  'bg-amber-50 text-amber-700 border-amber-200',
-  'bg-emerald-50 text-emerald-700 border-emerald-200',
-  'bg-red-50 text-red-700 border-red-200',
-  'bg-gray-100 text-gray-600 border-gray-200',
+  'bg-sky-500/10 text-sky-400 border-sky-500/20',
+  'bg-sky-500/10 text-sky-400 border-sky-500/20',
+  'bg-warning/10 text-warning border-warning/20',
+  'bg-success/10 text-success border-success/20',
+  'bg-danger/10 text-danger border-danger/20',
+  'bg-white/[0.06] text-white/40 border-white/10',
 ];
 
-// EchoHook.Tier enum (EchoHook.sol:38-46) — Substantive/Shortlist/Final are the three Open-mode tiers
-// that get an Arc job. (Ghost/Milestone/Finding are bookkeeping only, never appear in tierJobIds.)
 const HOOK_TIER_LABELS: Record<number, string> = {
   0: 'Submitted', 1: 'Substantive', 2: 'Shortlist', 3: 'Final',
   4: 'Ghost', 5: 'Milestone', 6: 'Finding',
@@ -66,18 +63,20 @@ type MarketDetail = {
   defaultAward: string | null; pool: string | null; applicantCount: number; reviewWindow: number | null;
 };
 
-const u = (s: string | null | undefined) => (s ? usdc(BigInt(s)) : '—');
+const u = (s: string | null | undefined) => (s ? `$${usdc(BigInt(s))}` : '—');
+const STATUS_TONE = { active: 'success', closed: 'neutral', cancelled: 'danger' } as const;
 
 /** Mode-specific terms rows for the KV panel. */
-function termsRows(m: MarketDetail): [string, ReactNode][] {
+function termsRows(m: MarketDetail, ghostDays: number | null): [string, ReactNode][] {
   const rows: [string, ReactNode][] = [
-    ['status', m.status],
+    ['status', <Badge key="s" tone={STATUS_TONE[m.status as keyof typeof STATUS_TONE] ?? 'neutral'}>{m.status}</Badge>],
     ['requester', <Link key="req" href={`/u/${m.requester}`} className="hover:underline">{short(m.requester)}</Link>],
   ];
   if (m.mode === EchoMode.OpenMarket) {
     rows.push(['escrow', u(m.escrowTotal)]);
-    rows.push(['reveal fee R', m.revealFee && m.revealFee !== '0' ? u(m.revealFee) : '—']);
+    rows.push(['reveal fee', m.revealFee && m.revealFee !== '0' ? u(m.revealFee) : '—']);
     rows.push(['applicants', String(m.applicantCount)]);
+    rows.push(['ghost deadline', ghostDays !== null ? `${ghostDays}d after final round` : '—']);
   } else if (m.mode === EchoMode.DirectJob) {
     rows.push(['worker', isZeroAddr(m.worker ?? undefined) ? '—' : short(m.worker ?? undefined)]);
     rows.push(['escrow', u(m.escrowTotal)]);
@@ -88,48 +87,60 @@ function termsRows(m: MarketDetail): [string, ReactNode][] {
   return rows;
 }
 
+const TIER_NAMES = ['Reveal', 'Shortlist', 'Final', 'Ghost'];
+
 export default function JobDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const { sdk, account } = useEcho();
   const { agentId } = useAgent();
+  const [ghostDeadline, setGhostDeadline] = useState<bigint | null>(null);
 
   const [{ data, fetching, error }] = useQuery<{ market: MarketDetail | null }>({ query: MARKET, variables: { id: Number(id) } });
   const m = data?.market ?? null;
 
+  useEffect(() => {
+    if (!m || m.mode !== EchoMode.OpenMarket) return;
+    sdk.getMarket(BigInt(id)).then((mk: any) => setGhostDeadline(mk.ghostDeadline ?? null)).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, m?.mode]);
+
+  const tiers = (m?.tiers ?? []).filter((t) => t && t !== '0');
+  const tierSteps: TierStep[] = tiers.map((t, i) => ({ label: TIER_NAMES[i] ?? `Tier ${i + 1}`, amount: usdc(BigInt(t)) }));
+
   return (
     <div>
-      <Link href="/apply" className="text-xs text-gray-500 hover:text-gray-900">← Find work</Link>
-      <div className="flex items-center gap-3 mt-1 mb-1">
-        <h1 className="text-2xl font-bold">{m?.subject || `Market #${id}`}</h1>
-        {m && <span className={`rounded px-2 py-0.5 text-xs font-medium ${modeTagClass(m.mode)}`}>{modeName(m.mode)}</span>}
+      <Link href="/apply" className="inline-flex items-center gap-1 text-xs text-white/40 hover:text-white transition">
+        <ChevronLeft className="w-3.5 h-3.5" /> Find work
+      </Link>
+      <div className="flex items-center gap-3 mt-2 mb-1">
+        <h1 className="text-2xl font-bold text-white">{m?.subject || `Market #${id}`}</h1>
+        {m && <Badge tone={modeBadgeTone(m.mode)}>{modeName(m.mode)}</Badge>}
+        {m && <Badge tone={STATUS_TONE[m.status as keyof typeof STATUS_TONE] ?? 'neutral'}>{m.status}</Badge>}
       </div>
 
       <div className="mt-4"><IdentityBanner /></div>
 
-      {/* /apply/[id] is the public worker-facing view; when the connected wallet owns this market we
-       *  surface a banner that links to /hire/[id] (the management view). We DON'T auto-redirect —
-       *  the requester might legitimately want to preview their market the way applicants see it. */}
       {m && account && account.toLowerCase() === m.requester.toLowerCase() && (
-        <div className="mt-3 rounded-md border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm flex items-center gap-2">
-          <span className="text-indigo-900">You created this market — you&apos;re viewing the applicant page.</span>
-          <Link href={`/hire/${id}`} className="ml-auto inline-flex items-center gap-1 text-indigo-700 font-medium underline">
-            Manage instead →
+        <div className="mt-3 rounded-md border border-teal-500/20 bg-teal-500/10 px-3 py-2 text-sm flex items-center gap-2">
+          <span className="text-teal-300">You created this market — you&apos;re viewing the applicant page.</span>
+          <Link href={`/hire/${id}`} className="ml-auto inline-flex items-center gap-1 text-teal-400 font-medium underline">
+            Manage instead
           </Link>
         </div>
       )}
 
-      {fetching && !m && <p className="text-sm text-gray-400">Loading…</p>}
-      {error && <p className="text-sm text-red-600 break-all">{error.message} — is the indexer running on :4000?</p>}
-      {!fetching && !error && !m && <p className="text-sm text-gray-400">No market #{id} in the indexer.</p>}
+      {fetching && !m && <p className="text-sm text-white/40">Loading...</p>}
+      {error && <p className="text-sm text-danger break-all">{error.message} — is the indexer running on :4000?</p>}
+      {!fetching && !error && !m && <p className="text-sm text-white/40">No market #{id} in the indexer.</p>}
 
       {m && (
         <>
           <Section title="Details" desc="Terms for this job, from the indexer.">
             <Card title="About">
-              <p className="text-sm text-gray-700 whitespace-pre-wrap">{m.description || <span className="text-gray-400 italic">No description provided.</span>}</p>
+              <p className="text-sm text-white/70 whitespace-pre-wrap">{m.description || <span className="text-white/30 italic">No description provided.</span>}</p>
             </Card>
             <Card title="Terms">
-              <KV rows={termsRows(m)} />
+              <KV rows={termsRows(m, ghostDeadline !== null ? Number(ghostDeadline) / 86400 : null)} />
             </Card>
             <div className="sm:col-span-2">
               <Receipt
@@ -144,6 +155,14 @@ export default function JobDetailPage({ params }: { params: Promise<{ id: string
             </div>
           </Section>
 
+          {m.mode === EchoMode.OpenMarket && tierSteps.length > 0 && (
+            <Section title="Payout ladder" desc="What you earn as you advance through each round.">
+              <div className={`${CARD_CLASS} sm:col-span-2 py-6`}>
+                <TierTrack steps={tierSteps} />
+              </div>
+            </Section>
+          )}
+
           {m.mode === EchoMode.OpenMarket && <OpenApply sdk={sdk} account={account} agentId={agentId} marketId={BigInt(id)} closed={m.status !== 'active'} />}
           {m.mode === EchoMode.DirectJob && <DirectDeliver sdk={sdk} account={account} marketId={BigInt(id)} worker={m.worker} />}
           {m.mode === EchoMode.Bounty && <BountyDeliver sdk={sdk} account={account} agentId={agentId} marketId={BigInt(id)} closed={m.status !== 'active'} />}
@@ -154,7 +173,7 @@ export default function JobDetailPage({ params }: { params: Promise<{ id: string
 }
 
 /* ──────────────── Open/Reveal: apply ──────────────── */
-const TIER_NAMES = ['Applied', 'Revealed', 'Shortlist', 'Final'];
+const TIER_STATUS_NAMES = ['Applied', 'Revealed', 'Shortlist', 'Final'];
 
 function OpenApply({ sdk, account, agentId, marketId, closed }: { sdk: ReturnType<typeof useEcho>['sdk']; account?: `0x${string}`; agentId: string; marketId: bigint; closed: boolean }) {
   const [submission, setSubmission] = useState('');
@@ -229,7 +248,7 @@ function OpenApply({ sdk, account, agentId, marketId, closed }: { sdk: ReturnTyp
                 You&apos;ve already applied. The requester reveals to read your application, then grades you through the tiers below.
               </p>
               <KV rows={[
-                ['tier reached', TIER_NAMES[Number(app.tierReached)] ?? String(app.tierReached)],
+                ['tier reached', TIER_STATUS_NAMES[Number(app.tierReached)] ?? String(app.tierReached)],
                 ['agentId', String(app.agentId)],
                 ['receipt #', String(app.receiptTokenId)],
                 ['withdrawn', String(app.withdrawn)],
@@ -582,7 +601,8 @@ function DirectDeliver({ sdk, account, marketId, worker }: { sdk: ReturnType<typ
     return (
       <Section title="Deliver" desc="Milestone submission is restricted to the assigned worker.">
         <Card title="Assigned worker only">
-          <p className="text-sm text-gray-500">
+          <p className="text-sm text-white/50 flex items-start gap-2">
+            <ShieldCheck className="w-4 h-4 shrink-0 mt-0.5 text-white/30" />
             This direct job is assigned to {isZeroAddr(worker ?? undefined) ? 'an unset address' : short(worker ?? undefined)}.
             {account ? ' Your connected wallet is not the worker.' : ' Connect the worker wallet to submit milestones.'}
           </p>
@@ -593,7 +613,7 @@ function DirectDeliver({ sdk, account, marketId, worker }: { sdk: ReturnType<typ
 
   return (
     <Section title="Deliver milestones" desc="You are the assigned worker. Submit each milestone; the requester accepts (or it auto-releases after the review window).">
-      <Card title="Submit milestone" hint="submitMilestone — index is the milestone slot.">
+      <Card title="Submit milestone" hint="Index is the milestone slot.">
         <div className="grid grid-cols-2 gap-1">
           <Field label="index" value={idx} onChange={(e) => setIdx(e.target.value)} />
           <Field label="deliverable text → hash" value={deliver} onChange={(e) => setDeliver(e.target.value)} />
@@ -602,7 +622,7 @@ function DirectDeliver({ sdk, account, marketId, worker }: { sdk: ReturnType<typ
           onDone={() => { setDeliver(''); load(); }}
           run={() => sdk.submitMilestone(marketId, BigInt(idx), scope(deliver), account!)} />
         {milestones.length > 0 && (
-          <KV rows={milestones.map((ms: any, i: number) => [`#${i} ${usdc(ms.amount)}`, MILESTONE_STATUS[Number(ms.status)] ?? String(ms.status)])} />
+          <KV rows={milestones.map((ms: any, i: number) => [`#${i} $${usdc(ms.amount)}`, MILESTONE_STATUS[Number(ms.status)] ?? String(ms.status)])} />
         )}
       </Card>
     </Section>
@@ -616,10 +636,10 @@ function BountyDeliver({ sdk, account, agentId, marketId, closed }: { sdk: Retur
 
   return (
     <Section title="Submit a finding" desc="Bounties take open submissions. Each accepted finding is paid from the pool.">
-      <Card title="Submit finding" hint="submitFinding — appends a finding; the requester accepts (≥ default award), rejects, or it auto-escalates.">
+      <Card title="Submit finding" hint="Appends a finding; the requester accepts, rejects, or it auto-escalates.">
         <Field label="finding text → hash" value={deliver} onChange={(e) => setDeliver(e.target.value)} />
-        {closed && <p className="text-xs text-amber-600">This bounty is closed.</p>}
-        {need && <p className="text-xs text-amber-600">Register your identity (banner above) first.</p>}
+        {closed && <p className="text-xs text-warning">This bounty is closed.</p>}
+        {need && <p className="text-xs text-warning">Register your identity (banner above) first.</p>}
         <Command label="Submit finding" disabled={need || closed}
           onDone={() => setDeliver('')}
           run={() => sdk.submitFinding(marketId, BigInt(agentId || '0'), scope(deliver), account!)} />
