@@ -27,8 +27,8 @@ importers:
         specifier: workspace:*
         version: link:../../packages/types
       better-sqlite3:
-        specifier: ^11.0.0
-        version: 11.10.0
+        specifier: ^12.0.0
+        version: 12.11.1
       cors:
         specifier: ^2.8.5
         version: 2.8.6
@@ -37,7 +37,7 @@ importers:
         version: 16.6.1
       drizzle-orm:
         specifier: ^0.30.0
-        version: 0.30.10(@types/better-sqlite3@7.6.13)(@types/react@19.2.17)(better-sqlite3@11.10.0)(postgres@3.4.9)(react@19.2.7)
+        version: 0.30.10(@types/better-sqlite3@7.6.13)(@types/react@19.2.17)(better-sqlite3@12.11.1)(postgres@3.4.9)(react@19.2.7)
       express:
         specifier: ^4.18.0
         version: 4.22.2
@@ -2610,8 +2610,9 @@ packages:
     engines: {node: '>=6.0.0'}
     hasBin: true
 
-  better-sqlite3@11.10.0:
-    resolution: {integrity: sha512-EwhOpyXiOEL/lKzHz9AW1msWFNzGc/z+LzeB3/jnFJpxu+th2yqvzsSWas1v9jgs9+xiXJcD5A8CJxAG2TaghQ==}
+  better-sqlite3@12.11.1:
+    resolution: {integrity: sha512-dq9AtApgg5PGFtBzPFSBl3HZQjHok5gaQCM6zh2Yk0aSmDCs1CbnVI8/HgASQkNKsWFpseIO9beg5xxpYhbIfA==}
+    engines: {node: 20.x || 22.x || 23.x || 24.x || 25.x || 26.x}
 
   big.js@6.2.2:
     resolution: {integrity: sha512-y/ie+Faknx7sZA5MfGA2xKlu0GDv8RWrXGsmlteyJQ2lvoKv9GBK/fpRMc2qlSoBAgNxrixICFCBefIq8WCQpQ==}
@@ -8744,7 +8745,7 @@ snapshots:
 
   baseline-browser-mapping@2.10.34: {}
 
-  better-sqlite3@11.10.0:
+  better-sqlite3@12.11.1:
     dependencies:
       bindings: 1.5.0
       prebuild-install: 7.1.3
@@ -9153,11 +9154,11 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  drizzle-orm@0.30.10(@types/better-sqlite3@7.6.13)(@types/react@19.2.17)(better-sqlite3@11.10.0)(postgres@3.4.9)(react@19.2.7):
+  drizzle-orm@0.30.10(@types/better-sqlite3@7.6.13)(@types/react@19.2.17)(better-sqlite3@12.11.1)(postgres@3.4.9)(react@19.2.7):
     optionalDependencies:
       '@types/better-sqlite3': 7.6.13
       '@types/react': 19.2.17
-      better-sqlite3: 11.10.0
+      better-sqlite3: 12.11.1
       postgres: 3.4.9
       react: 19.2.7
 
