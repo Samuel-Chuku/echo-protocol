@@ -2,16 +2,17 @@
 
 import { use, useCallback, useEffect, useState, type ReactNode } from 'react';
 import Link from 'next/link';
-import { useQuery, gql } from 'urql';
+import { useQuery, useClient, gql } from 'urql';
 import { EchoMode, CONTRACTS } from '@echo/sdk';
 import { useEcho } from '@/lib/sdk';
 import { useAgent } from '@/lib/agent';
 import { useContent } from '@/lib/content';
+import { ACTIVITY_QUERY, type ActivityRow } from '@/lib/activity';
 import { Section, Card, Field, KV } from '@/components/ui';
 import { Command } from '@/components/Command';
 import { Receipt } from '@/components/Receipt';
 import { IdentityBanner } from '@/components/IdentityBanner';
-import { usdc, scope, short, modeName, modeTagClass, isZeroAddr, MILESTONE_STATUS } from '@/lib/format';
+import { usdc, scope, short, modeName, modeTagClass, isZeroAddr, txLink, MILESTONE_STATUS } from '@/lib/format';
 
 // Arc AgenticCommerce JobStatus enum (IERC8183.sol:23-30). Drives the per-tier-job UI gates:
 // Open → worker submits, Funded → (Echo skips, budget==0), Submitted → requester accepts, Completed → paid.
@@ -169,6 +170,32 @@ function OpenApply({ sdk, account, agentId, marketId, closed }: { sdk: ReturnTyp
 
   const hasApplied = !!app && app.agentId !== undefined && BigInt(app.agentId ?? 0) !== 0n;
 
+  // "Revealed, under review" gap (reveal markets only): the worker is at tier 1 but no tier job
+  // exists yet — reveal is atomic (no Arc job), so their next action only appears once the requester
+  // grades them to Shortlist. Surface that they've been paid + link the reveal tx so it doesn't feel
+  // like dead air. On non-reveal markets tier 1 already has a Substantive job, so this never shows.
+  const client = useClient();
+  const tierReached = Number(app?.tierReached ?? 0);
+  const awaitingAdvance = hasApplied && tierReached === 1 && ((app?.tierJobIds ?? []) as bigint[]).length === 0;
+  const [revealFee, setRevealFee] = useState<bigint | null>(null);
+  const [revealTx, setRevealTx] = useState<string | null>(null);
+  useEffect(() => {
+    if (!awaitingAdvance || !account) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const fee = await sdk.revealFee(marketId).catch(() => null);
+        if (!cancelled && fee != null) setRevealFee(fee as bigint);
+        const res = await client.query(ACTIVITY_QUERY, { address: account, limit: 100 }).toPromise();
+        const rows = (res.data?.activity ?? []) as ActivityRow[];
+        const reveal = rows.find((r) => r.eventName === 'Revealed' && r.marketId === Number(marketId)
+          && r.actor?.toLowerCase() === account.toLowerCase());
+        if (!cancelled) setRevealTx(reveal?.txHash ?? null);
+      } catch { /* non-fatal — the hint still renders without the amount/tx */ }
+    })();
+    return () => { cancelled = true; };
+  }, [awaitingAdvance, account, marketId, sdk, client]);
+
   // After applying, pre-load the body the worker stored (so it survives refresh). Failures are
   // non-fatal — the body is optional context, not the source of truth (the on-chain hash is).
   useEffect(() => {
@@ -207,6 +234,22 @@ function OpenApply({ sdk, account, agentId, marketId, closed }: { sdk: ReturnTyp
               )}
               {savedBody === null && (
                 <p className="text-xs text-amber-600">No application body found — the chain has your hash but no readable text was stored. Re-submitting requires a fresh application.</p>
+              )}
+              {awaitingAdvance && (
+                <div className="mt-2 rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-900 space-y-1">
+                  <p className="font-medium">Revealed — the requester is reviewing your application.</p>
+                  <p>
+                    You&apos;ve been paid for being revealed
+                    {revealFee != null ? ` (reveal fee: ${usdc(revealFee)} USDC)` : ''}. If they advance
+                    you, a Shortlist round will appear below and you&apos;ll submit a deliverable there.
+                  </p>
+                  {revealTx && (
+                    <a href={txLink(revealTx)} target="_blank" rel="noreferrer"
+                      className="inline-block underline hover:text-blue-700">
+                      View reveal payment ↗
+                    </a>
+                  )}
+                </div>
               )}
             </>
           ) : (
@@ -317,6 +360,7 @@ function TierJobCard({ sdk, account, marketId, job, onChanged }: {
 }) {
   const [deliverable, setDeliverable] = useState('');
   const [savedBody, setSavedBody] = useState<string | null>(null);
+  const [rejectBody, setRejectBody] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const { store: storeContent, fetch: fetchContent } = useContent();
   const status = job.arcJob?.status ?? 0;
@@ -337,6 +381,20 @@ function TierJobCard({ sdk, account, marketId, job, onChanged }: {
     })();
     return () => { cancelled = true; };
   }, [isProvider, marketId, job.jobId, account, fetchContent]);
+
+  // If the requester rejected this tier job, pull the reason they left (if any) so the worker
+  // learns *why* — the content channel gates this to the job's provider + evaluator.
+  useEffect(() => {
+    if (!isProvider || status !== 4) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const row = await fetchContent(Number(marketId), 'reject', job.jobId.toString(), account);
+        if (!cancelled) setRejectBody(row?.body ?? null);
+      } catch { /* no reason stored */ }
+    })();
+    return () => { cancelled = true; };
+  }, [isProvider, status, marketId, job.jobId, account, fetchContent]);
 
   return (
     <Card title={`${HOOK_TIER_LABELS[tier] ?? `Tier ${tier}`} — job #${job.jobId.toString()}`} hint={`Pays ${usdc(amount)} USDC on accept.`}>
@@ -394,6 +452,14 @@ function TierJobCard({ sdk, account, marketId, job, onChanged }: {
       )}
       {status === 2 && (
         <p className="text-xs text-amber-700 mt-2">Submitted. Waiting on the requester to accept → release payment.</p>
+      )}
+      {status === 4 && (
+        <div className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2">
+          <p className="text-xs text-amber-800 font-medium">Rejected by the requester — this tier was not paid.</p>
+          {rejectBody !== null
+            ? <p className="mt-1 text-sm text-gray-700 whitespace-pre-wrap"><span className="text-[10px] uppercase tracking-wide text-gray-500">Reason: </span>{rejectBody}</p>
+            : <p className="mt-1 text-xs text-gray-500 italic">No reason was provided.</p>}
+        </div>
       )}
     </Card>
   );

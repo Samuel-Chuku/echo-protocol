@@ -579,7 +579,7 @@ function ApplicantRow({
 /** Lazy-fetch + render a content blob from the indexer. Signs once on click — the indexer
  *  enforces gating (apply: requester after reveal; deliver: provider or evaluator of the Arc job). */
 function ContentView({ marketId, kind, contentKey, viewer }: {
-  marketId: number; kind: 'apply' | 'deliver'; contentKey: string; viewer: `0x${string}`;
+  marketId: number; kind: 'apply' | 'deliver' | 'reject'; contentKey: string; viewer: `0x${string}`;
 }) {
   const { fetch: fetchContent } = useContent();
   const [body, setBody] = useState<string | null>(null);
@@ -603,7 +603,7 @@ function ContentView({ marketId, kind, contentKey, viewer }: {
   return (
     <div className="mt-2 rounded-md border border-gray-200 bg-gray-50 px-3 py-2">
       <div className="text-[10px] uppercase tracking-wide text-gray-500 mb-1">
-        {kind === 'apply' ? 'Application body' : 'Deliverable body'}
+        {kind === 'apply' ? 'Application body' : kind === 'reject' ? 'Reject reason' : 'Deliverable body'}
       </div>
       {loading && <p className="text-xs text-gray-400">Loading… (sign to authorize read)</p>}
       {err && <p className="text-xs text-red-600 break-all">{err}</p>}
@@ -619,6 +619,8 @@ function ApplicantTierJobs({ sdk, account, marketId, tierJobIds, onDone }: {
 }) {
   type Job = { jobId: bigint; status: number; tier: number; tierAmount: bigint };
   const [jobs, setJobs] = useState<Job[]>([]);
+  const [rejectReason, setRejectReason] = useState('');
+  const { store } = useContent();
   const idsKey = tierJobIds.map((j) => j.toString()).join(',');
 
   const load = useCallback(async () => {
@@ -651,18 +653,43 @@ function ApplicantTierJobs({ sdk, account, marketId, tierJobIds, onDone }: {
           {j.status === 2 && (
             <>
               <ContentView marketId={Number(marketId)} kind="deliver" contentKey={j.jobId.toString()} viewer={account} />
-              <div className="flex flex-wrap gap-1.5">
+              {/* Reject is a FINAL-tier-only escape hatch from the ghost penalty (tier 3 = Final).
+                  Lower tiers have no ghost timer, so Accept is the only action there. */}
+              {j.tier === 3 ? (
+                <>
+                  <textarea
+                    value={rejectReason}
+                    onChange={(e) => setRejectReason(e.target.value)}
+                    placeholder="Optional: reason for rejection — the worker sees this so they know what went wrong."
+                    rows={2}
+                    className="w-full rounded-md border border-gray-200 px-2 py-1 text-xs text-gray-700 placeholder:text-gray-400"
+                  />
+                  <div className="flex flex-wrap gap-1.5">
+                    <Command label={`Accept & pay ${usdc(j.tierAmount)}`} disabled={!account}
+                      onDone={() => { load(); onDone(); }}
+                      run={() => sdk.completeTierJob(j.jobId, scope('accept'), account)} />
+                    <Command label="Reject" tone="neutral" disabled={!account}
+                      onDone={() => { setRejectReason(''); load(); onDone(); }}
+                      run={async () => {
+                        // Store the (optional) reason in the content channel BEFORE rejecting, so the
+                        // worker can read why. Authored by the requester = the job's evaluator.
+                        if (rejectReason.trim()) {
+                          await store(Number(marketId), 'reject', j.jobId.toString(), rejectReason.trim(), account);
+                        }
+                        return sdk.rejectTierJob(j.jobId, scope('reject'), account);
+                      }} />
+                  </div>
+                  <p className="text-[11px] text-gray-500 italic">
+                    Reject only if the Final deliverable is wrong/invalid — it&apos;s the slash-free
+                    alternative to letting the ghost deadline pass. No USDC moves, nobody is slashed,
+                    and the reserve refunds to you on Close market.
+                  </p>
+                </>
+              ) : (
                 <Command label={`Accept & pay ${usdc(j.tierAmount)}`} disabled={!account}
                   onDone={() => { load(); onDone(); }}
                   run={() => sdk.completeTierJob(j.jobId, scope('accept'), account)} />
-                <Command label="Reject" tone="neutral" disabled={!account}
-                  onDone={() => { load(); onDone(); }}
-                  run={() => sdk.rejectTierJob(j.jobId, scope('reject'), account)} />
-              </div>
-              <p className="text-[11px] text-gray-500 italic">
-                Reject if the deliverable is wrong/invalid — no USDC moves, nobody is slashed, and the
-                amount refunds to you on Close market. (Reject is also safe from the ghost penalty.)
-              </p>
+              )}
             </>
           )}
           {j.status === 0 && (
@@ -672,7 +699,10 @@ function ApplicantTierJobs({ sdk, account, marketId, tierJobIds, onDone }: {
             <p className="text-[11px] text-emerald-700">Completed — {usdc(j.tierAmount)} USDC paid.</p>
           )}
           {j.status === 4 && (
-            <p className="text-[11px] text-amber-700">Rejected — no payout; the amount refunds to you on Close market.</p>
+            <>
+              <p className="text-[11px] text-amber-700">Rejected — no payout; the amount refunds to you on Close market.</p>
+              <ContentView marketId={Number(marketId)} kind="reject" contentKey={j.jobId.toString()} viewer={account} />
+            </>
           )}
         </div>
       ))}

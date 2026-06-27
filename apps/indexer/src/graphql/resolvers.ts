@@ -112,7 +112,10 @@ export const resolvers = {
             .limit(1);
           if (!app || app.tierReached < 1) throw new Error('Reveal required');
         }
-      } else if (a.kind === 'deliver') {
+      } else if (a.kind === 'deliver' || a.kind === 'reject') {
+        // Both are keyed by Arc jobId and visible to the two parties on the job: the provider
+        // (worker) and the evaluator (requester). A reject reason is written by the requester so
+        // the worker learns *why* — so the worker especially must be able to read it.
         const job = await publicClient.readContract({
           address: C.agenticCommerce, abi: AgenticCommerceABI,
           functionName: 'getJob', args: [BigInt(a.key)],
@@ -145,7 +148,7 @@ export const resolvers = {
       a: { marketId: number; kind: string; key: string; body: string; author: string },
     ) => {
       if (!a.author) throw new Error('author required');
-      if (!['apply', 'deliver'].includes(a.kind)) throw new Error('Unknown content kind');
+      if (!['apply', 'deliver', 'reject'].includes(a.kind)) throw new Error('Unknown content kind');
 
       const author = a.author.toLowerCase();
       const key = a.key.toLowerCase();
@@ -154,16 +157,21 @@ export const resolvers = {
       const createdAt = Math.floor(Date.now() / 1000);
 
       // Authorship gate against on-chain state. Apply: author must equal the participant address
-      // (which the UI uses as `key`). Deliver: author must equal the Arc job's provider. Demo
-      // simplification: we don't cryptographically prove the caller IS the author.
+      // (which the UI uses as `key`). Deliver: author must equal the Arc job's provider (worker).
+      // Reject: author must equal the job's evaluator (the requester — the only party who can call
+      // reject on chain). Demo simplification: we don't cryptographically prove the caller IS author.
       if (a.kind === 'apply') {
         if (author !== key) throw new Error('apply content: author must equal the participant address');
       } else {
         const job = await publicClient.readContract({
           address: C.agenticCommerce, abi: AgenticCommerceABI,
           functionName: 'getJob', args: [BigInt(a.key)],
-        }) as { provider: Address };
-        if (job.provider.toLowerCase() !== author) {
+        }) as { provider: Address; evaluator: Address };
+        if (a.kind === 'reject') {
+          if (job.evaluator.toLowerCase() !== author) {
+            throw new Error('reject content: author must equal the tier-job evaluator (requester)');
+          }
+        } else if (job.provider.toLowerCase() !== author) {
           throw new Error('deliver content: author must equal the tier-job provider');
         }
       }

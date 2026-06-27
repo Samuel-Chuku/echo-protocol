@@ -20,7 +20,7 @@ export type ContentRow = {
   author: string; body: string; hash: string; createdAt: number;
 };
 
-export type ContentKind = 'apply' | 'deliver';
+export type ContentKind = 'apply' | 'deliver' | 'reject';
 
 const STORE_CONTENT = gql`
   mutation StoreContent($marketId: Int!, $kind: String!, $key: String!, $body: String!, $author: String!) {
