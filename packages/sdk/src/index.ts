@@ -583,6 +583,60 @@ export class EchoSdk {
     return this.send(request);
   }
 
+  /** Requester sends a Submitted Final job back for revision (once per job). Arc flips it to Open
+   *  so the worker can re-submit; EchoHook resets the ghost deadline to now + 60 min. Use this
+   *  instead of Reject when the deliverable is close but needs a fix — it keeps the worker in the
+   *  flow rather than killing the job. After this, the worker may call extendRevision up to 3×. */
+  async requestRevision(jobId: bigint, account: Address) {
+    if (!this.walletClient) throw new Error('Wallet not connected');
+    const { request } = await this.publicClient.simulateContract({
+      address: this.contracts.agenticCommerce,
+      abi: AgenticCommerceABI,
+      functionName: 'requestRevision',
+      args: [jobId, '0x'],
+      account,
+    });
+    return this.send(request);
+  }
+
+  /** Worker self-extends an open revision window, up to 3× by a decreasing grant (45/30/15 min).
+   *  Only the job's provider, only while the Final job sits in Open (revision requested, not yet
+   *  re-submitted). Pushes out the ghost deadline so a late revision can't unfairly ghost them. */
+  async extendRevision(jobId: bigint, account: Address) {
+    if (!this.walletClient) throw new Error('Wallet not connected');
+    const { request } = await this.publicClient.simulateContract({
+      address: this.contracts.echoHook,
+      abi: EchoHookABI,
+      functionName: 'extendRevision',
+      args: [jobId],
+      account,
+    });
+    return this.send(request);
+  }
+
+  /** Revision state for a Final job: whether the one allowed revision has been used, and how many
+   *  of the 3 worker self-extensions are spent. Drives the requester "Request revision" gate and the
+   *  worker "Extend" buttons. */
+  async revisionInfo(jobId: bigint): Promise<{ used: boolean; extensions: number }> {
+    const [used, extensions] = await Promise.all([
+      this.publicClient.readContract({
+        address: this.contracts.echoHook, abi: EchoHookABI, functionName: 'revisionUsed', args: [jobId],
+      }) as Promise<boolean>,
+      this.publicClient.readContract({
+        address: this.contracts.echoHook, abi: EchoHookABI, functionName: 'revisionExtensions', args: [jobId],
+      }) as Promise<number>,
+    ]);
+    return { used, extensions: Number(extensions) };
+  }
+
+  /** The EchoHook ghost deadline (unix seconds) for a job — the real clock triggerGhost reads, and
+   *  the one revision/extensions push out. The Arc job's own `expiredAt` can drift from this, so the
+   *  worker countdown should read here. Field index 4 of the MarketContext `ctx` tuple. */
+  async ghostDeadline(jobId: bigint): Promise<bigint> {
+    const c = await this.getJobContext(jobId) as readonly unknown[];
+    return BigInt(c[4] as bigint | number | string);
+  }
+
   /** Read a single Arc job's full struct — used to gate UI on JobStatus
    *  (0 Open, 1 Funded, 2 Submitted, 3 Completed, 4 Rejected, 5 Expired). */
   async getArcJob(jobId: bigint) {

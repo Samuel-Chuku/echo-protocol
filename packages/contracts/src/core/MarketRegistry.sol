@@ -225,6 +225,7 @@ contract MarketRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable, I
     error FlagWindowElapsed();
     error RevealNotFlagged();
     error RevealStillFlagged();
+    error FinalJobStillSubmitted();
 
     function initialize(
         address _usdc,
@@ -578,10 +579,20 @@ contract MarketRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable, I
         // applicant stake — "expired/closed unrevealed → returned". A reveal hold that is still
         // Flagged (a live bait dispute) blocks close, mirroring Bounty's no-close-while-pending; a
         // Settled hold is already resolved (refundStake is a no-op). Bounded by maxApplicants.
+        //
+        // Worker-protection guard (folded into this loop to stay under EIP-170): block close while any
+        // applicant's Final job is Submitted — a worker DELIVERED at Final but hasn't been resolved, so
+        // the requester must Accept / Reject / Request revision first. A revert here rolls back the
+        // escrow release above, so it's safe to check after the state change. Open/Completed/Rejected
+        // all permit close.
         Application[] storage apps = marketApplications[marketId];
         for (uint256 i; i < apps.length; ++i) {
-            if (revealHolds[marketId][apps[i].participant].status == EchoReveal.RevealStatus.Flagged) revert RevealStillFlagged();
-            echoHook.refundStake(marketId, apps[i].participant);
+            Application storage app = apps[i];
+            if (revealHolds[marketId][app.participant].status == EchoReveal.RevealStatus.Flagged) revert RevealStillFlagged();
+            if (app.tierReached == 3 && app.tierJobIds.length > 0
+                && agenticCommerce.getJob(app.tierJobIds[app.tierJobIds.length - 1]).status == IAgenticCommerce.JobStatus.Submitted)
+                revert FinalJobStillSubmitted();
+            echoHook.refundStake(marketId, app.participant);
         }
 
         emit MarketClosed(marketId, remaining);

@@ -361,6 +361,8 @@ function TierJobCard({ sdk, account, marketId, job, onChanged }: {
   const [deliverable, setDeliverable] = useState('');
   const [savedBody, setSavedBody] = useState<string | null>(null);
   const [rejectBody, setRejectBody] = useState<string | null>(null);
+  const [rev, setRev] = useState<{ used: boolean; extensions: number }>({ used: false, extensions: 0 });
+  const [ghostDeadline, setGhostDeadline] = useState<bigint>(0n);
   const [err, setErr] = useState<string | null>(null);
   const { store: storeContent, fetch: fetchContent } = useContent();
   const status = job.arcJob?.status ?? 0;
@@ -396,18 +398,63 @@ function TierJobCard({ sdk, account, marketId, job, onChanged }: {
     return () => { cancelled = true; };
   }, [isProvider, status, marketId, job.jobId, account, fetchContent]);
 
+  // Final-tier revision state: whether the requester sent it back (used) + extensions spent, and the
+  // live ghost deadline (the clock revision/extensions push out). Drives the "Revision requested" hint
+  // and the worker's self-extend buttons. Only meaningful on the Final job (tier 3).
+  useEffect(() => {
+    if (!isProvider || tier !== 3) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const [info, gd] = await Promise.all([
+          sdk.revisionInfo(job.jobId),
+          sdk.ghostDeadline(job.jobId).catch(() => 0n),
+        ]);
+        if (!cancelled) { setRev(info); setGhostDeadline(gd); }
+      } catch { /* pre-upgrade impl or read failed — leave defaults */ }
+    })();
+    return () => { cancelled = true; };
+  }, [isProvider, tier, status, job.jobId, sdk]);
+
+  // The worker is in a revision when the requester reopened it (rev.used) and the job is back to Open
+  // with a prior deliverable already saved — i.e. this is a re-submit, not a first submit.
+  const inRevision = isProvider && status === 0 && rev.used && savedBody !== null;
+  const nextGrant = ['+45m', '+30m', '+15m'][rev.extensions] ?? '';
+
   return (
     <Card title={`${HOOK_TIER_LABELS[tier] ?? `Tier ${tier}`} — job #${job.jobId.toString()}`} hint={`Pays ${usdc(amount)} USDC on accept.`}>
       <div className="flex items-center gap-2 flex-wrap">
         <span className={`rounded border px-2 py-0.5 text-xs font-medium ${JOB_STATUS_CLASS[status] ?? JOB_STATUS_CLASS[0]}`}>
           {JOB_STATUS[status] ?? `status ${status}`}
         </span>
-        {expiredAt > 0n && (
+        {/* For the Final job the real clock is EchoHook's ghost deadline (which revision + extensions
+            push out); the Arc job's own expiredAt can drift from it, so prefer ghostDeadline here. */}
+        {tier === 3 && ghostDeadline > 0n ? (
+          <span className="text-xs text-gray-500">ghosts at {new Date(Number(ghostDeadline) * 1000).toLocaleString()}</span>
+        ) : expiredAt > 0n ? (
           <span className="text-xs text-gray-500">
             {tier === 3 ? 'ghosts at' : 'expires at'} {new Date(Number(expiredAt) * 1000).toLocaleString()}
           </span>
-        )}
+        ) : null}
       </div>
+
+      {inRevision && (
+        <div className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 space-y-2">
+          <p className="text-xs text-amber-800 font-medium">
+            Revision requested — update your deliverable below and resubmit.
+          </p>
+          <div className="flex items-center gap-2 flex-wrap">
+            {rev.extensions < 3 ? (
+              <Command label={`Extend deadline ${nextGrant}`} tone="neutral"
+                onDone={onChanged}
+                run={() => sdk.extendRevision(job.jobId, account)} />
+            ) : (
+              <span className="text-[11px] text-gray-500">No extensions left.</span>
+            )}
+            <span className="text-[11px] text-gray-500">{rev.extensions}/3 extensions used</span>
+          </div>
+        </div>
+      )}
 
       {status === 0 && isProvider && (
         <>

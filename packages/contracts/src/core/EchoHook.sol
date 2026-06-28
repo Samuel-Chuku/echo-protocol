@@ -82,6 +82,14 @@ contract EchoHook is Initializable, OwnableUpgradeable, UUPSUpgradeable, IACPHoo
     // remainingEscrow() math is untouched and applicant capital never commingles with the pool.
     mapping(uint256 => mapping(address => uint256)) public stakeBalance; // marketId => participant => locked
 
+    // --- Final-tier revision window (appended storage, UUPS-safe) ---
+    // A requester may send a Submitted Final job back for revision ONCE. That reopens the Arc job
+    // (Submitted → Open) and resets the ghost deadline to now + REVISION_BASE. The worker may then
+    // self-extend the window up to MAX_REVISION_EXTENSIONS times by a decreasing grant. Tracked as a
+    // flag + counter per jobId so it never touches the MarketContext struct MarketRegistry builds.
+    mapping(uint256 => bool)  public revisionUsed;       // one revision per Final job
+    mapping(uint256 => uint8) public revisionExtensions; // worker self-extensions used (max 3)
+
     event TierPayout(
         uint256 indexed marketId,
         uint256 indexed jobId,
@@ -122,6 +130,8 @@ contract EchoHook is Initializable, OwnableUpgradeable, UUPSUpgradeable, IACPHoo
     event StakeLocked(uint256 indexed marketId, address indexed participant, uint256 amount);
     event StakeRefunded(uint256 indexed marketId, address indexed participant, uint256 amount);
     event StakeSlashed(uint256 indexed marketId, address indexed participant, address indexed to, uint256 amount);
+    event RevisionWindowOpened(uint256 indexed jobId, uint256 newGhostDeadline);
+    event RevisionExtended(uint256 indexed jobId, uint8 extensionCount, uint256 newGhostDeadline);
 
     error NotAgenticCommerce();
     error NotMarketRegistry();
@@ -130,6 +140,12 @@ contract EchoHook is Initializable, OwnableUpgradeable, UUPSUpgradeable, IACPHoo
     error AlreadySet();
     error JobNotFound();
     error InvalidFee();
+    error NotProvider();
+    error RevisionAlreadyUsed();
+    error WrongTier();
+    error RevisionNotOpen();
+    error JobNotOpen();
+    error MaxExtensions();
 
     modifier onlyAgenticCommerce() {
         if (msg.sender != address(agenticCommerce)) revert NotAgenticCommerce();
@@ -281,7 +297,50 @@ contract EchoHook is Initializable, OwnableUpgradeable, UUPSUpgradeable, IACPHoo
             _settleComplete(jobId, reasonHash);
         } else if (selector == IAgenticCommerce.submit.selector) {
             _ackSubmit(jobId);
+        } else if (selector == IAgenticCommerce.requestRevision.selector) {
+            _openRevision(jobId);
         }
+    }
+
+    // --- Final-tier revision window ---
+
+    uint256 private constant REVISION_BASE = 60 minutes;       // fresh window when revision opens
+    uint8 private constant MAX_REVISION_EXTENSIONS = 3;
+    /// Decreasing self-extension grants by extensions-already-used: 45m, 30m, 15m.
+    function _extGrant(uint8 n) private pure returns (uint256) {
+        if (n == 0) return 45 minutes;
+        if (n == 1) return 30 minutes;
+        return 15 minutes; // n == 2
+    }
+
+    /// @notice Reopen the Final-tier revision window (called via afterAction on requestRevision).
+    ///         One revision per job; resets the ghost deadline to now + base so the worker gets a fair
+    ///         re-submit window. Reverts (bubbling up to revert the AgenticCommerce tx) on misuse.
+    function _openRevision(uint256 jobId) internal {
+        MarketContext storage c = ctx[jobId];
+        if (c.marketId == 0) revert JobNotFound();
+        if (c.tier != Tier.Final) revert WrongTier();
+        if (revisionUsed[jobId]) revert RevisionAlreadyUsed();
+        revisionUsed[jobId] = true;
+        c.ghostDeadline = block.timestamp + REVISION_BASE;
+        emit RevisionWindowOpened(jobId, c.ghostDeadline);
+    }
+
+    /// @notice Worker (the Arc job's provider) self-extends an open revision window, up to
+    ///         MAX_REVISION_EXTENSIONS times by a decreasing grant. Only while the Final job is back
+    ///         in Open (i.e. revision requested, not yet re-submitted). Pushes out the ghost deadline.
+    function extendRevision(uint256 jobId) external {
+        MarketContext storage c = ctx[jobId];
+        if (c.marketId == 0) revert JobNotFound();
+        if (!revisionUsed[jobId]) revert RevisionNotOpen();
+        IAgenticCommerce.Job memory job = agenticCommerce.getJob(jobId);
+        if (msg.sender != job.provider) revert NotProvider();
+        if (job.status != IAgenticCommerce.JobStatus.Open) revert JobNotOpen();
+        uint8 n = revisionExtensions[jobId];
+        if (n >= MAX_REVISION_EXTENSIONS) revert MaxExtensions();
+        c.ghostDeadline += _extGrant(n);
+        revisionExtensions[jobId] = n + 1;
+        emit RevisionExtended(jobId, n + 1, c.ghostDeadline);
     }
 
     function _settleComplete(uint256 jobId, bytes32 reasonHash) internal {

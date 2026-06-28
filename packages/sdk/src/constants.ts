@@ -53,14 +53,16 @@ export const LIBRARIES = {
 } as const;
 
 // Implementations (for upgrade transactions only). Proxies in CONTRACTS are unchanged.
-// Latest EchoHook impl: ghost status-branch (2026-06-24, UpgradeGhostStatusBranch) — triggerGhost
-// now penalises the actual silent party (worker no-show → slash worker, no USDC moved; requester
-// no-accept → existing pay-worker / slash-requester worker-protection path). Storage unchanged.
-// MarketRegistry / DisputeResolver / etc still on P6 (2026-06-13).
+// Latest EchoHook + MarketRegistry impls: closeMarket guard + Final-tier Request-Revision
+// (2026-06-28, UpgradeRevisionAndCloseGuard). EchoHook reopens/extends the revision window;
+// MarketRegistry.closeMarket reverts FinalJobStillSubmitted while a Final job is Submitted. The
+// AgenticCommerce test-instance proxy (0x1211eDC2…bF16) was also upgraded for requestRevision — its
+// impl 0x77731f21ee263ab367BD884fdF3A2a9f7D0C978D isn't tracked here (proxy unchanged, not in CONTRACTS
+// upgrade set). Prior EchoHook: ghost status-branch (2026-06-24).
 export const IMPLEMENTATIONS = {
   arcTestnet: {
-    marketRegistry: '0xe21A7E5227D983911f38CED379d8E7d5f8E9Df29' as Address,
-    echoHook: '0x8C2863EFa618d4ea5c30c9C9431F8e88d6D2F4dE' as Address,
+    marketRegistry: '0xB4137204B5D8b2556402fe127761cC8D762aC5e0' as Address,
+    echoHook: '0xa74532114E7734971ddB2980Bf94f1C3B58fdB38' as Address,
     participationReceipt: '0x2bA8ED70dEe63351d2fF739E36182972e9a695C4' as Address,
     validationGate: '0x5590Fa35b3E75A9cC3b12Edb7858936Aca383E32' as Address,
     disputeResolver: '0xF8F05Dc0Ae083754721419dA91C3A4FAD77d7061' as Address,

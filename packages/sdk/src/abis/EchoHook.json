@@ -186,6 +186,19 @@
   },
   {
     "type": "function",
+    "name": "extendRevision",
+    "inputs": [
+      {
+        "name": "jobId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "fundEscrow",
     "inputs": [
       {
@@ -578,6 +591,44 @@
         "name": "",
         "type": "address",
         "internalType": "contract IReputationRegistry"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "revisionExtensions",
+    "inputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "revisionUsed",
+    "inputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bool",
+        "internalType": "bool"
       }
     ],
     "stateMutability": "view"
@@ -1168,6 +1219,50 @@
   },
   {
     "type": "event",
+    "name": "RevisionExtended",
+    "inputs": [
+      {
+        "name": "jobId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "extensionCount",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      },
+      {
+        "name": "newGhostDeadline",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "RevisionWindowOpened",
+    "inputs": [
+      {
+        "name": "jobId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "newGhostDeadline",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "StakeLocked",
     "inputs": [
       {
@@ -1403,6 +1498,16 @@
   },
   {
     "type": "error",
+    "name": "JobNotOpen",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "MaxExtensions",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "NotAgenticCommerce",
     "inputs": []
   },
@@ -1414,6 +1519,11 @@
   {
     "type": "error",
     "name": "NotMarketRegistry",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotProvider",
     "inputs": []
   },
   {
@@ -1437,6 +1547,16 @@
         "internalType": "address"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "RevisionAlreadyUsed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RevisionNotOpen",
+    "inputs": []
   },
   {
     "type": "error",
@@ -1464,5 +1584,10 @@
         "internalType": "bytes32"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "WrongTier",
+    "inputs": []
   }
 ]

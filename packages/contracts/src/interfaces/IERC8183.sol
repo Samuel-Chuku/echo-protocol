@@ -68,6 +68,9 @@ interface IAgenticCommerce {
     /// @notice Reject (client pre-fund, or evaluator post-fund → refunds budget). Fires
     ///         before/afterAction with abi.encode(msg.sender, reason, optParams).
     function reject(uint256 jobId, bytes32 reason, bytes calldata optParams) external;
+    /// @notice Evaluator sends a Submitted job back for revision: flips it to Open so the provider
+    ///         can re-submit. Fires before/afterAction with abi.encode(msg.sender, optParams).
+    function requestRevision(uint256 jobId, bytes calldata optParams) external;
     /// @notice Client reclaims budget after expiry. Does NOT call the hook.
     function claimRefund(uint256 jobId) external;
 

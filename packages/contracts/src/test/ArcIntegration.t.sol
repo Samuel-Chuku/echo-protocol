@@ -354,4 +354,154 @@ contract ArcIntegrationTest is Test {
         assertEq(usdc.balanceOf(participant), workerBefore, "worker NOT paid on worker-ghost");
         assertEq(usdc.balanceOf(address(echoHook)), escrowBefore, "escrow untouched on worker-ghost");
     }
+
+    // ─── closeMarket guard + Final-tier revision (worker-protection) ──────────────────────────
+
+    /// @dev Grade through to a SUBMITTED Final job (worker delivered, requester hasn't resolved).
+    function _toFinalSubmitted(uint256 marketId) internal returns (uint256 finalJobId) {
+        _gradeSubmitComplete(marketId, 1);
+        _gradeSubmitComplete(marketId, 2);
+        vm.prank(requester);
+        registry.gradeFinal(marketId, participant);
+        finalJobId = agentic.jobCounter();
+        vm.prank(participant);
+        agentic.submit(finalJobId, keccak256("final-deliverable"), hex"");
+    }
+
+    /// @dev Read the EchoHook ghost deadline for a job out of the public `ctx` mapping (5th field).
+    function _ghostDeadline(uint256 jobId) internal view returns (uint256 gd) {
+        (, , , , gd, , ) = echoHook.ctx(jobId);
+    }
+
+    function test_CloseMarket_Reverts_WhenFinalJobSubmitted() public {
+        uint256 marketId = _createMarket();
+        _apply(marketId);
+        _toFinalSubmitted(marketId);
+
+        vm.prank(requester);
+        vm.expectRevert(MarketRegistry.FinalJobStillSubmitted.selector);
+        registry.closeMarket(marketId);
+    }
+
+    function test_CloseMarket_Succeeds_AfterReject() public {
+        uint256 marketId = _createMarket();
+        _apply(marketId);
+        uint256 finalJobId = _toFinalSubmitted(marketId);
+
+        vm.prank(requester);
+        agentic.reject(finalJobId, keccak256("wrong"), hex"");
+        assertEq(uint8(agentic.getJob(finalJobId).status), uint8(AgenticCommerce.JobStatus.Rejected));
+
+        vm.prank(requester);
+        registry.closeMarket(marketId); // no revert
+    }
+
+    function test_RequestRevision_FlipsOpen_ResetsDeadline() public {
+        uint256 marketId = _createMarket();
+        _apply(marketId);
+        uint256 finalJobId = _toFinalSubmitted(marketId);
+
+        vm.prank(requester);
+        agentic.requestRevision(finalJobId, hex"");
+
+        assertEq(uint8(agentic.getJob(finalJobId).status), uint8(AgenticCommerce.JobStatus.Open), "back to Open");
+        assertTrue(echoHook.revisionUsed(finalJobId), "revisionUsed set");
+        assertEq(_ghostDeadline(finalJobId), block.timestamp + 60 minutes, "deadline reset to now+60m");
+
+        // Closing is now allowed (Open, not Submitted) — worker didn't re-submit.
+        vm.prank(requester);
+        registry.closeMarket(marketId);
+    }
+
+    function test_RequestRevision_OnlyEvaluator() public {
+        uint256 marketId = _createMarket();
+        _apply(marketId);
+        uint256 finalJobId = _toFinalSubmitted(marketId);
+
+        vm.prank(participant); // worker is not the evaluator
+        vm.expectRevert(AgenticCommerce.Unauthorized.selector);
+        agentic.requestRevision(finalJobId, hex"");
+    }
+
+    function test_RequestRevision_OncePerJob() public {
+        uint256 marketId = _createMarket();
+        _apply(marketId);
+        uint256 finalJobId = _toFinalSubmitted(marketId);
+
+        vm.prank(requester);
+        agentic.requestRevision(finalJobId, hex"");
+
+        // Worker re-submits → Submitted again.
+        vm.prank(participant);
+        agentic.submit(finalJobId, keccak256("v2"), hex"");
+
+        // Second revision attempt → hook rejects (already used), bubbling up through afterAction.
+        vm.prank(requester);
+        vm.expectRevert(EchoHook.RevisionAlreadyUsed.selector);
+        agentic.requestRevision(finalJobId, hex"");
+    }
+
+    function test_ExtendRevision_DecreasingGrants_Max3_ProviderOnly() public {
+        uint256 marketId = _createMarket();
+        _apply(marketId);
+        uint256 finalJobId = _toFinalSubmitted(marketId);
+
+        vm.prank(requester);
+        agentic.requestRevision(finalJobId, hex"");
+        uint256 base = _ghostDeadline(finalJobId);
+
+        // Non-provider cannot extend.
+        vm.prank(requester);
+        vm.expectRevert(EchoHook.NotProvider.selector);
+        echoHook.extendRevision(finalJobId);
+
+        // Worker extends 3× by 45 / 30 / 15 minutes.
+        vm.startPrank(participant);
+        echoHook.extendRevision(finalJobId);
+        assertEq(_ghostDeadline(finalJobId), base + 45 minutes, "ext1 +45m");
+        echoHook.extendRevision(finalJobId);
+        assertEq(_ghostDeadline(finalJobId), base + 75 minutes, "ext2 +30m");
+        echoHook.extendRevision(finalJobId);
+        assertEq(_ghostDeadline(finalJobId), base + 90 minutes, "ext3 +15m");
+        assertEq(echoHook.revisionExtensions(finalJobId), 3, "3 extensions used");
+
+        // 4th reverts.
+        vm.expectRevert(EchoHook.MaxExtensions.selector);
+        echoHook.extendRevision(finalJobId);
+        vm.stopPrank();
+    }
+
+    function test_ResubmitAfterRevision_ThenAcceptPays() public {
+        uint256 marketId = _createMarket();
+        _apply(marketId);
+        uint256 finalJobId = _toFinalSubmitted(marketId);
+
+        vm.prank(requester);
+        agentic.requestRevision(finalJobId, hex"");
+
+        // Worker re-submits the fixed deliverable.
+        vm.prank(participant);
+        agentic.submit(finalJobId, keccak256("fixed"), hex"");
+        assertEq(uint8(agentic.getJob(finalJobId).status), uint8(AgenticCommerce.JobStatus.Submitted));
+
+        uint256 before = usdc.balanceOf(participant);
+        vm.prank(requester);
+        agentic.complete(finalJobId, keccak256("ok"), hex"");
+
+        // The Final tier job pays tierAmounts[2] (uint8(Tier.Final)-1 == 2); tierAmounts[3] is the
+        // ghost reserve, not the accept amount. 250e6 gross, 5% fee → worker nets 237.5e6.
+        uint256 expectedNet = tierAmounts[2] * (10000 - FEE_BPS) / 10000;
+        assertEq(usdc.balanceOf(participant) - before, expectedNet, "worker paid Final net of fee after revision");
+    }
+
+    function test_ExtendRevision_Reverts_WhenNoRevision() public {
+        uint256 marketId = _createMarket();
+        _apply(marketId);
+        uint256 finalJobId = _toFinalSubmitted(marketId);
+
+        // No revision opened yet → cannot extend.
+        vm.prank(participant);
+        vm.expectRevert(EchoHook.RevisionNotOpen.selector);
+        echoHook.extendRevision(finalJobId);
+    }
 }

@@ -83,6 +83,7 @@ contract AgenticCommerce is
     event JobSubmitted(uint256 indexed jobId, address indexed provider, bytes32 deliverable);
     event JobCompleted(uint256 indexed jobId, address indexed evaluator, bytes32 reason);
     event JobRejected(uint256 indexed jobId, address indexed rejector, bytes32 reason);
+    event RevisionRequested(uint256 indexed jobId, address indexed evaluator);
     event JobExpired(uint256 indexed jobId);
     event PaymentReleased(uint256 indexed jobId, address indexed provider, uint256 amount);
     event EvaluatorFeePaid(uint256 indexed jobId, address indexed evaluator, uint256 amount);
@@ -309,6 +310,25 @@ contract AgenticCommerce is
         }
 
         emit JobRejected(jobId, msg.sender, reason);
+
+        _afterHook(job.hook, jobId, msg.sig, data);
+    }
+
+    /// @notice Evaluator sends a Submitted job back for revision. Flips it to Open so the provider
+    ///         can re-submit (submit() accepts Open + budget 0). No funds move. The afterAction hook
+    ///         fires so EchoHook can reopen/extend the revision window. One revision per job is
+    ///         enforced by the hook, not here.
+    function requestRevision(uint256 jobId, bytes calldata optParams) external nonReentrant {
+        Job storage job = jobs[jobId];
+        if (job.id == 0) revert InvalidJob();
+        if (job.status != JobStatus.Submitted) revert WrongStatus();
+        if (msg.sender != job.evaluator) revert Unauthorized();
+
+        bytes memory data = abi.encode(msg.sender, optParams);
+        _beforeHook(job.hook, jobId, msg.sig, data);
+
+        job.status = JobStatus.Open;
+        emit RevisionRequested(jobId, msg.sender);
 
         _afterHook(job.hook, jobId, msg.sig, data);
     }

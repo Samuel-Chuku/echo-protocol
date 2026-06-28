@@ -617,7 +617,7 @@ function ApplicantTierJobs({ sdk, account, marketId, tierJobIds, onDone }: {
   sdk: ReturnType<typeof useEcho>['sdk']; account: `0x${string}`; marketId: bigint;
   tierJobIds: bigint[]; onDone: () => void;
 }) {
-  type Job = { jobId: bigint; status: number; tier: number; tierAmount: bigint };
+  type Job = { jobId: bigint; status: number; tier: number; tierAmount: bigint; revisionUsed: boolean };
   const [jobs, setJobs] = useState<Job[]>([]);
   const [rejectReason, setRejectReason] = useState('');
   const { store } = useContent();
@@ -626,11 +626,15 @@ function ApplicantTierJobs({ sdk, account, marketId, tierJobIds, onDone }: {
   const load = useCallback(async () => {
     if (tierJobIds.length === 0) { setJobs([]); return; }
     const rows = await Promise.all(tierJobIds.map(async (jobId) => {
-      const [arcJob, ctx] = await Promise.all([
+      const [arcJob, ctx, rev] = await Promise.all([
         sdk.getArcJob(jobId).catch(() => null) as Promise<{ status: number } | null>,
         sdk.getJobContext(jobId).catch(() => null) as Promise<{ tier: number; tierAmount: bigint } | null>,
+        sdk.revisionInfo(jobId).catch(() => ({ used: false, extensions: 0 })),
       ]);
-      return { jobId, status: arcJob?.status ?? 0, tier: ctx?.tier ?? 0, tierAmount: ctx?.tierAmount ?? 0n };
+      return {
+        jobId, status: arcJob?.status ?? 0, tier: ctx?.tier ?? 0, tierAmount: ctx?.tierAmount ?? 0n,
+        revisionUsed: rev.used,
+      };
     }));
     setJobs(rows);
   }, [sdk, idsKey]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -678,11 +682,15 @@ function ApplicantTierJobs({ sdk, account, marketId, tierJobIds, onDone }: {
                         }
                         return sdk.rejectTierJob(j.jobId, scope('reject'), account);
                       }} />
+                    <Command label="Request revision" tone="neutral" disabled={!account || j.revisionUsed}
+                      onDone={() => { load(); onDone(); }}
+                      run={() => sdk.requestRevision(j.jobId, account)} />
                   </div>
                   <p className="text-[11px] text-gray-500 italic">
-                    Reject only if the Final deliverable is wrong/invalid — it&apos;s the slash-free
-                    alternative to letting the ghost deadline pass. No USDC moves, nobody is slashed,
-                    and the reserve refunds to you on Close market.
+                    <b>Request revision</b> (once) sends it back for a fix — reopens the job, gives the
+                    worker a fresh hour (they can self-extend). <b>Reject</b> kills it: no payout, no
+                    slash, reserve refunds to you on Close. Either avoids the ghost penalty.
+                    {j.revisionUsed && ' (Revision already used for this job.)'}
                   </p>
                 </>
               ) : (
