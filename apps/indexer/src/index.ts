@@ -1,3 +1,4 @@
+import 'dotenv/config'; // load .env before any module reads process.env (e.g. @echo/sdk constants)
 import { migrate } from './db/client.js';
 import { runIngestLoop } from './indexer/ingest.js';
 import { startServer } from './server.js';

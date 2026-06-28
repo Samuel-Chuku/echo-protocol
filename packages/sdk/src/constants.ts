@@ -7,14 +7,21 @@ import { Address } from '@echo/types';
 
 // AgenticCommerce: Arc's canonical instance is admin-gated by Circle, so EchoHook can't be
 // whitelisted there without them. For testnet validation we run Echo's own self-hosted
-// instance (Path C — src/arc/AgenticCommerce.sol) and self-whitelist the hook. Set
-// ARC_AGENTIC_COMMERCE to that proxy address to target it; defaults to canonical otherwise.
-// Switch back to canonical (unset the env / restore the literal) once Circle whitelists Echo.
+// instance (Path C — src/arc/AgenticCommerce.sol) and self-whitelist the hook.
+// To target the self-hosted instance, set the proxy address via EITHER:
+//   - NEXT_PUBLIC_ARC_AGENTIC_COMMERCE  → reaches the browser bundle (Next.js inlines NEXT_PUBLIC_*).
+//   - ARC_AGENTIC_COMMERCE              → Node only (indexer, e2e scripts); NOT visible in the browser.
+// The browser SDK calls AgenticCommerce directly (submit / getJob / rejectTierJob / requestRevision),
+// so the web app MUST use the NEXT_PUBLIC_ form or it silently falls back to canonical and reverts.
+// Switch back to canonical (unset both / restore the literal) once Circle whitelists Echo.
 const CANONICAL_AGENTIC_COMMERCE =
   '0x0747EEf0706327138c69792bF28Cd525089e4583' as Address;
 // Read via globalThis so this is safe in the browser (no `process`) and clean under tsc.
-const AGENTIC_COMMERCE = (((globalThis as { process?: { env?: Record<string, string | undefined> } })
-  .process?.env?.ARC_AGENTIC_COMMERCE) || CANONICAL_AGENTIC_COMMERCE) as Address;
+const _procEnv = (globalThis as { process?: { env?: Record<string, string | undefined> } })
+  .process?.env ?? {};
+const AGENTIC_COMMERCE = (_procEnv.NEXT_PUBLIC_ARC_AGENTIC_COMMERCE
+  || _procEnv.ARC_AGENTIC_COMMERCE
+  || CANONICAL_AGENTIC_COMMERCE) as Address;
 
 export const CONTRACTS = {
   arcTestnet: {
