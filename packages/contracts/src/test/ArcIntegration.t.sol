@@ -370,7 +370,7 @@ contract ArcIntegrationTest is Test {
 
     /// @dev Read the EchoHook ghost deadline for a job out of the public `ctx` mapping (5th field).
     function _ghostDeadline(uint256 jobId) internal view returns (uint256 gd) {
-        (, , , , gd, , ) = echoHook.ctx(jobId);
+        (, , , , gd, , , ) = echoHook.ctx(jobId);
     }
 
     function test_CloseMarket_Reverts_WhenFinalJobSubmitted() public {

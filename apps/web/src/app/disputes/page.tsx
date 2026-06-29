@@ -8,7 +8,7 @@ import { Command } from '@/components/Command';
 import { usdc, toUnits, short, scope } from '@/lib/format';
 
 const C = CONTRACTS.arcTestnet;
-const SUBJECTS = ['BountyFinding', 'ModeAStake'] as const;
+const SUBJECTS = ['BountyFinding', 'ModeAStake', 'TierJobRejection'] as const;
 const STATUS = ['Open', 'Resolved'] as const;
 
 /**
@@ -22,6 +22,7 @@ export default function DisputesPage() {
   const [cfg, setCfg] = useState<{ minBond: bigint; votingPeriod: bigint; modeAStakeEnabled: boolean; jurorCount: bigint } | null>(null);
   const [marketId, setMarketId] = useState('1');
   const [findingIndex, setFindingIndex] = useState('0');
+  const [jobId, setJobId] = useState('');
   const [participant, setParticipant] = useState('');
   const [bond, setBond] = useState('25');
   const [disputeId, setDisputeId] = useState('1');
@@ -78,6 +79,20 @@ export default function DisputesPage() {
             run={async () => {
               await sdk.ensureUsdcAllowance(C.disputeResolver, toUnits(bond), account!);
               return sdk.openStakeDispute(BigInt(marketId), participant as `0x${string}`, toUnits(bond), account!);
+            }} />
+        </Card>
+
+        <Card title="Open tier-job dispute" hint="openTierJobDispute — the worker contests a REJECTED Final-tier job. Tie pays the worker.">
+          <div className="grid grid-cols-3 gap-1">
+            <Field label="marketId" value={marketId} onChange={(e) => setMarketId(e.target.value)} />
+            <Field label="jobId" value={jobId} onChange={(e) => setJobId(e.target.value)} placeholder="Arc jobId" />
+            <Field label="bond USDC" value={bond} onChange={(e) => setBond(e.target.value)} />
+          </div>
+          <Command label="Open tier-job dispute" disabled={!account || !jobId}
+            onDone={() => { setJobId(''); setBond(''); }}
+            run={async () => {
+              await sdk.ensureUsdcAllowance(C.disputeResolver, toUnits(bond), account!);
+              return sdk.openTierJobDispute(BigInt(marketId), BigInt(jobId), toUnits(bond), account!);
             }} />
         </Card>
       </Section>

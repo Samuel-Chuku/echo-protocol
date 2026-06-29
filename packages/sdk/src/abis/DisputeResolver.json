@@ -79,85 +79,6 @@
   },
   {
     "type": "function",
-    "name": "disputes",
-    "inputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "subject",
-        "type": "uint8",
-        "internalType": "enum DisputeResolver.Subject"
-      },
-      {
-        "name": "marketId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "target",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "participant",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "opener",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "counter",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "bond",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "votingEndsAt",
-        "type": "uint64",
-        "internalType": "uint64"
-      },
-      {
-        "name": "forOpener",
-        "type": "uint32",
-        "internalType": "uint32"
-      },
-      {
-        "name": "against",
-        "type": "uint32",
-        "internalType": "uint32"
-      },
-      {
-        "name": "jurorShare",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "status",
-        "type": "uint8",
-        "internalType": "enum DisputeResolver.Status"
-      },
-      {
-        "name": "agentHint",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "getDispute",
     "inputs": [
       {
@@ -426,6 +347,35 @@
         "name": "participant",
         "type": "address",
         "internalType": "address"
+      },
+      {
+        "name": "bond",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "disputeId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "openTierJobDispute",
+    "inputs": [
+      {
+        "name": "marketId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "jobId",
+        "type": "uint256",
+        "internalType": "uint256"
       },
       {
         "name": "bond",

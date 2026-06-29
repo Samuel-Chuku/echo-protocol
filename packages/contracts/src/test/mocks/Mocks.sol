@@ -140,4 +140,16 @@ contract MockAgenticCommerce {
             );
         }
     }
+
+    /// @dev Test driver: evaluator rejects a submitted job, firing the reject hook. EchoHook no-ops on
+    ///      the reject selector (matching prod) — the tier escrow stays put until close or a dispute.
+    function reject(uint256 jobId, bytes32 reason) external {
+        IAgenticCommerce.Job storage j = _jobs[jobId - 1];
+        j.status = IAgenticCommerce.JobStatus.Rejected;
+        if (j.hook != address(0)) {
+            IACPHook(j.hook).afterAction(
+                jobId, IAgenticCommerce.reject.selector, abi.encode(j.client, reason, bytes(""))
+            );
+        }
+    }
 }

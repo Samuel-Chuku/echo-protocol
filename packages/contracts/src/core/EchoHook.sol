@@ -53,6 +53,10 @@ contract EchoHook is Initializable, OwnableUpgradeable, UUPSUpgradeable, IACPHoo
         uint256 ghostDeadline;
         uint256 tierAmount;
         bool ghostTriggered;
+        // Appended last (UUPS-safe — the struct lives in a mapping, so a longer struct just consumes
+        // the next previously-zero slot per key). Set once when a TierJobRejection dispute resolves,
+        // so neither a re-resolve nor a late triggerGhost can double-spend the same tier escrow.
+        bool disputeSettled;
     }
 
     IAgenticCommerce public agenticCommerce;
@@ -89,6 +93,12 @@ contract EchoHook is Initializable, OwnableUpgradeable, UUPSUpgradeable, IACPHoo
     // flag + counter per jobId so it never touches the MarketContext struct MarketRegistry builds.
     mapping(uint256 => bool)  public revisionUsed;       // one revision per Final job
     mapping(uint256 => uint8) public revisionExtensions; // worker self-extensions used (max 3)
+
+    // --- Worker-recourse tier-job dispute (appended storage, UUPS-safe) ---
+    // A Final-tier job whose worker opened a bonded TierJobRejection dispute against the requester's
+    // reject. Owned here (not in the size-constrained MarketRegistry) alongside the tier escrow it
+    // gates: closeMarket reads it through `tierJobDisputed(jobId)` and is blocked while it's true.
+    mapping(uint256 => bool) public tierJobDisputed;
 
     event TierPayout(
         uint256 indexed marketId,
@@ -132,6 +142,17 @@ contract EchoHook is Initializable, OwnableUpgradeable, UUPSUpgradeable, IACPHoo
     event StakeSlashed(uint256 indexed marketId, address indexed participant, address indexed to, uint256 amount);
     event RevisionWindowOpened(uint256 indexed jobId, uint256 newGhostDeadline);
     event RevisionExtended(uint256 indexed jobId, uint8 extensionCount, uint256 newGhostDeadline);
+    /// @notice A disputed Final-tier rejection was settled by the staked jury. `workerWon == true`
+    ///         paid the worker `amount` (gross, before fee) from escrow via the normal completion
+    ///         leg (a TierPayout with the net also fires); `false` moved no money (escrow refunds the
+    ///         requester on close). Lets the indexer record dispute-driven payouts distinctly.
+    event DisputedTierSettled(
+        uint256 indexed marketId,
+        uint256 indexed jobId,
+        address indexed worker,
+        uint256 amount,
+        bool workerWon
+    );
 
     error NotAgenticCommerce();
     error NotMarketRegistry();
@@ -146,6 +167,10 @@ contract EchoHook is Initializable, OwnableUpgradeable, UUPSUpgradeable, IACPHoo
     error RevisionNotOpen();
     error JobNotOpen();
     error MaxExtensions();
+    error WrongMarket();
+    error JobNotRejected();
+    error TierJobAlreadyDisputed();
+    error TierJobNotDisputed();
 
     modifier onlyAgenticCommerce() {
         if (msg.sender != address(agenticCommerce)) revert NotAgenticCommerce();
@@ -189,6 +214,56 @@ contract EchoHook is Initializable, OwnableUpgradeable, UUPSUpgradeable, IACPHoo
 
     function initJobContext(uint256 jobId, MarketContext calldata marketCtx) external onlyRegistry {
         ctx[jobId] = marketCtx;
+    }
+
+    /// @notice Flag a Rejected Final job as disputed (worker recourse). Driven by MarketRegistry's
+    ///         IDisputeAdjudicable.markTierJobDisputed callback (itself only the DisputeResolver).
+    ///         Validates the preconditions — `opener` is the Arc provider, the job is a Rejected Final
+    ///         job of `marketId`, not already disputed — then sets the flag closeMarket reads. Owned
+    ///         here (with the heavy getJob struct-decode) so the registry stays under EIP-170.
+    function markTierJobDisputed(uint256 marketId, uint256 jobId, address opener) external onlyRegistry {
+        MarketContext storage c = ctx[jobId];
+        if (c.marketId != marketId) revert WrongMarket(); // also catches an unknown job (marketId 0)
+        if (c.tier != Tier.Final) revert WrongTier();
+        IAgenticCommerce.Job memory job = agenticCommerce.getJob(jobId);
+        if (opener != job.provider) revert NotProvider();
+        if (job.status != IAgenticCommerce.JobStatus.Rejected) revert JobNotRejected();
+        if (tierJobDisputed[jobId]) revert TierJobAlreadyDisputed();
+        tierJobDisputed[jobId] = true;
+    }
+
+    /// @notice Whether `jobId`'s Arc status is Submitted. The registry's closeMarket guard reads this
+    ///         through EchoHook so the getJob struct-decode stays out of the size-constrained registry.
+    function jobIsSubmitted(uint256 jobId) external view returns (bool) {
+        return agenticCommerce.getJob(jobId).status == IAgenticCommerce.JobStatus.Submitted;
+    }
+
+    /// @notice Settle a disputed Final-tier rejection per the staked-jury verdict. Driven only by
+    ///         MarketRegistry.resolveTierJobDispute (itself only callable by the DisputeResolver on
+    ///         resolve). On `workerWon` the worker is paid the tier amount net of fee via the exact
+    ///         completion leg (`_settle`, which bumps `distributed` so closeMarket's remainingEscrow
+    ///         no longer includes this money — no double-refund) and earns the same reputation a
+    ///         normal completion would; otherwise the rejection stands and nothing moves (the escrow
+    ///         refunds the requester on close). `disputeSettled` is set first (CEI) and shares the
+    ///         `AlreadyWithdrawn` guard with the ghost path so the tier escrow is spent at most once.
+    function settleDisputedTier(uint256 jobId, bool workerWon) external onlyRegistry {
+        if (!tierJobDisputed[jobId]) revert TierJobNotDisputed();
+        tierJobDisputed[jobId] = false; // clear the close-block flag (CEI: before any transfer)
+        MarketContext storage c = ctx[jobId];
+        if (c.marketId == 0) revert JobNotFound();
+        if (c.disputeSettled || c.ghostTriggered) revert AlreadyWithdrawn();
+        c.disputeSettled = true;
+
+        if (workerWon) {
+            address worker = agenticCommerce.getJob(jobId).provider;
+            _settle(
+                c.marketId, jobId, worker, c.participantAgentId, c.requesterAgentId,
+                c.tier, c.tierAmount, bytes32(0), true
+            );
+            emit DisputedTierSettled(c.marketId, jobId, worker, c.tierAmount, true);
+        } else {
+            emit DisputedTierSettled(c.marketId, jobId, address(0), c.tierAmount, false);
+        }
     }
 
     function setTierAmounts(uint256 marketId, uint256[4] calldata amounts) external onlyRegistry {
@@ -537,6 +612,7 @@ contract EchoHook is Initializable, OwnableUpgradeable, UUPSUpgradeable, IACPHoo
         MarketContext storage c = ctx[jobId];
         if (c.marketId == 0) revert JobNotFound();
         if (c.ghostTriggered) revert AlreadyWithdrawn();
+        if (c.disputeSettled) revert AlreadyWithdrawn(); // a resolved tier dispute already spent this escrow
         if (c.tier != Tier.Final || block.timestamp < c.ghostDeadline) return;
 
         IAgenticCommerce.Job memory job = agenticCommerce.getJob(jobId);

@@ -13,6 +13,8 @@ optimizer_runs = 200
 # lean"), dropping the registry's runtime bytecode under the limit again — so the legacy (non-IR)
 # pipeline the live proxies were originally deployed under is back. Storage layout is identical
 # either way (verified via `forge inspect storageLayout`); the library holds no storage.
+# NOTE: the TierJobRejection upgrade pushed MarketRegistry to 25707 B (over the standard EIP-170
+# limit), but Arc does not enforce that cap — the impls deployed fine non-IR, so the pipeline stays off.
 via_ir = false
 gas_reports = ["*"]
 

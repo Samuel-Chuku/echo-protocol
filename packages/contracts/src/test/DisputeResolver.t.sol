@@ -549,4 +549,227 @@ contract DisputeResolverTest is Test {
         // The bond transfer is unwound by the revert.
         assertEq(usdc.balanceOf(requester), reqBefore, "bond unwound on a too-late flag");
     }
+
+    // ──────────────────── TierJobRejection dispute, end-to-end (worker recourse) ────────────────────
+    //
+    // A worker contests an unfair Final-tier reject. The worker (the Arc job's provider) opens a bonded
+    // TierJobRejection dispute — opening marks the job disputed on the market (blocking close). The
+    // requester counters; jurors vote; resolve overturns the rejection (pay the worker the tier amount
+    // net of fee) or sustains it (escrow refunds the requester on close). Locked decision: a TIE pays
+    // the WORKER (benefit-of-the-doubt, forOpener >= against — same as BountyFinding, NOT ModeAStake).
+
+    uint256[4] TIERS = [uint256(5e6), 50e6, 250e6, 1000e6];
+    uint256 constant ESCROW = 2000e6;
+    uint256 constant FINAL_AMT = 250e6;                 // TIERS[2]
+    uint256 constant FINAL_NET = FINAL_AMT - (FINAL_AMT * FEE_BPS) / 10_000; // 250 - 5% = 237.5
+
+    /// @dev Plain Open market → submitter applies → graded straight to Final → submits → requester
+    ///      rejects. Returns the disputable (marketId, Final jobId).
+    function _finalRejected() internal returns (uint256 marketId, uint256 jobId) {
+        (marketId, jobId) = _gradeToFinal();
+        agentic.submit(jobId, keccak256("final-deliverable"));
+        vm.prank(requester);
+        agentic.reject(jobId, keccak256("reject-reason"));
+    }
+
+    /// @dev Build the market and grade `submitter` Substantive→Shortlist→Final; return the Final jobId.
+    function _gradeToFinal() internal returns (uint256 marketId, uint256 jobId) {
+        vm.startPrank(requester);
+        usdc.approve(address(registry), type(uint256).max);
+        marketId = registry.createMarket("ipfs://m", keccak256("scope"), TIERS, 0, 50, 7 days, ESCROW, REQ_AGENT);
+        vm.stopPrank();
+
+        vm.startPrank(submitter);
+        usdc.approve(address(registry), type(uint256).max);
+        registry.applyToMarket(marketId, SUB_AGENT, keccak256("sub"));
+        vm.stopPrank();
+
+        vm.startPrank(requester);
+        registry.gradeSubstantive(marketId, submitter);
+        registry.gradeShortlist(marketId, submitter);
+        registry.gradeFinal(marketId, submitter);
+        vm.stopPrank();
+
+        uint256[] memory ids = registry.getApplication(marketId, submitter).tierJobIds;
+        jobId = ids[ids.length - 1];
+    }
+
+    /// @dev Worker opens the tier dispute, requester counters → voting window open.
+    function _openTierCounter(uint256 marketId, uint256 jobId) internal returns (uint256 disputeId) {
+        vm.startPrank(submitter); // the worker (Arc job provider)
+        usdc.approve(address(resolver), type(uint256).max);
+        disputeId = resolver.openTierJobDispute(marketId, jobId, MIN_BOND);
+        vm.stopPrank();
+
+        vm.startPrank(requester); // the rejecting requester defends
+        usdc.approve(address(resolver), type(uint256).max);
+        resolver.counter(disputeId);
+        vm.stopPrank();
+    }
+
+    function test_TierDispute_OpenMarksDisputed_BlocksClose() public {
+        (uint256 marketId, uint256 jobId) = _finalRejected();
+
+        vm.startPrank(submitter);
+        usdc.approve(address(resolver), type(uint256).max);
+        resolver.openTierJobDispute(marketId, jobId, MIN_BOND);
+        vm.stopPrank();
+
+        assertTrue(echoHook.tierJobDisputed(jobId), "job flagged disputed");
+
+        vm.prank(requester);
+        vm.expectRevert(MarketRegistry.FinalJobDisputed.selector);
+        registry.closeMarket(marketId);
+    }
+
+    function test_TierDispute_WorkerWins_PaidNetFee_AndReputation() public {
+        (uint256 marketId, uint256 jobId) = _finalRejected();
+        uint256 disputeId = _openTierCounter(marketId, jobId);
+
+        // 2 of 3 jurors side with the worker (rejection was unfair).
+        vm.prank(juror1);
+        resolver.vote(disputeId, true);
+        vm.prank(juror2);
+        resolver.vote(disputeId, true);
+        vm.prank(juror3);
+        resolver.vote(disputeId, false);
+
+        vm.warp(block.timestamp + VOTING_PERIOD);
+
+        uint256 subBefore = usdc.balanceOf(submitter);
+        vm.recordLogs();
+        resolver.resolve(disputeId);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+
+        // Worker paid the Final tier net of fee + own bond refunded; escrow records the spend so close
+        // can't double-refund it to the requester.
+        assertEq(usdc.balanceOf(submitter) - subBefore, FINAL_NET + MIN_BOND, "tier net of fee + own bond back");
+        assertEq(echoHook.distributed(marketId), FINAL_AMT, "tier amount marked distributed");
+        assertFalse(echoHook.tierJobDisputed(jobId), "dispute cleared");
+        // Worker earns the tier_final vouch (and requester the 'responded' credit).
+        assertGe(_countFeedback(logs, SUB_AGENT), 1, "worker got tier_final feedback");
+    }
+
+    function test_TierDispute_TiePaysWorker() public {
+        (uint256 marketId, uint256 jobId) = _finalRejected();
+        uint256 disputeId = _openTierCounter(marketId, jobId);
+
+        // 1-1 tie. LOCKED DECISION: a tie pays the WORKER (benefit-of-the-doubt, forOpener >= against).
+        vm.prank(juror1);
+        resolver.vote(disputeId, true);  // for worker
+        vm.prank(juror2);
+        resolver.vote(disputeId, false); // for requester
+
+        vm.warp(block.timestamp + VOTING_PERIOD);
+
+        uint256 subBefore = usdc.balanceOf(submitter);
+        resolver.resolve(disputeId);
+
+        assertEq(usdc.balanceOf(submitter) - subBefore, FINAL_NET + MIN_BOND, "tie -> worker paid net + own bond");
+        assertEq(echoHook.distributed(marketId), FINAL_AMT, "tie spent the tier escrow on the worker");
+    }
+
+    function test_TierDispute_WorkerLoses_RequesterRefundedOnClose() public {
+        (uint256 marketId, uint256 jobId) = _finalRejected();
+        uint256 disputeId = _openTierCounter(marketId, jobId);
+
+        // Majority for the requester → rejection sustained.
+        vm.prank(juror1);
+        resolver.vote(disputeId, false);
+        vm.prank(juror2);
+        resolver.vote(disputeId, false);
+
+        vm.warp(block.timestamp + VOTING_PERIOD);
+        resolver.resolve(disputeId);
+
+        // No money moved out of escrow; the rejection stands.
+        assertEq(echoHook.distributed(marketId), 0, "loss -> nothing distributed");
+        assertFalse(echoHook.tierJobDisputed(jobId), "dispute cleared, close now possible");
+
+        // Requester closes and reclaims the full escrow (including the contested tier amount).
+        uint256 reqBefore = usdc.balanceOf(requester);
+        vm.prank(requester);
+        registry.closeMarket(marketId);
+        assertEq(usdc.balanceOf(requester) - reqBefore, ESCROW, "full escrow refunded once");
+        assertEq(echoHook.remainingEscrow(marketId), 0, "escrow emptied");
+    }
+
+    function test_TierDispute_GhostBlockedAfterWorkerWin() public {
+        (uint256 marketId, uint256 jobId) = _finalRejected();
+        uint256 disputeId = _openTierCounter(marketId, jobId);
+        vm.prank(juror1);
+        resolver.vote(disputeId, true);
+        vm.warp(block.timestamp + VOTING_PERIOD);
+        resolver.resolve(disputeId); // worker paid, ctx.disputeSettled = true
+
+        // A late ghost trigger on the same job can't double-spend the escrow.
+        vm.expectRevert(EchoHook.AlreadyWithdrawn.selector);
+        registry.triggerGhost(marketId, submitter);
+    }
+
+    function test_TierDispute_RevertWhen_NotProvider_BondUnwound() public {
+        (uint256 marketId, uint256 jobId) = _finalRejected();
+        // `requester` is the job's client/evaluator, NOT the provider — may not open the worker's dispute.
+        vm.startPrank(requester);
+        uint256 reqBefore = usdc.balanceOf(requester);
+        usdc.approve(address(resolver), type(uint256).max);
+        vm.expectRevert(EchoHook.NotProvider.selector);
+        resolver.openTierJobDispute(marketId, jobId, MIN_BOND);
+        vm.stopPrank();
+        assertEq(usdc.balanceOf(requester), reqBefore, "bond unwound for a non-provider opener");
+    }
+
+    function test_TierDispute_RevertWhen_JobNotRejected() public {
+        (uint256 marketId, uint256 jobId) = _gradeToFinal();
+        agentic.submit(jobId, keccak256("final-deliverable")); // Submitted, not Rejected
+
+        vm.startPrank(submitter);
+        usdc.approve(address(resolver), type(uint256).max);
+        vm.expectRevert(EchoHook.JobNotRejected.selector);
+        resolver.openTierJobDispute(marketId, jobId, MIN_BOND);
+        vm.stopPrank();
+    }
+
+    function test_TierDispute_RevertWhen_WrongTier() public {
+        // Reject a non-Final (Substantive) tier job → not eligible for tier-rejection recourse.
+        vm.startPrank(requester);
+        usdc.approve(address(registry), type(uint256).max);
+        uint256 marketId = registry.createMarket("ipfs://m", keccak256("scope"), TIERS, 0, 50, 7 days, ESCROW, REQ_AGENT);
+        vm.stopPrank();
+        vm.startPrank(submitter);
+        usdc.approve(address(registry), type(uint256).max);
+        registry.applyToMarket(marketId, SUB_AGENT, keccak256("sub"));
+        vm.stopPrank();
+        vm.prank(requester);
+        registry.gradeSubstantive(marketId, submitter);
+        uint256[] memory ids = registry.getApplication(marketId, submitter).tierJobIds;
+        uint256 jobId = ids[0];
+        agentic.submit(jobId, keccak256("d"));
+        vm.prank(requester);
+        agentic.reject(jobId, keccak256("r"));
+
+        vm.startPrank(submitter);
+        usdc.approve(address(resolver), type(uint256).max);
+        vm.expectRevert(EchoHook.WrongTier.selector);
+        resolver.openTierJobDispute(marketId, jobId, MIN_BOND);
+        vm.stopPrank();
+    }
+
+    function test_TierDispute_RevertWhen_DoubleDispute() public {
+        (uint256 marketId, uint256 jobId) = _finalRejected();
+        vm.startPrank(submitter);
+        usdc.approve(address(resolver), type(uint256).max);
+        resolver.openTierJobDispute(marketId, jobId, MIN_BOND);
+        vm.expectRevert(EchoHook.TierJobAlreadyDisputed.selector);
+        resolver.openTierJobDispute(marketId, jobId, MIN_BOND);
+        vm.stopPrank();
+    }
+
+    function test_TierDispute_RevertWhen_DirectCallbacksNotResolver() public {
+        (uint256 marketId, uint256 jobId) = _finalRejected();
+        vm.expectRevert(MarketRegistry.NotDisputeResolver.selector);
+        registry.markTierJobDisputed(marketId, jobId, submitter);
+        vm.expectRevert(MarketRegistry.NotDisputeResolver.selector);
+        registry.resolveTierJobDispute(marketId, jobId, true);
+    }
 }

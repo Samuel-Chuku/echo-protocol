@@ -39,4 +39,19 @@ interface IDisputeAdjudicable {
     ///         Replaces the slash-only `slashStakeAdjudicated`: both verdict outcomes resolve the
     ///         hold so the stake is never stranded.
     function resolveStakeDispute(uint256 marketId, address participant, bool slash) external;
+
+    /// @notice Mark a REJECTED Final-tier job as disputed. Called when its worker opens a bonded
+    ///         TierJobRejection dispute — mirrors `markFindingDisputed` for tier jobs. Blocks
+    ///         closeMarket from reclaiming the tier escrow while the dispute is live. `opener` is the
+    ///         claimed worker; the market verifies it equals the Arc job's provider. Reverts
+    ///         (unwinding the opener's bond) if the caller isn't the provider, the job isn't a
+    ///         Rejected Final job of this market, or it's already disputed.
+    function markTierJobDisputed(uint256 marketId, uint256 jobId, address opener) external;
+
+    /// @notice Settle a disputed Final-tier job per the jury verdict. `workerWon == true` overturns
+    ///         the rejection — pays the worker the tier amount (net of fee) from escrow via
+    ///         EchoHook.settleDisputedTier and writes the same reputation a normal completion would;
+    ///         `false` confirms the rejection — no money moves now and the escrow refunds the
+    ///         requester on closeMarket. Clears the disputed flag so the market can close.
+    function resolveTierJobDispute(uint256 marketId, uint256 jobId, bool workerWon) external;
 }

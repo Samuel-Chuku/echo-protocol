@@ -710,6 +710,12 @@ function ApplicantTierJobs({ sdk, account, marketId, tierJobIds, onDone }: {
             <>
               <p className="text-[11px] text-amber-700">Rejected — no payout; the amount refunds to you on Close market.</p>
               <ContentView marketId={Number(marketId)} kind="reject" contentKey={j.jobId.toString()} viewer={account} />
+              {j.tier === 3 && (
+                <p className="text-[11px] text-gray-500">
+                  The worker may contest a Final-tier rejection. If they do, Close is blocked until it
+                  resolves — <Link href="/disputes" className="underline hover:text-gray-700">counter the dispute</Link> (post a matching bond) to defend it before the jury.
+                </p>
+              )}
             </>
           )}
         </div>

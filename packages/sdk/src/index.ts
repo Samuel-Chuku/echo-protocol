@@ -568,9 +568,9 @@ export class EchoSdk {
    *  Rejected; EchoHook.afterAction ignores `reject`, so NO payout fires and NO party is slashed —
    *  the tier amount + ghost reserve stay escrowed and refund to the requester on closeMarket.
    *  Rejecting also makes triggerGhost a no-op (Rejected is terminal), so an honest reject avoids
-   *  the ghost R-Rep slash. NOTE: the worker currently has no on-chain recourse for an unfair
-   *  reject — a deliverable-quality dispute subject is not yet implemented (testnet caveat).
-   *  `reasonHash` is a free-form commitment (UI passes keccak256("reject") by default). */
+   *  the ghost R-Rep slash. The worker's recourse for an UNFAIR reject is {@link openTierJobDispute}
+   *  (staked-jury panel; a tie pays the worker). `reasonHash` is a free-form commitment (UI passes
+   *  keccak256("reject") by default). */
   async rejectTierJob(jobId: bigint, reasonHash: `0x${string}`, account: Address) {
     if (!this.walletClient) throw new Error('Wallet not connected');
     const { request } = await this.publicClient.simulateContract({
@@ -1160,6 +1160,21 @@ export class EchoSdk {
     const { request } = await this.publicClient.simulateContract({
       address: this.contracts.disputeResolver, abi: DisputeResolverABI,
       functionName: 'openStakeDispute', args: [marketId, participant, bond], account,
+    });
+    return this.send(request);
+  }
+
+  /** Worker contests a REJECTED Final-tier job (recourse for an unfair reject). The worker (the Arc
+   *  job's provider) posts a bond and the job is marked disputed, blocking closeMarket; the requester
+   *  then counters. On resolve the panel either overturns the rejection — paying the worker the tier
+   *  amount net of fee from escrow — or confirms it (escrow refunds the requester on close). A TIE
+   *  pays the WORKER. Reverts if the caller isn't the job's provider, the job isn't a Rejected Final
+   *  job of this market, or it's already disputed. Approve the DisputeResolver for the bond first. */
+  async openTierJobDispute(marketId: bigint, jobId: bigint, bond: bigint, account: Address) {
+    if (!this.walletClient) throw new Error('Wallet not connected');
+    const { request } = await this.publicClient.simulateContract({
+      address: this.contracts.disputeResolver, abi: DisputeResolverABI,
+      functionName: 'openTierJobDispute', args: [marketId, jobId, bond], account,
     });
     return this.send(request);
   }

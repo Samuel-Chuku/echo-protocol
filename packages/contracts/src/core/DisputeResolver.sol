@@ -46,10 +46,12 @@ import {IDisputeAdjudicable} from "../interfaces/IDisputeAdjudicable.sol";
 contract DisputeResolver is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     using SafeERC20 for IERC20;
 
-    /// @notice What a dispute is contesting. Both subjects are live as of P6: BountyFinding (a
-    ///         submitter contests a rejection) and ModeAStake (a requester flags a revealed
-    ///         applicant's held stake as bait-and-switch).
-    enum Subject { BountyFinding, ModeAStake }
+    /// @notice What a dispute is contesting. Live subjects: BountyFinding (a submitter contests a
+    ///         rejection), ModeAStake (a requester flags a revealed applicant's held stake as
+    ///         bait-and-switch), and TierJobRejection (a worker contests a rejected Final-tier job —
+    ///         `target` holds the Arc jobId; the worker is the opener, the requester counters).
+    ///         Appended last to preserve the on-chain enum layout across UUPS upgrades.
+    enum Subject { BountyFinding, ModeAStake, TierJobRejection }
 
     enum Status { Open, Resolved }
 
@@ -86,7 +88,11 @@ contract DisputeResolver is Initializable, OwnableUpgradeable, UUPSUpgradeable {
     uint256 public jurorCount;
 
     uint256 public disputeCount;
-    mapping(uint256 => Dispute) public disputes;
+    // Internal (not public): the struct-returning auto getter emits a 13-value tuple whose non-IR
+    // codegen sits at the stack limit; the third dispute subject tipped it over. `getDispute` already
+    // exposes the full struct, and no caller reads the raw getter — so dropping it is free and also
+    // trims bytecode. Layout is unchanged (visibility doesn't affect storage slots).
+    mapping(uint256 => Dispute) internal disputes;
     mapping(uint256 => mapping(address => bool)) public hasVoted;
     mapping(uint256 => mapping(address => bool)) public votedForOpener; // a voter's recorded side
     mapping(uint256 => mapping(address => bool)) public jurorClaimed;
@@ -238,6 +244,38 @@ contract DisputeResolver is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         emit DisputeOpened(disputeId, Subject.ModeAStake, marketId, 0, msg.sender, bond);
     }
 
+    /// @notice Open a dispute against a REJECTED Final-tier job — the worker's recourse for an unfair
+    ///         reject. The worker (the job's Arc provider) posts a bond and the resolver marks the
+    ///         job disputed on the market (so closeMarket can't reclaim the escrow from under the
+    ///         dispute). The requester then counters with a matching bond; jurors vote; resolve pays
+    ///         the worker the tier amount (sustained) or confirms the rejection (cleared). The market
+    ///         call reverts — unwinding the bond — if the caller isn't the provider, the job isn't a
+    ///         Rejected Final job of this market, or it's already disputed.
+    /// @param jobId Arc jobId of the rejected Final-tier job (stored in `target`).
+    /// @param bond  Opening bond (>= minBond), pulled from the worker in the bond token.
+    function openTierJobDispute(uint256 marketId, uint256 jobId, uint256 bond) external returns (uint256 disputeId) {
+        if (address(market) == address(0)) revert NotConfigured();
+        if (bond < minBond) revert BondTooSmall();
+
+        bondToken.safeTransferFrom(msg.sender, address(this), bond);
+
+        disputeId = ++disputeCount;
+        Dispute storage d = disputes[disputeId];
+        d.subject = Subject.TierJobRejection;
+        d.marketId = marketId;
+        d.target = jobId;        // target reused as the Arc jobId
+        d.opener = msg.sender;   // the worker
+        d.bond = bond;
+        d.status = Status.Open;
+
+        // Mark the job disputed on the market — reverts (NotProvider / JobNotRejected / WrongMarket /
+        // WrongTier / TierJobAlreadyDisputed) if it isn't a fresh Rejected Final job opened by its
+        // provider, which also unwinds the bond transfer above.
+        market.markTierJobDisputed(marketId, jobId, msg.sender);
+
+        emit DisputeOpened(disputeId, Subject.TierJobRejection, marketId, jobId, msg.sender, bond);
+    }
+
     /// @notice The defending side posts a matching counter bond, which opens the voting window.
     ///         Until countered, a dispute has no voting clock.
     function counter(uint256 disputeId) external {
@@ -289,38 +327,54 @@ contract DisputeResolver is Initializable, OwnableUpgradeable, UUPSUpgradeable {
         if (d.counter == address(0)) revert NotCountered();
         if (d.status != Status.Open) revert NotResolved(); // already resolved
         if (block.timestamp < d.votingEndsAt) revert VotingNotOver();
-        uint256 cast = uint256(d.forOpener) + uint256(d.against);
-        if (cast == 0) revert NoVotes();
+        // No named `cast` local (non-IR stack relief, spec §8 — the third verdict branch left resolve
+        // 1 slot too deep). votes > 0 is required so a tie can't divide-by-zero below.
+        if (uint256(d.forOpener) + uint256(d.against) == 0) revert NoVotes();
 
         bool openerWon = _openerWon(d);
         d.status = Status.Resolved;
 
-        // Push the verdict into the market (de-risked: never claws back paid money).
-        if (d.subject == Subject.BountyFinding) {
-            market.resolveDisputedFinding(d.marketId, d.target, openerWon);
-        } else {
-            // ModeAStake: opener is the requester/slash-seeker. openerWon == true ⇒ sustained bait ⇒
-            // slash the stake to the requester; false ⇒ applicant cleared ⇒ stake refunded. Both
-            // outcomes resolve the hold so the stake is never stranded.
-            market.resolveStakeDispute(d.marketId, d.participant, openerWon);
-        }
+        // Push the verdict into the market (de-risked: never claws back paid money). Dispatch lives in
+        // a helper to keep resolve()'s frame under the non-IR stack limit (spec §8).
+        _pushVerdict(d, openerWon);
 
-        // Refund the winner's own bond; fix the per-winning-voter share of the loser's bond.
+        // Refund the winner's own bond; fix the per-winning-voter share of the loser's bond. The
+        // winning-vote count is read inline (no named local) for stack relief; it's > 0 because the
+        // winning side holds the majority of a non-zero tally.
         address winner = openerWon ? d.opener : d.counter;
         bondToken.safeTransfer(winner, d.bond);
         emit BondPaid(disputeId, winner, d.bond);
 
-        uint32 winningVotes = openerWon ? d.forOpener : d.against;
-        d.jurorShare = uint256(d.bond) / winningVotes; // winningVotes > 0 (cast>0 and the winner has the majority)
+        d.jurorShare = uint256(d.bond) / (openerWon ? d.forOpener : d.against);
 
         emit DisputeResolved(disputeId, openerWon, d.forOpener, d.against);
     }
 
-    /// @dev Whether the opener's side prevailed. The tie-break differs by subject: a BountyFinding
-    ///      tie favors the opener (the finding keeps the benefit of the doubt → valid), while a
-    ///      ModeAStake slash requires a STRICT majority so a tie favors the counter (no slash) —
-    ///      a flag must be SUSTAINED to bite (spec §5). Used by both resolve and claimJurorReward so
-    ///      the winning side is computed identically in both.
+    /// @dev Route a resolved verdict into the market per subject. Extracted from resolve() so its
+    ///      three external call sites don't sit in the same stack frame as the bond settlement
+    ///      (non-IR stack limit, spec §8).
+    ///        BountyFinding    — openerWon ⇒ finding valid (pay floor); the opener is the submitter.
+    ///        TierJobRejection — openerWon ⇒ rejection overturned, pay the worker the tier amount
+    ///                           (`target` is the Arc jobId); the opener is the worker.
+    ///        ModeAStake       — openerWon ⇒ sustained bait, slash the stake to the requester; the
+    ///                           opener is the requester/slash-seeker.
+    function _pushVerdict(Dispute storage d, bool openerWon) internal {
+        if (d.subject == Subject.BountyFinding) {
+            market.resolveDisputedFinding(d.marketId, d.target, openerWon);
+        } else if (d.subject == Subject.TierJobRejection) {
+            market.resolveTierJobDispute(d.marketId, d.target, openerWon);
+        } else {
+            market.resolveStakeDispute(d.marketId, d.participant, openerWon);
+        }
+    }
+
+    /// @dev Whether the opener's side prevailed. The tie-break differs by subject. Only ModeAStake
+    ///      requires a STRICT majority (a tie favors the counter → no slash; a flag must be SUSTAINED
+    ///      to bite, spec §5). BountyFinding AND TierJobRejection give the opener the benefit of the
+    ///      doubt on a tie (`forOpener >= against`): for a finding the item stays valid, and for a
+    ///      tier rejection the worker — who performed and submitted the labor — gets paid when the
+    ///      panel can't muster a majority against them (team decision: tie pays the worker). Used by
+    ///      both resolve and claimJurorReward so the winning side is computed identically in both.
     function _openerWon(Dispute storage d) internal view returns (bool) {
         if (d.subject == Subject.ModeAStake) return d.forOpener > d.against;
         return d.forOpener >= d.against;

@@ -146,6 +146,10 @@ contract MarketRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable, I
     // struct-returning auto getter is bytecode the registry can't spare under EIP-170.
     mapping(uint256 => mapping(address => EchoReveal.RevealHold)) internal revealHolds; // market => participant => hold
 
+    // Worker-recourse tier-job dispute state (the `tierJobDisputed` flag) lives in EchoHook, not here —
+    // it owns the tier escrow the flag gates, and the registry has no EIP-170 headroom to spare. The
+    // adjudication callbacks below are thin forwarders into EchoHook.
+
     event MarketCreated(
         uint256 indexed marketId,
         address indexed requester,
@@ -181,6 +185,10 @@ contract MarketRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable, I
     event FindingRejected(uint256 indexed marketId, uint256 indexed index);
     event BountyClosed(uint256 indexed marketId, uint256 refunded);
     event DisputeResolverSet(address indexed disputeResolver);
+    // Tier-rejection dispute lifecycle is observable without dedicated registry events: the open via
+    // DisputeResolver.DisputeOpened (subject 2, carries marketId) and the outcome via
+    // EchoHook.DisputedTierSettled (carries marketId + workerWon). Keeping them off the registry holds
+    // its runtime bytecode under the EIP-170 limit (spec §8).
 
     error InsufficientEscrow(uint256 provided, uint256 required);
     error MarketNotActive();
@@ -226,6 +234,10 @@ contract MarketRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable, I
     error RevealNotFlagged();
     error RevealStillFlagged();
     error FinalJobStillSubmitted();
+    // Tier-rejection precondition reverts (NotProvider / JobNotRejected / WrongMarket / WrongTier /
+    // TierJobAlreadyDisputed / TierJobNotDisputed) now originate in EchoHook. Only the close guard
+    // reverts here.
+    error FinalJobDisputed();
 
     function initialize(
         address _usdc,
@@ -585,13 +597,19 @@ contract MarketRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable, I
         // the requester must Accept / Reject / Request revision first. A revert here rolls back the
         // escrow release above, so it's safe to check after the state change. Open/Completed/Rejected
         // all permit close.
+        // Per-applicant close guards (the getJob struct-decode moved to EchoHook, so this stays under
+        // the non-IR stack limit inline). Block close while: a reveal hold is still Flagged (live bait
+        // dispute); a Final job is still Submitted (delivered, unresolved); or a Final job has a live
+        // worker-recourse dispute (Rejected + contested — the Submitted check misses it).
         Application[] storage apps = marketApplications[marketId];
         for (uint256 i; i < apps.length; ++i) {
             Application storage app = apps[i];
             if (revealHolds[marketId][app.participant].status == EchoReveal.RevealStatus.Flagged) revert RevealStillFlagged();
-            if (app.tierReached == 3 && app.tierJobIds.length > 0
-                && agenticCommerce.getJob(app.tierJobIds[app.tierJobIds.length - 1]).status == IAgenticCommerce.JobStatus.Submitted)
-                revert FinalJobStillSubmitted();
+            if (app.tierReached == 3 && app.tierJobIds.length > 0) {
+                uint256 lastJob = app.tierJobIds[app.tierJobIds.length - 1];
+                if (echoHook.jobIsSubmitted(lastJob)) revert FinalJobStillSubmitted();
+                if (echoHook.tierJobDisputed(lastJob)) revert FinalJobDisputed();
+            }
             echoHook.refundStake(marketId, app.participant);
         }
 
@@ -841,6 +859,29 @@ contract MarketRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable, I
         );
     }
 
+    /// @notice Mark a Rejected Final-tier job as disputed (worker recourse, mirrors markFindingDisputed).
+    ///         Driven by the DisputeResolver when the job's worker opens a bonded TierJobRejection
+    ///         dispute. Verifies — against Arc + EchoHook state — that `opener` is the job's provider,
+    ///         the job is a Rejected Final job of THIS market, and it isn't already disputed; any revert
+    ///         unwinds the opener's bond in the resolver. Blocks closeMarket while the dispute is live.
+    function markTierJobDisputed(uint256 marketId, uint256 jobId, address opener) external onlyDisputeResolver {
+        // Thin forwarder — EchoHook validates (provider == opener, Arc status Rejected, Final job of
+        // this market, not already disputed) and owns the `tierJobDisputed` flag closeMarket reads.
+        echoHook.markTierJobDisputed(marketId, jobId, opener);
+    }
+
+    /// @notice Settle a disputed Final-tier job per the jury verdict. `workerWon == true` overturns the
+    ///         rejection — EchoHook pays the worker the tier amount (net of fee) from escrow and writes
+    ///         the completion reputation; `false` confirms the rejection (no money moves; the escrow
+    ///         refunds the requester on close). Clears the disputed flag BEFORE the external call (CEI)
+    ///         so the market can close once resolved. Only the wired resolver may call this.
+    function resolveTierJobDispute(uint256, uint256 jobId, bool workerWon) external onlyDisputeResolver {
+        // Thin forwarder — EchoHook clears its `tierJobDisputed` flag (reverting TierJobNotDisputed if
+        // not open) and settles the escrow: pays the worker on a win, leaves it for the requester's
+        // close refund on a loss.
+        echoHook.settleDisputedTier(jobId, workerWon);
+    }
+
     function _calculateMinEscrow(
         uint256[4] calldata tierAmounts,
         uint256 maxApplicants,
@@ -898,7 +939,8 @@ contract MarketRegistry is Initializable, OwnableUpgradeable, UUPSUpgradeable, I
             tier: tier,
             ghostDeadline: block.timestamp + m.ghostDeadline,
             tierAmount: m.tierAmounts[uint8(tier) - 1],
-            ghostTriggered: false
+            ghostTriggered: false,
+            disputeSettled: false
         });
 
         echoHook.initJobContext(jobId, marketCtx);

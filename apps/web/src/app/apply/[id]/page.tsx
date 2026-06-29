@@ -12,7 +12,15 @@ import { Section, Card, Field, KV } from '@/components/ui';
 import { Command } from '@/components/Command';
 import { Receipt } from '@/components/Receipt';
 import { IdentityBanner } from '@/components/IdentityBanner';
-import { usdc, scope, short, modeName, modeTagClass, isZeroAddr, txLink, MILESTONE_STATUS } from '@/lib/format';
+import { usdc, scope, short, modeName, modeTagClass, isZeroAddr, txLink, toUnits, MILESTONE_STATUS } from '@/lib/format';
+
+// Worker-recourse: an open/resolved tier-rejection dispute for a given job, read from the indexer.
+// subject 2 = TierJobRejection; target = the Arc jobId.
+const TIER_DISPUTES_QUERY = gql`
+  query TierDisputes {
+    disputes { id subject target opener counter status forOpener against }
+  }
+`;
 
 // Arc AgenticCommerce JobStatus enum (IERC8183.sol:23-30). Drives the per-tier-job UI gates:
 // Open → worker submits, Funded → (Echo skips, budget==0), Submitted → requester accepts, Completed → paid.
@@ -364,7 +372,10 @@ function TierJobCard({ sdk, account, marketId, job, onChanged }: {
   const [rev, setRev] = useState<{ used: boolean; extensions: number }>({ used: false, extensions: 0 });
   const [ghostDeadline, setGhostDeadline] = useState<bigint>(0n);
   const [err, setErr] = useState<string | null>(null);
+  const [bond, setBond] = useState('25');
+  const [disp, setDisp] = useState<{ id: number; status: number; forOpener: number; against: number } | null>(null);
   const { store: storeContent, fetch: fetchContent } = useContent();
+  const client = useClient();
   const status = job.arcJob?.status ?? 0;
   const tier = job.ctx?.tier ?? 0;
   const amount = job.ctx?.tierAmount ?? 0n;
@@ -415,6 +426,22 @@ function TierJobCard({ sdk, account, marketId, job, onChanged }: {
     })();
     return () => { cancelled = true; };
   }, [isProvider, tier, status, job.jobId, sdk]);
+
+  // Worker-recourse: if the requester rejected this Final job, surface any existing tier-rejection
+  // dispute (subject 2, target = jobId) so we can show its state instead of the "contest" CTA.
+  useEffect(() => {
+    if (!isProvider || status !== 4 || tier !== 3) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await client.query(TIER_DISPUTES_QUERY, {}).toPromise();
+        const rows = (res.data?.disputes ?? []) as any[];
+        const mine = rows.find((r) => Number(r.subject) === 2 && Number(r.target) === Number(job.jobId));
+        if (!cancelled) setDisp(mine ? { id: Number(mine.id), status: Number(mine.status), forOpener: Number(mine.forOpener), against: Number(mine.against) } : null);
+      } catch { /* indexer unreachable — leave the contest CTA available */ }
+    })();
+    return () => { cancelled = true; };
+  }, [isProvider, status, tier, job.jobId, client]);
 
   // The worker is in a revision when the requester reopened it (rev.used) and the job is back to Open
   // with a prior deliverable already saved — i.e. this is a re-submit, not a first submit.
@@ -506,6 +533,35 @@ function TierJobCard({ sdk, account, marketId, job, onChanged }: {
           {rejectBody !== null
             ? <p className="mt-1 text-sm text-gray-700 whitespace-pre-wrap"><span className="text-[10px] uppercase tracking-wide text-gray-500">Reason: </span>{rejectBody}</p>
             : <p className="mt-1 text-xs text-gray-500 italic">No reason was provided.</p>}
+
+          {/* Worker recourse: contest an unfair Final-tier reject via the staked-jury panel. */}
+          {tier === 3 && isProvider && (
+            disp ? (
+              <div className="mt-2 border-t border-amber-200 pt-2">
+                <p className="text-xs text-gray-700">
+                  You contested this rejection — dispute #{disp.id} is{' '}
+                  {disp.status === 1
+                    ? (disp.forOpener >= disp.against ? 'resolved in your favor (paid).' : 'resolved: rejection upheld.')
+                    : 'open. The requester must counter, then the jury votes.'}
+                </p>
+                <Link href="/disputes" className="text-xs text-sky-700 hover:underline">Track in Disputes →</Link>
+              </div>
+            ) : (
+              <div className="mt-2 border-t border-amber-200 pt-2 space-y-1">
+                <p className="text-xs text-gray-700">Think this was unfair? Contest it — a staked jury decides, and a tie pays you.</p>
+                <div className="flex items-end gap-2">
+                  <Field label="bond USDC" value={bond} onChange={(e) => setBond(e.target.value)} />
+                  <Command label="Contest this rejection" disabled={!bond.trim()}
+                    onDone={onChanged}
+                    run={async () => {
+                      await sdk.ensureUsdcAllowance(CONTRACTS.arcTestnet.disputeResolver, toUnits(bond), account);
+                      return sdk.openTierJobDispute(marketId, job.jobId, toUnits(bond), account);
+                    }} />
+                </div>
+                <p className="text-[11px] text-gray-500">Posts a USDC bond. If the jury sides with you (or ties), you’re paid the tier amount and refunded the bond; if not, the bond is forfeit.</p>
+              </div>
+            )
+          )}
         </div>
       )}
     </Card>

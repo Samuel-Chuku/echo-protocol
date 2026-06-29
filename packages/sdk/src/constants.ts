@@ -60,19 +60,19 @@ export const LIBRARIES = {
 } as const;
 
 // Implementations (for upgrade transactions only). Proxies in CONTRACTS are unchanged.
-// Latest EchoHook + MarketRegistry impls: closeMarket guard + Final-tier Request-Revision
-// (2026-06-28, UpgradeRevisionAndCloseGuard). EchoHook reopens/extends the revision window;
-// MarketRegistry.closeMarket reverts FinalJobStillSubmitted while a Final job is Submitted. The
-// AgenticCommerce test-instance proxy (0x1211eDC2…bF16) was also upgraded for requestRevision — its
-// impl 0x77731f21ee263ab367BD884fdF3A2a9f7D0C978D isn't tracked here (proxy unchanged, not in CONTRACTS
-// upgrade set). Prior EchoHook: ghost status-branch (2026-06-24).
+// Latest DisputeResolver + EchoHook + MarketRegistry impls: worker-recourse on Final-tier rejection
+// (2026-06-29, UpgradeTierRejectionRecourse). DisputeResolver adds Subject.TierJobRejection +
+// openTierJobDispute; EchoHook adds settleDisputedTier (pays the worker on a win); MarketRegistry adds
+// the tier-dispute callbacks + closeMarket FinalJobDisputed guard. A TIE pays the worker. The
+// AgenticCommerce test-instance proxy (0x1211eDC2…bF16) is NOT in this upgrade (reject already lived
+// on it). Prior impls: closeMarket guard + Request-Revision (2026-06-28, UpgradeRevisionAndCloseGuard).
 export const IMPLEMENTATIONS = {
   arcTestnet: {
-    marketRegistry: '0xB4137204B5D8b2556402fe127761cC8D762aC5e0' as Address,
-    echoHook: '0xa74532114E7734971ddB2980Bf94f1C3B58fdB38' as Address,
+    marketRegistry: '0xc041392af7688dB31359fE80bf48c8a30de9a358' as Address,
+    echoHook: '0xB8FFF8619E82d3E12380a7141C5fe5E20FCf0aEa' as Address,
     participationReceipt: '0x2bA8ED70dEe63351d2fF739E36182972e9a695C4' as Address,
     validationGate: '0x5590Fa35b3E75A9cC3b12Edb7858936Aca383E32' as Address,
-    disputeResolver: '0xF8F05Dc0Ae083754721419dA91C3A4FAD77d7061' as Address,
+    disputeResolver: '0x98bbe04756660Eb7136d5Ed63C9Da9bfc25916f0' as Address,
   },
 } as const;
 

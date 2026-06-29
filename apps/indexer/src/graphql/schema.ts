@@ -111,8 +111,10 @@ export const typeDefs = /* GraphQL */ `
 
   type Dispute {
     id: Int!
+    "0 = BountyFinding, 1 = ModeAStake, 2 = TierJobRejection (worker contests a Final-tier reject)."
     subject: Int!
     marketId: Int
+    "Finding index for BountyFinding; the Arc jobId for TierJobRejection. Unused for ModeAStake."
     target: Int
     participant: String
     opener: String

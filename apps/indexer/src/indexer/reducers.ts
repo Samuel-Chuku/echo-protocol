@@ -196,6 +196,11 @@ export async function applyEvent(
         .where(eq(disputes.id, Number(args.disputeId)));
       return { marketId: null, actor: null };
 
+    // ── Worker-recourse tier-job dispute ──
+    // No dedicated MarketRegistry events (kept off the registry for EIP-170): the dispute row is
+    // created/updated by the generic Dispute* cases above (subject = 2, target = jobId), and the
+    // money/outcome surfaces via EchoHook's DisputedTierSettled below.
+
     // ── EchoHook (settlement + reputation) ──
     case 'TierPayout': {
       // Provider got paid at tier T (0 reveal, 1 shortlist, 2 final). Bump P-Rep totals.
@@ -235,6 +240,14 @@ export async function applyEvent(
         agentId,
       });
       return { marketId: mid, actor: participant };
+    }
+
+    case 'DisputedTierSettled': {
+      // A Final-tier rejection dispute settled. On a worker win the worker was PAID via the normal
+      // settlement leg, so the `TierPayout` fired alongside this already bumped P-Rep — do NOT credit
+      // again here. This case only attributes the activity-feed row to the worker.
+      const worker = args.worker ? String(args.worker).toLowerCase() : null;
+      return { marketId: mid, actor: worker };
     }
 
     case 'RRepSlashed': {

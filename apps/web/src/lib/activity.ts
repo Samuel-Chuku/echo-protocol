@@ -65,6 +65,7 @@ const EVENT_LABELS: Record<string, string> = {
   TierPayout: 'Tier payout',
   RevisionWindowOpened: 'Revision requested',
   RevisionExtended: 'Revision deadline extended',
+  DisputedTierSettled: 'Rejection dispute settled',
 };
 export const eventLabel = (name: string) => EVENT_LABELS[name] ?? name;
 
