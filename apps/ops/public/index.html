@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Echo Ops</title>
+  <style>
+    :root {
+      --bg: #0b0e14; --panel: #141a24; --panel2: #1b2330; --line: #283142;
+      --text: #e6edf3; --muted: #8b98a9; --accent: #4f8cff; --ok: #3fb950; --bad: #f85149; --warn: #d29922;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+           background: var(--bg); color: var(--text); }
+    header { display: flex; align-items: center; gap: 12px; padding: 14px 20px; border-bottom: 1px solid var(--line);
+             position: sticky; top: 0; background: var(--bg); z-index: 5; }
+    header h1 { font-size: 16px; margin: 0; font-weight: 600; letter-spacing: .3px; }
+    .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
+    .dot.ok { background: var(--ok); } .dot.bad { background: var(--bad); }
+    .spacer { flex: 1; }
+    input[type=text], input[type=password], input[type=number] {
+      background: var(--panel2); border: 1px solid var(--line); color: var(--text);
+      border-radius: 8px; padding: 8px 10px; font: inherit; outline: none; }
+    input:focus { border-color: var(--accent); }
+    button { background: var(--accent); color: #fff; border: 0; border-radius: 8px; padding: 8px 14px;
+             font: inherit; font-weight: 600; cursor: pointer; }
+    button.secondary { background: var(--panel2); border: 1px solid var(--line); color: var(--text); }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    main { padding: 20px; display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+           max-width: 1200px; margin: 0 auto; }
+    .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
+    .card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted);
+               margin: 0 0 12px; }
+    .row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 7px 0;
+           border-bottom: 1px solid var(--panel2); }
+    .row:last-child { border-bottom: 0; }
+    .k { color: var(--muted); } .v { font-variant-numeric: tabular-nums; text-align: right; word-break: break-all; }
+    .v.ok { color: var(--ok); } .v.bad { color: var(--bad); } .v.warn { color: var(--warn); }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+    /* toggle switch */
+    .sw { position: relative; width: 42px; height: 24px; flex: none; }
+    .sw input { opacity: 0; width: 0; height: 0; }
+    .sw span { position: absolute; inset: 0; background: var(--panel2); border: 1px solid var(--line);
+               border-radius: 999px; transition: .15s; }
+    .sw span::before { content: ""; position: absolute; height: 18px; width: 18px; left: 2px; top: 2px;
+                       background: var(--muted); border-radius: 50%; transition: .15s; }
+    .sw input:checked + span { background: rgba(63,185,80,.25); border-color: var(--ok); }
+    .sw input:checked + span::before { transform: translateX(18px); background: var(--ok); }
+    .sw input:disabled + span { opacity: .5; }
+    .field { display: flex; gap: 8px; margin-top: 8px; }
+    .field input { flex: 1; }
+    .hint { color: var(--muted); font-size: 12px; margin: 2px 0 10px; }
+    #toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: var(--panel2);
+             border: 1px solid var(--line); padding: 10px 16px; border-radius: 10px; opacity: 0; transition: .2s;
+             max-width: 90vw; }
+    #toast.show { opacity: 1; }
+    #toast.ok { border-color: var(--ok); } #toast.bad { border-color: var(--bad); }
+    #gate { max-width: 420px; margin: 80px auto; }
+    .hidden { display: none !important; }
+    a { color: var(--accent); }
+  </style>
+</head>
+<body>
+  <header>
+    <span id="conn" class="dot"></span>
+    <h1>Echo Ops</h1>
+    <span id="writeBadge" class="hint"></span>
+    <span class="spacer"></span>
+    <span id="lastUpdate" class="hint"></span>
+    <button class="secondary" id="refreshBtn">Refresh</button>
+    <button class="secondary" id="logoutBtn">Lock</button>
+  </header>
+
+  <!-- Token gate -->
+  <div id="gate" class="card">
+    <h2>Admin token</h2>
+    <p class="hint">Enter the <span class="mono">OPS_ADMIN_TOKEN</span> from the server's <span class="mono">.env</span>. Stored only in this browser.</p>
+    <div class="field">
+      <input type="password" id="tokenInput" placeholder="Bearer token" />
+      <button id="unlockBtn">Unlock</button>
+    </div>
+  </div>
+
+  <main id="app" class="hidden">
+    <!-- Status -->
+    <section class="card">
+      <h2>Chain &amp; Indexer</h2>
+      <div class="row"><span class="k">Chain head</span><span class="v mono" id="s-head">—</span></div>
+      <div class="row"><span class="k">Indexer</span><span class="v" id="s-indexer">—</span></div>
+      <div class="row"><span class="k">Cursor block</span><span class="v mono" id="s-cursor">—</span></div>
+      <div class="row"><span class="k">Lag (blocks)</span><span class="v mono" id="s-lag">—</span></div>
+      <div class="row"><span class="k">Events indexed</span><span class="v mono" id="s-events">—</span></div>
+      <div class="row"><span class="k">Disputes (open / total)</span><span class="v mono" id="s-disputes">—</span></div>
+    </section>
+
+    <!-- Deployer / ownership -->
+    <section class="card">
+      <h2>Deployer &amp; Ownership</h2>
+      <div class="row"><span class="k">Deployer</span><span class="v mono" id="s-deployer">—</span></div>
+      <div class="row"><span class="k">USDC balance</span><span class="v mono" id="s-balance">—</span></div>
+      <div class="row"><span class="k">Writes</span><span class="v" id="s-writes">—</span></div>
+      <div class="row"><span class="k">Owns DisputeResolver</span><span class="v" id="o-dr">—</span></div>
+      <div class="row"><span class="k">Owns MarketRegistry</span><span class="v" id="o-mr">—</span></div>
+      <div class="row"><span class="k">Owns EchoHook</span><span class="v" id="o-hook">—</span></div>
+      <div class="row"><span class="k">Owns ValidationGate</span><span class="v" id="o-vg">—</span></div>
+    </section>
+
+    <!-- On-chain controls -->
+    <section class="card">
+      <h2>On-chain controls (owner-only)</h2>
+      <div class="row">
+        <span class="k">Mode-A staking</span>
+        <label class="sw"><input type="checkbox" id="t-modeA" /><span></span></label>
+      </div>
+      <p class="hint">Seat / remove a juror</p>
+      <div class="field">
+        <input type="text" id="jurorAddr" placeholder="0x juror address" />
+        <button id="jurorOn">Seat</button>
+        <button class="secondary" id="jurorOff">Remove</button>
+      </div>
+      <p class="hint">Attester allow / deny (ValidationGate)</p>
+      <div class="field">
+        <input type="text" id="attesterAddr" placeholder="0x attester address" />
+        <button id="attesterOn">Allow</button>
+        <button class="secondary" id="attesterOff">Deny</button>
+      </div>
+    </section>
+
+    <!-- Feature flags -->
+    <section class="card">
+      <h2>Feature flags</h2>
+      <p class="hint">Off-chain toggles. <span class="mono">web.*</span> read by the frontend, <span class="mono">indexer.*</span> by the indexer.</p>
+      <div id="flags"></div>
+    </section>
+
+    <!-- Indexer controls -->
+    <section class="card">
+      <h2>Indexer controls</h2>
+      <p class="hint">Rewind the cursor to re-ingest from a block (the running loop catches up automatically).</p>
+      <div class="field">
+        <input type="number" id="reindexBlock" placeholder="block number" />
+        <button id="reindexBtn">Re-index from</button>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast"></div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    let token = localStorage.getItem('ops_token') || '';
+
+    function toast(msg, kind) {
+      const t = $('toast'); t.textContent = msg; t.className = 'show ' + (kind || '');
+      setTimeout(() => (t.className = kind || ''), 3200);
+    }
+    async function api(path, opts = {}) {
+      const res = await fetch(path, {
+        ...opts,
+        headers: { 'content-type': 'application/json', authorization: 'Bearer ' + token, ...(opts.headers || {}) },
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error || res.status);
+      return body;
+    }
+    const short = (a) => (a ? a.slice(0, 6) + '…' + a.slice(-4) : '—');
+    const ownCell = (el, o) => {
+      const e = $(el);
+      e.textContent = o.owner ? (o.isDeployer ? 'yes' : 'no — ' + short(o.owner)) : '—';
+      e.className = 'v ' + (o.isDeployer ? 'ok' : o.owner ? 'bad' : '');
+    };
+
+    async function refresh() {
+      try {
+        const s = await api('/api/status');
+        $('conn').className = 'dot ok';
+        $('s-head').textContent = s.chain.head ?? '—';
+        $('s-indexer').innerHTML = s.indexer.up ? '<span class="ok">up</span>' : '<span class="bad">down</span>';
+        $('s-cursor').textContent = s.indexer.cursor ?? '—';
+        const lag = s.indexer.lag;
+        $('s-lag').textContent = lag ?? '—';
+        $('s-lag').className = 'v mono ' + (lag == null ? '' : lag > 50 ? 'warn' : 'ok');
+        $('s-events').textContent = s.indexer.events;
+        $('s-disputes').textContent = s.disputes.open + ' / ' + s.disputes.total;
+        $('s-deployer').textContent = short(s.deployer.address);
+        $('s-balance').textContent = s.deployer.usdcBalance != null ? s.deployer.usdcBalance + ' USDC' : '—';
+        $('s-writes').innerHTML = s.deployer.writesEnabled ? '<span class="ok">enabled</span>' : '<span class="warn">read-only</span>';
+        $('writeBadge').textContent = s.deployer.writesEnabled ? '' : 'read-only mode (no deployer key)';
+        ownCell('o-dr', s.ownership.disputeResolver);
+        ownCell('o-mr', s.ownership.marketRegistry);
+        ownCell('o-hook', s.ownership.echoHook);
+        ownCell('o-vg', s.ownership.validationGate);
+        if (s.disputeResolver) {
+          const m = $('t-modeA'); m.checked = s.disputeResolver.modeAStakeEnabled;
+          m.disabled = !s.deployer.writesEnabled;
+        }
+        // disable on-chain action buttons when read-only
+        const w = s.deployer.writesEnabled;
+        ['jurorOn', 'jurorOff', 'attesterOn', 'attesterOff'].forEach((id) => ($(id).disabled = !w));
+        $('lastUpdate').textContent = 'updated ' + new Date().toLocaleTimeString();
+      } catch (e) {
+        $('conn').className = 'dot bad';
+        if (String(e.message) === '401') return lock();
+        toast('status: ' + e.message, 'bad');
+      }
+    }
+
+    async function loadFlags() {
+      const flags = await api('/api/flags');
+      const box = $('flags'); box.innerHTML = '';
+      for (const f of flags) {
+        const row = document.createElement('div');
+        row.className = 'row';
+        row.innerHTML =
+          '<span class="k">' + f.label + '<br><span class="mono hint">' + f.key + '</span></span>' +
+          '<label class="sw"><input type="checkbox" ' + (f.enabled ? 'checked' : '') + '><span></span></label>';
+        const cb = row.querySelector('input');
+        cb.addEventListener('change', async () => {
+          try {
+            await api('/api/flags/' + encodeURIComponent(f.key), { method: 'POST', body: JSON.stringify({ enabled: cb.checked }) });
+            toast(f.key + ' → ' + (cb.checked ? 'ON' : 'OFF'), 'ok');
+          } catch (e) { cb.checked = !cb.checked; toast(e.message, 'bad'); }
+        });
+        box.appendChild(row);
+      }
+    }
+
+    async function onchain(path, body, label) {
+      try {
+        const r = await api(path, { method: 'POST', body: JSON.stringify(body) });
+        toast(label + ' — tx ' + short(r.tx), 'ok');
+        setTimeout(refresh, 1500);
+      } catch (e) { toast(label + ': ' + e.message, 'bad'); }
+    }
+
+    // wire on-chain actions
+    $('t-modeA').addEventListener('change', (e) =>
+      onchain('/api/onchain/mode-a-stake', { enabled: e.target.checked }, 'Mode-A staking ' + (e.target.checked ? 'ON' : 'OFF')));
+    $('jurorOn').addEventListener('click', () => onchain('/api/onchain/juror', { address: $('jurorAddr').value.trim(), active: true }, 'Seat juror'));
+    $('jurorOff').addEventListener('click', () => onchain('/api/onchain/juror', { address: $('jurorAddr').value.trim(), active: false }, 'Remove juror'));
+    $('attesterOn').addEventListener('click', () => onchain('/api/onchain/attester', { address: $('attesterAddr').value.trim(), allowed: true }, 'Allow attester'));
+    $('attesterOff').addEventListener('click', () => onchain('/api/onchain/attester', { address: $('attesterAddr').value.trim(), allowed: false }, 'Deny attester'));
+    $('reindexBtn').addEventListener('click', async () => {
+      const block = Number($('reindexBlock').value);
+      if (!Number.isInteger(block) || block < 0) return toast('enter a valid block', 'bad');
+      try { const r = await api('/api/indexer/reindex', { method: 'POST', body: JSON.stringify({ block }) });
+        toast('cursor rewound to ' + r.cursor, 'ok'); setTimeout(refresh, 800);
+      } catch (e) { toast(e.message, 'bad'); }
+    });
+
+    // gate
+    function unlock() {
+      $('gate').classList.add('hidden'); $('app').classList.remove('hidden');
+      refresh(); loadFlags();
+      clearInterval(window.__poll); window.__poll = setInterval(refresh, 10000);
+    }
+    function lock() {
+      token = ''; localStorage.removeItem('ops_token');
+      clearInterval(window.__poll);
+      $('app').classList.add('hidden'); $('gate').classList.remove('hidden');
+    }
+    $('unlockBtn').addEventListener('click', () => {
+      token = $('tokenInput').value.trim();
+      if (!token) return toast('enter a token', 'bad');
+      localStorage.setItem('ops_token', token); unlock();
+    });
+    $('tokenInput').addEventListener('keydown', (e) => e.key === 'Enter' && $('unlockBtn').click());
+    $('refreshBtn').addEventListener('click', refresh);
+    $('logoutBtn').addEventListener('click', lock);
+
+    if (token) unlock();
+  </script>
+</body>
+</html>

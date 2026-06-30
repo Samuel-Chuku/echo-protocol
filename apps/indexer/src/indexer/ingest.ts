@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { db } from '../db/client.js';
 import { cursor, events } from '../db/schema.js';
 import { publicClient } from '../chain.js';
@@ -13,6 +13,22 @@ const SOURCES = [
 ];
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Operator kill-switch. The ops dashboard (apps/ops) owns `ops_feature_flags`; when `indexer.paused`
+ * is true the loop idles instead of ingesting. Returns false if the table doesn't exist yet (ops
+ * never ran) so indexing is never blocked by a missing dependency.
+ */
+async function isIngestPaused(): Promise<boolean> {
+  try {
+    const rows = (await db.execute(
+      sql`SELECT enabled FROM ops_feature_flags WHERE key = 'indexer.paused' LIMIT 1`,
+    )) as unknown as Array<{ enabled: boolean }>;
+    return Boolean(rows[0]?.enabled);
+  } catch {
+    return false;
+  }
+}
 
 async function getCursor(): Promise<bigint> {
   const [row] = await db.select().from(cursor).where(eq(cursor.id, 'head')).limit(1);
@@ -63,6 +79,17 @@ export async function runIngestLoop(): Promise<void> {
   console.log(`[ingest] starting from block ${from}`);
   for (;;) {
     try {
+      if (await isIngestPaused()) {
+        await sleep(config.pollIntervalMs);
+        continue;
+      }
+      // Pick up an external cursor rewind (ops "re-index from block"): if the persisted cursor is
+      // now behind our position, restart ingestion from there. Normal forward progress is untouched.
+      const persisted = (await getCursor()) + 1n;
+      if (persisted < from) {
+        console.log(`[ingest] cursor rewound externally → re-indexing from block ${persisted}`);
+        from = persisted;
+      }
       const head = await publicClient.getBlockNumber();
       while (from <= head) {
         const to = from + config.batchSize - 1n > head ? head : from + config.batchSize - 1n;
