@@ -108,6 +108,7 @@
     <div class="tab active" data-tab="overview">Overview</div>
     <div class="tab" data-tab="markets">Markets</div>
     <div class="tab" data-tab="activity">Activity</div>
+    <div class="tab" data-tab="disputes">Disputes</div>
     <div class="tab" data-tab="audit">Audit</div>
     <div class="tab" data-tab="controls">Controls</div>
     <div class="tab" data-tab="flags">Flags</div>
@@ -192,6 +193,23 @@
       </div>
     </section>
 
+    <!-- DISPUTES -->
+    <section class="pane" id="pane-disputes">
+      <div class="filters">
+        <select id="dFilterStatus"><option value="">any status</option><option value="0">Open</option><option value="1">Resolved</option></select>
+        <button class="mini" id="dApply">Apply</button>
+        <span class="hint" id="dCount"></span>
+        <span class="spacer"></span>
+        <span class="hint">Seat jurors from the Controls tab — required before an open dispute can resolve.</span>
+      </div>
+      <div class="tblwrap">
+        <table class="tbl">
+          <thead><tr><th>#</th><th>Subject</th><th>Market</th><th>Status</th><th>For / Against</th><th>Countered</th><th>Bond</th><th>Opener</th><th>Opened</th></tr></thead>
+          <tbody id="dBody"><tr><td colspan="9" class="hint">Loading…</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
     <!-- AUDIT -->
     <section class="pane" id="pane-audit">
       <p class="hint">Every admin action taken through this dashboard. Append-only.</p>
@@ -218,11 +236,31 @@
             <button id="jurorOn">Seat</button>
             <button class="secondary" id="jurorOff">Remove</button>
           </div>
+          <div class="row"><span class="k">Seated jurors</span><span class="v mono" id="jurorRoster">—</span></div>
           <p class="hint">Attester allow / deny (ValidationGate)</p>
           <div class="field">
             <input type="text" id="attesterAddr" placeholder="0x attester address" />
             <button id="attesterOn">Allow</button>
             <button class="secondary" id="attesterOff">Deny</button>
+          </div>
+        </section>
+        <section class="card">
+          <h2>Advanced owner controls</h2>
+          <p class="hint">Dispute config — min bond (USDC) &amp; voting period (seconds)</p>
+          <div class="field">
+            <input type="number" id="cfgMinBond" placeholder="min bond USDC" step="0.000001" />
+            <input type="number" id="cfgVoting" placeholder="voting secs" />
+            <button id="cfgApply">Set</button>
+          </div>
+          <p class="hint">Agent oracle address (DisputeResolver)</p>
+          <div class="field">
+            <input type="text" id="oracleAddr" placeholder="0x oracle address" />
+            <button id="oracleApply">Set</button>
+          </div>
+          <p class="hint">Attribution fee-share ceiling (basis points, 0–10000)</p>
+          <div class="field">
+            <input type="number" id="ceilingBps" placeholder="bps e.g. 5000" min="0" max="10000" />
+            <button id="ceilingApply">Set</button>
           </div>
         </section>
         <section class="card">
@@ -303,7 +341,8 @@
         ownCell('o-dr', s.ownership.disputeResolver); ownCell('o-mr', s.ownership.marketRegistry);
         ownCell('o-hook', s.ownership.echoHook); ownCell('o-vg', s.ownership.validationGate);
         if (s.disputeResolver) { const t = $('t-modeA'); t.checked = s.disputeResolver.modeAStakeEnabled; t.disabled = !s.deployer.writesEnabled; }
-        const w = s.deployer.writesEnabled; ['jurorOn','jurorOff','attesterOn','attesterOff'].forEach((id) => ($(id).disabled = !w));
+        const w = s.deployer.writesEnabled;
+        ['jurorOn','jurorOff','attesterOn','attesterOff','cfgApply','oracleApply','ceilingApply'].forEach((id) => ($(id).disabled = !w));
         // tiles
         const t = m.totals || {};
         $('tiles').innerHTML = [
@@ -391,6 +430,30 @@
       } catch (e) { if (String(e.message) !== '401') $('aBody').innerHTML = `<tr><td colspan="6" class="bad">${esc(e.message)}</td></tr>`; }
     }
 
+    // ── Disputes ────────────────────────────────────────────────────────────
+    async function loadDisputes() {
+      const p = new URLSearchParams();
+      if ($('dFilterStatus').value) p.set('status', $('dFilterStatus').value);
+      p.set('limit', '150');
+      try {
+        const rows = await api('/api/disputes?' + p.toString());
+        $('dCount').textContent = rows.length + ' shown';
+        $('dBody').innerHTML = rows.length ? rows.map((r) => `
+          <tr><td class="mono">${r.id}</td><td><span class="badge">${esc(r.subjectLabel)}</span></td>
+          <td class="mono">${r.marketId ?? '—'}</td>
+          <td><span class="badge ${r.status === 0 ? 'active' : ''}">${esc(r.statusLabel)}</span></td>
+          <td class="mono">${r.forOpener} / ${r.against}</td>
+          <td>${r.countered ? 'yes' : '<span class="warn">no</span>'}</td>
+          <td class="mono">${r.bondUsdc}</td><td>${addrLink(r.opener)}</td>
+          <td class="hint">${fmtTime(r.createdAt)}</td></tr>`).join('')
+          : '<tr><td colspan="9" class="hint">No disputes.</td></tr>';
+      } catch (e) { if (String(e.message) !== '401') $('dBody').innerHTML = `<tr><td colspan="9" class="bad">${esc(e.message)}</td></tr>`; }
+    }
+    async function loadJurors() {
+      try { const j = await api('/api/jurors'); $('jurorRoster').innerHTML = j.length ? j.map(short).join(', ') : '<span class="warn">none seated</span>'; }
+      catch (e) { /* non-fatal */ }
+    }
+
     // ── Audit ───────────────────────────────────────────────────────────────
     async function loadAudit() {
       try {
@@ -435,12 +498,26 @@
       if (!Number.isInteger(block) || block < 0) return toast('enter a valid block', 'bad');
       try { const r = await api('/api/indexer/reindex', { method: 'POST', body: JSON.stringify({ block }) }); toast('cursor rewound to ' + r.cursor, 'ok'); } catch (e) { toast(e.message, 'bad'); }
     });
+    $('cfgApply').addEventListener('click', () => {
+      const minBond = $('cfgMinBond').value.trim(), voting = $('cfgVoting').value.trim();
+      if (!voting || Number(voting) <= 0) return toast('voting period must be > 0 seconds', 'bad');
+      const wei = minBond ? BigInt(Math.round(Number(minBond) * 1e6)).toString() : '0'; // USDC → 6-dec wei
+      onchain('/api/onchain/dispute-config', { minBond: wei, votingPeriod: voting }, 'Set dispute config');
+    });
+    $('oracleApply').addEventListener('click', () => onchain('/api/onchain/agent-oracle', { address: $('oracleAddr').value.trim() }, 'Set agent oracle'));
+    $('ceilingApply').addEventListener('click', () => {
+      const bps = Number($('ceilingBps').value);
+      if (!Number.isInteger(bps) || bps < 0 || bps > 10000) return toast('bps must be 0–10000', 'bad');
+      onchain('/api/onchain/ceiling', { ceilingBps: bps }, 'Set attribution ceiling');
+    });
     $('mApply').addEventListener('click', loadMarkets);
     $('mFilterQ').addEventListener('keydown', (e) => e.key === 'Enter' && loadMarkets());
     $('aApply').addEventListener('click', loadActivity);
+    $('dApply').addEventListener('click', loadDisputes);
 
     // ── Tabs + polling ──────────────────────────────────────────────────────
-    const LOADERS = { overview: loadOverview, markets: loadMarkets, activity: loadActivity, audit: loadAudit, flags: loadFlags, controls: loadOverview };
+    const loadControls = () => { loadOverview(); loadJurors(); };
+    const LOADERS = { overview: loadOverview, markets: loadMarkets, activity: loadActivity, disputes: loadDisputes, audit: loadAudit, flags: loadFlags, controls: loadControls };
     function switchTab(name) {
       activeTab = name;
       document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t.dataset.tab === name));

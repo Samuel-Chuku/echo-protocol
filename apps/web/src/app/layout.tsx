@@ -4,6 +4,7 @@ import { cookieToInitialState } from 'wagmi';
 import { Providers } from '@/lib/provider';
 import { config } from '@/lib/wagmi';
 import { Nav } from '@/components/Nav';
+import { MaintenanceBanner } from '@/components/MaintenanceBanner';
 import './globals.css';
 
 export const metadata: Metadata = {
@@ -19,6 +20,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
     <html lang="en">
       <body className="text-gray-900 bg-white">
         <Providers initialState={initialState}>
+          <MaintenanceBanner />
           <Nav />
           <main className="max-w-6xl mx-auto px-6 py-8">{children}</main>
         </Providers>

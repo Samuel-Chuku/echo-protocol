@@ -6,9 +6,17 @@ import { config } from './config.js';
 import { requireAdmin, handleLogin } from './auth.js';
 import { listFlags, setFlag, indexerCursor, setIndexerCursor, recordAudit, listAudit } from './db.js';
 import { snapshot } from './monitor.js';
-import { listMarkets, marketDetail, activity, metrics } from './queries.js';
+import { listMarkets, marketDetail, activity, metrics, listDisputes, jurorRoster } from './queries.js';
 import { alerts } from './alerts.js';
-import { seatJuror, setModeAStake, setAttester, OnchainError } from './onchain.js';
+import {
+  seatJuror,
+  setModeAStake,
+  setAttester,
+  setDisputeConfig,
+  setAgentOracle,
+  setAttributionCeiling,
+  OnchainError,
+} from './onchain.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = join(__dirname, '..', 'public');
@@ -67,6 +75,13 @@ export function startServer(): Promise<void> {
     res.json(detail);
   }));
 
+  app.get('/api/disputes', requireAdmin, h(async (req, res) => {
+    const status = req.query.status !== undefined ? Number(req.query.status) : undefined;
+    res.json(await listDisputes({ status, limit: req.query.limit ? Number(req.query.limit) : undefined }));
+  }));
+
+  app.get('/api/jurors', requireAdmin, h(async (_req, res) => res.json(await jurorRoster())));
+
   app.get('/api/activity', requireAdmin, h(async (req, res) => {
     const q = req.query;
     res.json(
@@ -120,6 +135,28 @@ export function startServer(): Promise<void> {
     const allowed = Boolean(req.body?.allowed);
     const tx = await setAttester(address, allowed);
     await recordAudit('onchain.attester', { address, allowed }, { tx });
+    res.json({ ok: true, tx });
+  }));
+
+  app.post('/api/onchain/dispute-config', requireAdmin, h(async (req, res) => {
+    const minBond = BigInt(String(req.body?.minBond ?? '0'));
+    const votingPeriod = BigInt(String(req.body?.votingPeriod ?? '0'));
+    const tx = await setDisputeConfig(minBond, votingPeriod);
+    await recordAudit('onchain.disputeConfig', { minBond: minBond.toString(), votingPeriod: votingPeriod.toString() }, { tx });
+    res.json({ ok: true, tx });
+  }));
+
+  app.post('/api/onchain/agent-oracle', requireAdmin, h(async (req, res) => {
+    const address = String(req.body?.address ?? '');
+    const tx = await setAgentOracle(address);
+    await recordAudit('onchain.agentOracle', { address }, { tx });
+    res.json({ ok: true, tx });
+  }));
+
+  app.post('/api/onchain/ceiling', requireAdmin, h(async (req, res) => {
+    const ceilingBps = Number(req.body?.ceilingBps);
+    const tx = await setAttributionCeiling(ceilingBps);
+    await recordAudit('onchain.ceiling', { ceilingBps }, { tx });
     res.json({ ok: true, tx });
   }));
 

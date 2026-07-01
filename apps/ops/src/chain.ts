@@ -29,6 +29,12 @@ export const DISPUTE_RESOLVER_ABI = [
   { type: 'function', name: 'setJuror', stateMutability: 'nonpayable', inputs: [{ name: 'juror', type: 'address' }, { name: 'active', type: 'bool' }], outputs: [] },
   { type: 'function', name: 'setModeAStakeEnabled', stateMutability: 'nonpayable', inputs: [{ name: 'enabled', type: 'bool' }], outputs: [] },
   { type: 'function', name: 'setConfig', stateMutability: 'nonpayable', inputs: [{ name: '_minBond', type: 'uint256' }, { name: '_votingPeriod', type: 'uint64' }], outputs: [] },
+  { type: 'function', name: 'setAgentOracle', stateMutability: 'nonpayable', inputs: [{ name: '_oracle', type: 'address' }], outputs: [] },
+] as const;
+
+export const ATTRIBUTION_PAYOUT_ABI = [
+  { type: 'function', name: 'feeShareCeilingBps', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint16' }] },
+  { type: 'function', name: 'setCeiling', stateMutability: 'nonpayable', inputs: [{ name: '_ceilingBps', type: 'uint16' }], outputs: [] },
 ] as const;
 
 export const VALIDATION_GATE_ABI = [

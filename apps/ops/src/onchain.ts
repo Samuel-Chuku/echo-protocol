@@ -1,6 +1,13 @@
 import { getAddress, isAddress } from 'viem';
 import { config, writesEnabled } from './config.js';
-import { publicClient, walletClient, ownerAccount, DISPUTE_RESOLVER_ABI, VALIDATION_GATE_ABI } from './chain.js';
+import {
+  publicClient,
+  walletClient,
+  ownerAccount,
+  DISPUTE_RESOLVER_ABI,
+  VALIDATION_GATE_ABI,
+  ATTRIBUTION_PAYOUT_ABI,
+} from './chain.js';
 
 export class OnchainError extends Error {
   constructor(message: string, readonly status = 400) {
@@ -25,7 +32,7 @@ function assertAddress(addr: string): `0x${string}` {
  */
 async function send(
   address: `0x${string}`,
-  abi: typeof DISPUTE_RESOLVER_ABI | typeof VALIDATION_GATE_ABI,
+  abi: typeof DISPUTE_RESOLVER_ABI | typeof VALIDATION_GATE_ABI | typeof ATTRIBUTION_PAYOUT_ABI,
   functionName: string,
   args: readonly unknown[],
 ): Promise<`0x${string}`> {
@@ -55,4 +62,21 @@ export function setModeAStake(enabled: boolean): Promise<`0x${string}`> {
 
 export function setAttester(attester: string, allowed: boolean): Promise<`0x${string}`> {
   return send(config.contracts.validationGate, VALIDATION_GATE_ABI, 'setAttester', [assertAddress(attester), allowed]);
+}
+
+export function setDisputeConfig(minBond: bigint, votingPeriod: bigint): Promise<`0x${string}`> {
+  if (minBond < 0n) throw new OnchainError('minBond must be >= 0');
+  if (votingPeriod <= 0n) throw new OnchainError('votingPeriod must be > 0 seconds');
+  return send(config.contracts.disputeResolver, DISPUTE_RESOLVER_ABI, 'setConfig', [minBond, votingPeriod]);
+}
+
+export function setAgentOracle(oracle: string): Promise<`0x${string}`> {
+  return send(config.contracts.disputeResolver, DISPUTE_RESOLVER_ABI, 'setAgentOracle', [assertAddress(oracle)]);
+}
+
+export function setAttributionCeiling(ceilingBps: number): Promise<`0x${string}`> {
+  if (!Number.isInteger(ceilingBps) || ceilingBps < 0 || ceilingBps > 10_000) {
+    throw new OnchainError('ceilingBps must be an integer 0–10000');
+  }
+  return send(config.contracts.attributionPayout, ATTRIBUTION_PAYOUT_ABI, 'setCeiling', [ceilingBps]);
 }

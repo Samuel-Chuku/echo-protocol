@@ -153,6 +153,74 @@ export async function activity(opts: { event?: string; marketId?: number; actor?
   });
 }
 
+// ── Disputes console ─────────────────────────────────────────────────────────
+
+const SUBJECT_LABEL = ['BountyFinding', 'ModeAStake', 'TierJobRejection'] as const;
+const DISPUTE_STATUS = ['Open', 'Resolved'] as const;
+
+export interface DisputeRow {
+  id: number;
+  subject: number;
+  subjectLabel: string;
+  marketId: number | null;
+  target: number | null;
+  status: number;
+  statusLabel: string;
+  opener: string | null;
+  counter: string | null;
+  bondUsdc: string;
+  forOpener: number;
+  against: number;
+  countered: boolean;
+  createdAt: number;
+}
+
+export async function listDisputes(opts: { status?: number; limit?: number } = {}): Promise<DisputeRow[]> {
+  const limit = Math.min(opts.limit ?? 100, 300);
+  const where = opts.status !== undefined && !Number.isNaN(opts.status) ? sql`WHERE status = ${opts.status}` : sql``;
+  const rows = await sql<Array<Record<string, unknown>>>`
+    SELECT id, subject, market_id, target, status, opener, counter, bond, for_opener, against, created_at
+    FROM disputes ${where} ORDER BY id DESC LIMIT ${limit}
+  `;
+  return rows.map((r) => ({
+    id: Number(r.id),
+    subject: Number(r.subject),
+    subjectLabel: SUBJECT_LABEL[Number(r.subject)] ?? `subject ${r.subject}`,
+    marketId: r.market_id != null ? Number(r.market_id) : null,
+    target: r.target != null ? Number(r.target) : null,
+    status: Number(r.status),
+    statusLabel: DISPUTE_STATUS[Number(r.status)] ?? `status ${r.status}`,
+    opener: (r.opener as string) || null,
+    counter: (r.counter as string) || null,
+    bondUsdc: usdc(r.bond),
+    forOpener: Number(r.for_opener ?? 0),
+    against: Number(r.against ?? 0),
+    countered: Boolean(r.counter),
+    createdAt: Number(r.created_at ?? 0),
+  }));
+}
+
+// ── Juror roster ─────────────────────────────────────────────────────────────
+// Fold the DisputeResolver's JurorSet(juror, active) events into the current seated set. Read from
+// the indexer's event log — no extra on-chain calls. Latest event per juror wins.
+
+export async function jurorRoster(): Promise<string[]> {
+  const rows = await sql<Array<{ args: string; block_number: number; log_index: number }>>`
+    SELECT args, block_number, log_index FROM events
+    WHERE event_name = 'JurorSet' ORDER BY block_number ASC, log_index ASC
+  `;
+  const state = new Map<string, boolean>();
+  for (const r of rows) {
+    try {
+      const a = JSON.parse(r.args) as { juror?: string; active?: boolean };
+      if (a.juror) state.set(String(a.juror).toLowerCase(), Boolean(a.active));
+    } catch {
+      /* skip malformed */
+    }
+  }
+  return [...state.entries()].filter(([, active]) => active).map(([juror]) => juror);
+}
+
 // ── Metrics (for charts + tiles) ─────────────────────────────────────────────
 
 export async function metrics(): Promise<Record<string, unknown>> {

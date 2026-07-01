@@ -8,6 +8,7 @@ import { useAccount } from 'wagmi';
 import { EchoMode, buildMetadata, CONTRACTS } from '@echo/sdk';
 import { useEcho } from '@/lib/sdk';
 import { useAgent } from '@/lib/agent';
+import { useFlag } from '@/lib/flags';
 import { Section, Card, Field } from '@/components/ui';
 import { ApproveCreate } from '@/components/ApproveCreate';
 import { IdentityBanner } from '@/components/IdentityBanner';
@@ -42,11 +43,19 @@ export default function HirePage() {
 
 function CreateMarket({ sdk, account, agentId, onCreated }: { sdk: ReturnType<typeof useEcho>['sdk']; account?: `0x${string}`; agentId: string; onCreated: () => void }) {
   const [type, setType] = useState<EchoMode | null>(null);
-  const need = !account || !agentId;
+  const paused = useFlag('web.pauseMarketCreation');
+  const need = !account || !agentId || paused;
+
+  const pausedNotice = paused && (
+    <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-3 py-2 mb-2">
+      New market creation is temporarily paused by the operator. Existing markets are unaffected.
+    </p>
+  );
 
   if (type === null) {
     return (
       <Section title="Create work" desc="Pick the shape that fits. You can manage it below once it's live.">
+        {pausedNotice}
         {[EchoMode.OpenMarket, EchoMode.DirectJob, EchoMode.Bounty].map((m) => (
           <button key={m} onClick={() => setType(m)} className="text-left p-5 rounded-2xl border border-gray-200 bg-white hover:border-gray-900 hover:shadow-sm transition">
             <span className={`inline-block rounded px-2 py-0.5 text-xs font-medium ${modeTagClass(m)}`}>{modeName(m)}</span>
@@ -62,7 +71,8 @@ function CreateMarket({ sdk, account, agentId, onCreated }: { sdk: ReturnType<ty
     <Section title={`Create — ${modeName(type)}`} desc="Each create approves the exact USDC it needs, then funds the escrow in one go.">
       <div className="sm:col-span-2">
         <button onClick={() => setType(null)} className="text-xs text-gray-500 hover:text-gray-900 mb-3">← pick a different type</button>
-        {need && <p className="text-xs text-amber-600 mb-2">Connect a wallet and register your identity (above) first.</p>}
+        {pausedNotice}
+        {(!account || !agentId) && <p className="text-xs text-amber-600 mb-2">Connect a wallet and register your identity (above) first.</p>}
         {type === EchoMode.OpenMarket && <OpenForm sdk={sdk} account={account} agentId={agentId} disabled={need} onCreated={onCreated} />}
         {type === EchoMode.DirectJob && <DirectForm sdk={sdk} account={account} agentId={agentId} disabled={need} onCreated={onCreated} />}
         {type === EchoMode.Bounty && <BountyForm sdk={sdk} account={account} agentId={agentId} disabled={need} onCreated={onCreated} />}

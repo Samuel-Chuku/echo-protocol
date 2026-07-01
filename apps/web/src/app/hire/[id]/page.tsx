@@ -7,6 +7,7 @@ import { useQuery, gql } from 'urql';
 import { EchoMode, CONTRACTS } from '@echo/sdk';
 import { useEcho } from '@/lib/sdk';
 import { useContent } from '@/lib/content';
+import { useFlag } from '@/lib/flags';
 import { Section, Card, Field, KV } from '@/components/ui';
 import { Command } from '@/components/Command';
 import { Receipt } from '@/components/Receipt';
@@ -620,6 +621,7 @@ function ApplicantTierJobs({ sdk, account, marketId, tierJobIds, onDone }: {
   type Job = { jobId: bigint; status: number; tier: number; tierAmount: bigint; revisionUsed: boolean };
   const [jobs, setJobs] = useState<Job[]>([]);
   const [rejectReason, setRejectReason] = useState('');
+  const hideReject = useFlag('web.hideReject');
   const { store } = useContent();
   const idsKey = tierJobIds.map((j) => j.toString()).join(',');
 
@@ -672,16 +674,18 @@ function ApplicantTierJobs({ sdk, account, marketId, tierJobIds, onDone }: {
                     <Command label={`Accept & pay ${usdc(j.tierAmount)}`} disabled={!account}
                       onDone={() => { load(); onDone(); }}
                       run={() => sdk.completeTierJob(j.jobId, scope('accept'), account)} />
-                    <Command label="Reject" tone="neutral" disabled={!account}
-                      onDone={() => { setRejectReason(''); load(); onDone(); }}
-                      run={async () => {
-                        // Store the (optional) reason in the content channel BEFORE rejecting, so the
-                        // worker can read why. Authored by the requester = the job's evaluator.
-                        if (rejectReason.trim()) {
-                          await store(Number(marketId), 'reject', j.jobId.toString(), rejectReason.trim(), account);
-                        }
-                        return sdk.rejectTierJob(j.jobId, scope('reject'), account);
-                      }} />
+                    {!hideReject && (
+                      <Command label="Reject" tone="neutral" disabled={!account}
+                        onDone={() => { setRejectReason(''); load(); onDone(); }}
+                        run={async () => {
+                          // Store the (optional) reason in the content channel BEFORE rejecting, so the
+                          // worker can read why. Authored by the requester = the job's evaluator.
+                          if (rejectReason.trim()) {
+                            await store(Number(marketId), 'reject', j.jobId.toString(), rejectReason.trim(), account);
+                          }
+                          return sdk.rejectTierJob(j.jobId, scope('reject'), account);
+                        }} />
+                    )}
                     <Command label="Request revision" tone="neutral" disabled={!account || j.revisionUsed}
                       onDone={() => { load(); onDone(); }}
                       run={() => sdk.requestRevision(j.jobId, account)} />

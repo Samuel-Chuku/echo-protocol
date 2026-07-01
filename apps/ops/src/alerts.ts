@@ -53,7 +53,7 @@ export async function alerts(): Promise<Alert[]> {
   // Stale open disputes (status 0 = open, 1 = countered)
   try {
     const [row] = await sql<Array<{ n: number }>>`
-      SELECT COUNT(*)::int AS n FROM disputes WHERE status IN (0, 1) AND created_at < ${now - DISPUTE_STALE_SECS}
+      SELECT COUNT(*)::int AS n FROM disputes WHERE status = 0 AND created_at < ${now - DISPUTE_STALE_SECS}
     `;
     if (Number(row?.n ?? 0) > 0) out.push({ level: 'warn', title: 'Stale disputes', detail: `${row.n} open >24h — may need a juror` });
   } catch {

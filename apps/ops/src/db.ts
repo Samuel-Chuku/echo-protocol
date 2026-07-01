@@ -138,7 +138,7 @@ export async function disputeCounts(): Promise<{ total: number; open: number }> 
   try {
     const [row] = await sql<{ total: number; open: number }[]>`
       SELECT COUNT(*)::int AS total,
-             COUNT(*) FILTER (WHERE status IN (0, 1))::int AS open
+             COUNT(*) FILTER (WHERE status = 0)::int AS open
       FROM disputes
     `;
     return { total: Number(row?.total ?? 0), open: Number(row?.open ?? 0) };
