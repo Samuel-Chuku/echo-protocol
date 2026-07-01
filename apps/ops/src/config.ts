@@ -6,7 +6,12 @@ const pk = (process.env.DEPLOYER_PRIVATE_KEY || '').trim();
 export const config = {
   port: Number(process.env.OPS_PORT || '4100'),
   host: process.env.OPS_HOST || '127.0.0.1',
-  adminToken: (process.env.OPS_ADMIN_TOKEN || '').trim(),
+
+  // Authenticator (TOTP) login. Generate with `pnpm --filter @echo/ops totp:setup`, enroll the QR,
+  // then log in with the rotating 6-digit code. A valid code mints a session token good for
+  // OPS_SESSION_TTL_MIN minutes.
+  totpSecret: (process.env.OPS_TOTP_SECRET || '').trim(),
+  sessionTtlMin: Number(process.env.OPS_SESSION_TTL_MIN || '60'),
 
   rpcUrl: process.env.ARC_RPC_URL || 'https://rpc.testnet.arc.network',
   databaseUrl: process.env.DATABASE_URL || 'postgres://postgres:postgres@localhost:5432/echo_indexer',
@@ -21,6 +26,6 @@ export const config = {
 /** On-chain writes need a signing key; without one the dashboard is monitoring + flags only. */
 export const writesEnabled = Boolean(config.deployerKey);
 
-if (!config.adminToken) {
-  console.warn('[ops] WARNING: OPS_ADMIN_TOKEN is empty — refusing to expose admin routes. Set it in .env.');
+if (!config.totpSecret) {
+  console.warn('[ops] WARNING: OPS_TOTP_SECRET is empty — admin login disabled. Run `pnpm --filter @echo/ops totp:setup`.');
 }

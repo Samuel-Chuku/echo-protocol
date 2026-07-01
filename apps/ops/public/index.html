@@ -12,52 +12,85 @@
     * { box-sizing: border-box; }
     body { margin: 0; font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
            background: var(--bg); color: var(--text); }
-    header { display: flex; align-items: center; gap: 12px; padding: 14px 20px; border-bottom: 1px solid var(--line);
-             position: sticky; top: 0; background: var(--bg); z-index: 5; }
+    header { display: flex; align-items: center; gap: 12px; padding: 12px 20px; border-bottom: 1px solid var(--line);
+             position: sticky; top: 0; background: var(--bg); z-index: 20; }
     header h1 { font-size: 16px; margin: 0; font-weight: 600; letter-spacing: .3px; }
     .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
     .dot.ok { background: var(--ok); } .dot.bad { background: var(--bad); }
     .spacer { flex: 1; }
-    input[type=text], input[type=password], input[type=number] {
-      background: var(--panel2); border: 1px solid var(--line); color: var(--text);
+    .tabs { display: flex; gap: 4px; padding: 0 14px; border-bottom: 1px solid var(--line);
+            position: sticky; top: 49px; background: var(--bg); z-index: 19; overflow-x: auto; }
+    .tab { padding: 11px 14px; cursor: pointer; color: var(--muted); border-bottom: 2px solid transparent;
+           white-space: nowrap; font-weight: 500; }
+    .tab:hover { color: var(--text); }
+    .tab.active { color: var(--text); border-bottom-color: var(--accent); }
+    input, select { background: var(--panel2); border: 1px solid var(--line); color: var(--text);
       border-radius: 8px; padding: 8px 10px; font: inherit; outline: none; }
-    input:focus { border-color: var(--accent); }
+    input:focus, select:focus { border-color: var(--accent); }
     button { background: var(--accent); color: #fff; border: 0; border-radius: 8px; padding: 8px 14px;
              font: inherit; font-weight: 600; cursor: pointer; }
     button.secondary { background: var(--panel2); border: 1px solid var(--line); color: var(--text); }
+    button.mini { padding: 4px 9px; font-size: 12px; }
     button:disabled { opacity: .5; cursor: not-allowed; }
-    main { padding: 20px; display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
-           max-width: 1200px; margin: 0 auto; }
+    main { padding: 18px 20px 60px; max-width: 1240px; margin: 0 auto; }
+    .pane { display: none; }
+    .pane.active { display: block; }
+    .grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); }
     .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
-    .card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted);
-               margin: 0 0 12px; }
+    .card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); margin: 0 0 12px; }
     .row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 7px 0;
            border-bottom: 1px solid var(--panel2); }
     .row:last-child { border-bottom: 0; }
     .k { color: var(--muted); } .v { font-variant-numeric: tabular-nums; text-align: right; word-break: break-all; }
     .v.ok { color: var(--ok); } .v.bad { color: var(--bad); } .v.warn { color: var(--warn); }
     .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
-    /* toggle switch */
+    /* tiles */
+    .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 16px; }
+    .tile { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+    .tile .lbl { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .5px; }
+    .tile .num { font-size: 24px; font-weight: 700; font-variant-numeric: tabular-nums; margin-top: 4px; }
+    /* alerts */
+    .alert { display: flex; gap: 10px; align-items: baseline; padding: 9px 12px; border-radius: 8px; margin-bottom: 8px;
+             border-left: 3px solid var(--muted); background: var(--panel2); }
+    .alert.ok { border-left-color: var(--ok); } .alert.warn { border-left-color: var(--warn); }
+    .alert.critical { border-left-color: var(--bad); }
+    .alert .at { font-weight: 600; } .alert .ad { color: var(--muted); font-size: 13px; }
+    /* tables */
+    table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
+    table.tbl th { text-align: left; color: var(--muted); font-weight: 500; padding: 8px 10px; border-bottom: 1px solid var(--line);
+                   position: sticky; top: 0; background: var(--panel); }
+    table.tbl td { padding: 8px 10px; border-bottom: 1px solid var(--panel2); vertical-align: top; }
+    table.tbl tr.clickable { cursor: pointer; }
+    table.tbl tr.clickable:hover td { background: var(--panel2); }
+    .tblwrap { max-height: 66vh; overflow: auto; border: 1px solid var(--line); border-radius: 12px; }
+    .badge { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px; border: 1px solid var(--line);
+             background: var(--panel2); color: var(--muted); }
+    .badge.active { color: var(--ok); border-color: var(--ok); }
+    .filters { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; align-items: center; }
     .sw { position: relative; width: 42px; height: 24px; flex: none; }
     .sw input { opacity: 0; width: 0; height: 0; }
-    .sw span { position: absolute; inset: 0; background: var(--panel2); border: 1px solid var(--line);
-               border-radius: 999px; transition: .15s; }
-    .sw span::before { content: ""; position: absolute; height: 18px; width: 18px; left: 2px; top: 2px;
-                       background: var(--muted); border-radius: 50%; transition: .15s; }
+    .sw span { position: absolute; inset: 0; background: var(--panel2); border: 1px solid var(--line); border-radius: 999px; transition: .15s; }
+    .sw span::before { content: ""; position: absolute; height: 18px; width: 18px; left: 2px; top: 2px; background: var(--muted); border-radius: 50%; transition: .15s; }
     .sw input:checked + span { background: rgba(63,185,80,.25); border-color: var(--ok); }
     .sw input:checked + span::before { transform: translateX(18px); background: var(--ok); }
     .sw input:disabled + span { opacity: .5; }
-    .field { display: flex; gap: 8px; margin-top: 8px; }
-    .field input { flex: 1; }
+    .field { display: flex; gap: 8px; margin-top: 8px; } .field input { flex: 1; }
     .hint { color: var(--muted); font-size: 12px; margin: 2px 0 10px; }
+    a { color: var(--accent); text-decoration: none; } a:hover { text-decoration: underline; }
+    /* drawer */
+    #drawer { position: fixed; top: 0; right: 0; height: 100vh; width: min(600px, 94vw); background: var(--panel);
+              border-left: 1px solid var(--line); transform: translateX(100%); transition: transform .18s ease;
+              z-index: 40; overflow: auto; padding: 18px; }
+    #drawer.open { transform: translateX(0); }
+    #drawer h2 { margin: 0 0 4px; } #drawer h3 { font-size: 12px; text-transform: uppercase; color: var(--muted); margin: 18px 0 6px; }
+    #scrim { position: fixed; inset: 0; background: rgba(0,0,0,.5); opacity: 0; pointer-events: none; transition: .18s; z-index: 39; }
+    #scrim.open { opacity: 1; pointer-events: auto; }
     #toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: var(--panel2);
-             border: 1px solid var(--line); padding: 10px 16px; border-radius: 10px; opacity: 0; transition: .2s;
-             max-width: 90vw; }
-    #toast.show { opacity: 1; }
-    #toast.ok { border-color: var(--ok); } #toast.bad { border-color: var(--bad); }
+             border: 1px solid var(--line); padding: 10px 16px; border-radius: 10px; opacity: 0; transition: .2s; z-index: 50; max-width: 90vw; }
+    #toast.show { opacity: 1; } #toast.ok { border-color: var(--ok); } #toast.bad { border-color: var(--bad); }
     #gate { max-width: 420px; margin: 80px auto; }
     .hidden { display: none !important; }
-    a { color: var(--accent); }
+    svg.spark { display: block; width: 100%; height: 46px; }
   </style>
 </head>
 <body>
@@ -67,175 +100,332 @@
     <span id="writeBadge" class="hint"></span>
     <span class="spacer"></span>
     <span id="lastUpdate" class="hint"></span>
-    <button class="secondary" id="refreshBtn">Refresh</button>
-    <button class="secondary" id="logoutBtn">Lock</button>
+    <button class="secondary mini" id="refreshBtn">Refresh</button>
+    <button class="secondary mini" id="logoutBtn">Lock</button>
   </header>
 
-  <!-- Token gate -->
+  <nav class="tabs hidden" id="tabs">
+    <div class="tab active" data-tab="overview">Overview</div>
+    <div class="tab" data-tab="markets">Markets</div>
+    <div class="tab" data-tab="activity">Activity</div>
+    <div class="tab" data-tab="audit">Audit</div>
+    <div class="tab" data-tab="controls">Controls</div>
+    <div class="tab" data-tab="flags">Flags</div>
+  </nav>
+
+  <!-- Auth gate -->
   <div id="gate" class="card">
-    <h2>Admin token</h2>
-    <p class="hint">Enter the <span class="mono">OPS_ADMIN_TOKEN</span> from the server's <span class="mono">.env</span>. Stored only in this browser.</p>
+    <h2>Authenticator code</h2>
+    <p class="hint">Enter the current 6-digit code from your authenticator app. A session lasts ~1h, then asks again.</p>
     <div class="field">
-      <input type="password" id="tokenInput" placeholder="Bearer token" />
-      <button id="unlockBtn">Unlock</button>
+      <input type="text" id="codeInput" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="123456" />
+      <button id="unlockBtn">Sign in</button>
     </div>
   </div>
 
   <main id="app" class="hidden">
-    <!-- Status -->
-    <section class="card">
-      <h2>Chain &amp; Indexer</h2>
-      <div class="row"><span class="k">Chain head</span><span class="v mono" id="s-head">—</span></div>
-      <div class="row"><span class="k">Indexer</span><span class="v" id="s-indexer">—</span></div>
-      <div class="row"><span class="k">Cursor block</span><span class="v mono" id="s-cursor">—</span></div>
-      <div class="row"><span class="k">Lag (blocks)</span><span class="v mono" id="s-lag">—</span></div>
-      <div class="row"><span class="k">Events indexed</span><span class="v mono" id="s-events">—</span></div>
-      <div class="row"><span class="k">Disputes (open / total)</span><span class="v mono" id="s-disputes">—</span></div>
-    </section>
-
-    <!-- Deployer / ownership -->
-    <section class="card">
-      <h2>Deployer &amp; Ownership</h2>
-      <div class="row"><span class="k">Deployer</span><span class="v mono" id="s-deployer">—</span></div>
-      <div class="row"><span class="k">USDC balance</span><span class="v mono" id="s-balance">—</span></div>
-      <div class="row"><span class="k">Writes</span><span class="v" id="s-writes">—</span></div>
-      <div class="row"><span class="k">Owns DisputeResolver</span><span class="v" id="o-dr">—</span></div>
-      <div class="row"><span class="k">Owns MarketRegistry</span><span class="v" id="o-mr">—</span></div>
-      <div class="row"><span class="k">Owns EchoHook</span><span class="v" id="o-hook">—</span></div>
-      <div class="row"><span class="k">Owns ValidationGate</span><span class="v" id="o-vg">—</span></div>
-    </section>
-
-    <!-- On-chain controls -->
-    <section class="card">
-      <h2>On-chain controls (owner-only)</h2>
-      <div class="row">
-        <span class="k">Mode-A staking</span>
-        <label class="sw"><input type="checkbox" id="t-modeA" /><span></span></label>
-      </div>
-      <p class="hint">Seat / remove a juror</p>
-      <div class="field">
-        <input type="text" id="jurorAddr" placeholder="0x juror address" />
-        <button id="jurorOn">Seat</button>
-        <button class="secondary" id="jurorOff">Remove</button>
-      </div>
-      <p class="hint">Attester allow / deny (ValidationGate)</p>
-      <div class="field">
-        <input type="text" id="attesterAddr" placeholder="0x attester address" />
-        <button id="attesterOn">Allow</button>
-        <button class="secondary" id="attesterOff">Deny</button>
+    <!-- OVERVIEW -->
+    <section class="pane active" id="pane-overview">
+      <div id="alerts"></div>
+      <div class="tiles" id="tiles"></div>
+      <div class="grid">
+        <section class="card">
+          <h2>Events / day (14d)</h2>
+          <div id="chart-events"></div>
+        </section>
+        <section class="card">
+          <h2>Markets created / day (14d)</h2>
+          <div id="chart-markets"></div>
+        </section>
+        <section class="card">
+          <h2>Chain &amp; Indexer</h2>
+          <div class="row"><span class="k">Chain head</span><span class="v mono" id="s-head">—</span></div>
+          <div class="row"><span class="k">Indexer</span><span class="v" id="s-indexer">—</span></div>
+          <div class="row"><span class="k">Cursor block</span><span class="v mono" id="s-cursor">—</span></div>
+          <div class="row"><span class="k">Lag (blocks)</span><span class="v mono" id="s-lag">—</span></div>
+          <div class="row"><span class="k">Disputes (open / total)</span><span class="v mono" id="s-disputes">—</span></div>
+        </section>
+        <section class="card">
+          <h2>Deployer &amp; Ownership</h2>
+          <div class="row"><span class="k">Deployer</span><span class="v mono" id="s-deployer">—</span></div>
+          <div class="row"><span class="k">USDC balance</span><span class="v mono" id="s-balance">—</span></div>
+          <div class="row"><span class="k">Writes</span><span class="v" id="s-writes">—</span></div>
+          <div class="row"><span class="k">Owns DisputeResolver</span><span class="v" id="o-dr">—</span></div>
+          <div class="row"><span class="k">Owns MarketRegistry</span><span class="v" id="o-mr">—</span></div>
+          <div class="row"><span class="k">Owns EchoHook</span><span class="v" id="o-hook">—</span></div>
+          <div class="row"><span class="k">Owns ValidationGate</span><span class="v" id="o-vg">—</span></div>
+        </section>
       </div>
     </section>
 
-    <!-- Feature flags -->
-    <section class="card">
-      <h2>Feature flags</h2>
-      <p class="hint">Off-chain toggles. <span class="mono">web.*</span> read by the frontend, <span class="mono">indexer.*</span> by the indexer.</p>
-      <div id="flags"></div>
+    <!-- MARKETS -->
+    <section class="pane" id="pane-markets">
+      <div class="filters">
+        <input type="text" id="mFilterQ" placeholder="search requester / worker / id" style="min-width:240px" />
+        <select id="mFilterStatus"><option value="">any status</option><option>active</option><option>closed</option><option>settled</option><option>completed</option></select>
+        <select id="mFilterMode"><option value="">any mode</option><option value="0">Open/Reveal</option><option value="1">DirectJob</option><option value="2">Bounty</option></select>
+        <button class="mini" id="mApply">Apply</button>
+        <span class="hint" id="mCount"></span>
+      </div>
+      <div class="tblwrap">
+        <table class="tbl">
+          <thead><tr><th>#</th><th>Mode</th><th>Status</th><th>Requester</th><th>Worker</th><th>Escrow</th><th>Appl.</th><th>Created</th></tr></thead>
+          <tbody id="mBody"><tr><td colspan="8" class="hint">Loading…</td></tr></tbody>
+        </table>
+      </div>
     </section>
 
-    <!-- Indexer controls -->
-    <section class="card">
-      <h2>Indexer controls</h2>
-      <p class="hint">Rewind the cursor to re-ingest from a block (the running loop catches up automatically).</p>
-      <div class="field">
-        <input type="number" id="reindexBlock" placeholder="block number" />
-        <button id="reindexBtn">Re-index from</button>
+    <!-- ACTIVITY -->
+    <section class="pane" id="pane-activity">
+      <div class="filters">
+        <input type="text" id="aFilterEvent" placeholder="event name (e.g. MarketCreated)" style="min-width:220px" />
+        <input type="text" id="aFilterActor" placeholder="actor address" style="min-width:220px" />
+        <input type="number" id="aFilterMarket" placeholder="market id" style="width:120px" />
+        <button class="mini" id="aApply">Apply</button>
+        <label class="hint" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="aLive" checked style="width:auto"> live</label>
       </div>
+      <div class="tblwrap">
+        <table class="tbl">
+          <thead><tr><th>Time</th><th>Event</th><th>Market</th><th>Actor</th><th>Block</th><th>Tx</th></tr></thead>
+          <tbody id="aBody"><tr><td colspan="6" class="hint">Loading…</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- AUDIT -->
+    <section class="pane" id="pane-audit">
+      <p class="hint">Every admin action taken through this dashboard. Append-only.</p>
+      <div class="tblwrap">
+        <table class="tbl">
+          <thead><tr><th>Time</th><th>Action</th><th>Detail</th><th>Actor</th><th>Tx</th></tr></thead>
+          <tbody id="auBody"><tr><td colspan="5" class="hint">Loading…</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- CONTROLS -->
+    <section class="pane" id="pane-controls">
+      <div class="grid">
+        <section class="card">
+          <h2>On-chain controls (owner-only)</h2>
+          <div class="row">
+            <span class="k">Mode-A staking</span>
+            <label class="sw"><input type="checkbox" id="t-modeA" /><span></span></label>
+          </div>
+          <p class="hint">Seat / remove a juror</p>
+          <div class="field">
+            <input type="text" id="jurorAddr" placeholder="0x juror address" />
+            <button id="jurorOn">Seat</button>
+            <button class="secondary" id="jurorOff">Remove</button>
+          </div>
+          <p class="hint">Attester allow / deny (ValidationGate)</p>
+          <div class="field">
+            <input type="text" id="attesterAddr" placeholder="0x attester address" />
+            <button id="attesterOn">Allow</button>
+            <button class="secondary" id="attesterOff">Deny</button>
+          </div>
+        </section>
+        <section class="card">
+          <h2>Indexer controls</h2>
+          <p class="hint">Rewind the cursor to re-ingest from a block (the running loop catches up automatically).</p>
+          <div class="field">
+            <input type="number" id="reindexBlock" placeholder="block number" />
+            <button id="reindexBtn">Re-index from</button>
+          </div>
+        </section>
+      </div>
+    </section>
+
+    <!-- FLAGS -->
+    <section class="pane" id="pane-flags">
+      <section class="card" style="max-width:640px">
+        <h2>Feature flags</h2>
+        <p class="hint"><span class="mono">web.*</span> read by the frontend, <span class="mono">indexer.*</span> by the indexer.</p>
+        <div id="flags"></div>
+      </section>
     </section>
   </main>
 
+  <div id="scrim"></div>
+  <div id="drawer"></div>
   <div id="toast"></div>
 
   <script>
     const $ = (id) => document.getElementById(id);
+    const EXPLORER = 'https://testnet.arcscan.app';
     let token = localStorage.getItem('ops_token') || '';
+    let activeTab = 'overview';
 
-    function toast(msg, kind) {
-      const t = $('toast'); t.textContent = msg; t.className = 'show ' + (kind || '');
-      setTimeout(() => (t.className = kind || ''), 3200);
-    }
+    function toast(msg, kind) { const t = $('toast'); t.textContent = msg; t.className = 'show ' + (kind || ''); setTimeout(() => (t.className = kind || ''), 3200); }
     async function api(path, opts = {}) {
-      const res = await fetch(path, {
-        ...opts,
-        headers: { 'content-type': 'application/json', authorization: 'Bearer ' + token, ...(opts.headers || {}) },
-      });
+      const res = await fetch(path, { ...opts, headers: { 'content-type': 'application/json', authorization: 'Bearer ' + token, ...(opts.headers || {}) } });
       const body = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(body.error || res.status);
+      if (!res.ok) { if (res.status === 401) lock(); throw new Error(body.error || res.status); }
       return body;
     }
     const short = (a) => (a ? a.slice(0, 6) + '…' + a.slice(-4) : '—');
-    const ownCell = (el, o) => {
-      const e = $(el);
-      e.textContent = o.owner ? (o.isDeployer ? 'yes' : 'no — ' + short(o.owner)) : '—';
-      e.className = 'v ' + (o.isDeployer ? 'ok' : o.owner ? 'bad' : '');
-    };
+    const fmtTime = (ts) => (ts ? new Date(ts * 1000).toLocaleString() : '—');
+    const txLink = (h) => h ? `<a href="${EXPLORER}/tx/${h}" target="_blank" class="mono">${short(h)}↗</a>` : '—';
+    const addrLink = (a) => a ? `<a href="${EXPLORER}/address/${a}" target="_blank" class="mono">${short(a)}</a>` : '—';
+    const esc = (s) => String(s ?? '').replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
 
-    async function refresh() {
+    function svgSpark(points, color) {
+      const vals = points.map((p) => p.n);
+      const w = 300, h = 46, pad = 3;
+      if (!vals.length) return '<div class="hint">no data</div>';
+      const max = Math.max(...vals, 1), n = vals.length;
+      const x = (i) => pad + (i * (w - 2 * pad)) / Math.max(n - 1, 1);
+      const y = (v) => h - pad - (v / max) * (h - 2 * pad);
+      const line = vals.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
+      const area = `${pad},${h - pad} ${line} ${w - pad},${h - pad}`;
+      return `<svg class="spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">
+        <polygon points="${area}" fill="${color}22"/>
+        <polyline points="${line}" fill="none" stroke="${color}" stroke-width="1.5"/>
+      </svg><div class="hint">${vals.reduce((a,b)=>a+b,0)} total · peak ${max}</div>`;
+    }
+
+    // ── Overview ────────────────────────────────────────────────────────────
+    const ownCell = (el, o) => { const e = $(el); e.textContent = o.owner ? (o.isDeployer ? 'yes' : 'no — ' + short(o.owner)) : '—'; e.className = 'v ' + (o.isDeployer ? 'ok' : o.owner ? 'bad' : ''); };
+    async function loadOverview() {
       try {
-        const s = await api('/api/status');
+        const [s, m, al] = await Promise.all([api('/api/status'), api('/api/metrics'), api('/api/alerts')]);
         $('conn').className = 'dot ok';
+        // status
         $('s-head').textContent = s.chain.head ?? '—';
         $('s-indexer').innerHTML = s.indexer.up ? '<span class="ok">up</span>' : '<span class="bad">down</span>';
         $('s-cursor').textContent = s.indexer.cursor ?? '—';
-        const lag = s.indexer.lag;
-        $('s-lag').textContent = lag ?? '—';
-        $('s-lag').className = 'v mono ' + (lag == null ? '' : lag > 50 ? 'warn' : 'ok');
-        $('s-events').textContent = s.indexer.events;
+        const lag = s.indexer.lag; $('s-lag').textContent = lag ?? '—'; $('s-lag').className = 'v mono ' + (lag == null ? '' : lag > 50 ? 'warn' : 'ok');
         $('s-disputes').textContent = s.disputes.open + ' / ' + s.disputes.total;
         $('s-deployer').textContent = short(s.deployer.address);
         $('s-balance').textContent = s.deployer.usdcBalance != null ? s.deployer.usdcBalance + ' USDC' : '—';
         $('s-writes').innerHTML = s.deployer.writesEnabled ? '<span class="ok">enabled</span>' : '<span class="warn">read-only</span>';
         $('writeBadge').textContent = s.deployer.writesEnabled ? '' : 'read-only mode (no deployer key)';
-        ownCell('o-dr', s.ownership.disputeResolver);
-        ownCell('o-mr', s.ownership.marketRegistry);
-        ownCell('o-hook', s.ownership.echoHook);
-        ownCell('o-vg', s.ownership.validationGate);
-        if (s.disputeResolver) {
-          const m = $('t-modeA'); m.checked = s.disputeResolver.modeAStakeEnabled;
-          m.disabled = !s.deployer.writesEnabled;
-        }
-        // disable on-chain action buttons when read-only
-        const w = s.deployer.writesEnabled;
-        ['jurorOn', 'jurorOff', 'attesterOn', 'attesterOff'].forEach((id) => ($(id).disabled = !w));
+        ownCell('o-dr', s.ownership.disputeResolver); ownCell('o-mr', s.ownership.marketRegistry);
+        ownCell('o-hook', s.ownership.echoHook); ownCell('o-vg', s.ownership.validationGate);
+        if (s.disputeResolver) { const t = $('t-modeA'); t.checked = s.disputeResolver.modeAStakeEnabled; t.disabled = !s.deployer.writesEnabled; }
+        const w = s.deployer.writesEnabled; ['jurorOn','jurorOff','attesterOn','attesterOff'].forEach((id) => ($(id).disabled = !w));
+        // tiles
+        const t = m.totals || {};
+        $('tiles').innerHTML = [
+          ['Markets', t.markets ?? 0], ['Escrow locked', (m.escrowLockedUsdc ?? '0') + ' USDC'],
+          ['Disputes', t.disputes ?? 0], ['Participants', t.participants ?? 0], ['Events', t.events ?? 0],
+        ].map(([l, v]) => `<div class="tile"><div class="lbl">${l}</div><div class="num">${v}</div></div>`).join('');
+        // charts
+        $('chart-events').innerHTML = svgSpark(m.eventsPerDay || [], '#4f8cff');
+        $('chart-markets').innerHTML = svgSpark(m.marketsPerDay || [], '#3fb950');
+        // alerts
+        $('alerts').innerHTML = (al || []).map((a) => `<div class="alert ${a.level}"><span class="at">${esc(a.title)}</span><span class="ad">${esc(a.detail)}</span></div>`).join('');
         $('lastUpdate').textContent = 'updated ' + new Date().toLocaleTimeString();
-      } catch (e) {
-        $('conn').className = 'dot bad';
-        if (String(e.message) === '401') return lock();
-        toast('status: ' + e.message, 'bad');
-      }
+      } catch (e) { $('conn').className = 'dot bad'; if (String(e.message) !== '401') toast('overview: ' + e.message, 'bad'); }
     }
 
-    async function loadFlags() {
-      const flags = await api('/api/flags');
-      const box = $('flags'); box.innerHTML = '';
-      for (const f of flags) {
-        const row = document.createElement('div');
-        row.className = 'row';
-        row.innerHTML =
-          '<span class="k">' + f.label + '<br><span class="mono hint">' + f.key + '</span></span>' +
-          '<label class="sw"><input type="checkbox" ' + (f.enabled ? 'checked' : '') + '><span></span></label>';
-        const cb = row.querySelector('input');
-        cb.addEventListener('change', async () => {
-          try {
-            await api('/api/flags/' + encodeURIComponent(f.key), { method: 'POST', body: JSON.stringify({ enabled: cb.checked }) });
-            toast(f.key + ' → ' + (cb.checked ? 'ON' : 'OFF'), 'ok');
-          } catch (e) { cb.checked = !cb.checked; toast(e.message, 'bad'); }
-        });
-        box.appendChild(row);
-      }
-    }
-
-    async function onchain(path, body, label) {
+    // ── Markets ─────────────────────────────────────────────────────────────
+    async function loadMarkets() {
+      const p = new URLSearchParams();
+      if ($('mFilterQ').value.trim()) p.set('q', $('mFilterQ').value.trim());
+      if ($('mFilterStatus').value) p.set('status', $('mFilterStatus').value);
+      if ($('mFilterMode').value) p.set('mode', $('mFilterMode').value);
+      p.set('limit', '100');
       try {
-        const r = await api(path, { method: 'POST', body: JSON.stringify(body) });
-        toast(label + ' — tx ' + short(r.tx), 'ok');
-        setTimeout(refresh, 1500);
-      } catch (e) { toast(label + ': ' + e.message, 'bad'); }
+        const rows = await api('/api/markets?' + p.toString());
+        $('mCount').textContent = rows.length + ' shown';
+        $('mBody').innerHTML = rows.length ? rows.map((r) => `
+          <tr class="clickable" data-id="${r.id}">
+            <td class="mono">${r.id}</td><td>${r.modeLabel}</td>
+            <td><span class="badge ${r.status === 'active' ? 'active' : ''}">${esc(r.status)}</span></td>
+            <td>${addrLink(r.requester)}</td><td>${addrLink(r.worker)}</td>
+            <td class="mono">${r.escrowUsdc}</td><td class="mono">${r.applicantCount}</td>
+            <td class="hint">${fmtTime(r.createdAt)}</td>
+          </tr>`).join('') : '<tr><td colspan="8" class="hint">No markets match.</td></tr>';
+        $('mBody').querySelectorAll('tr.clickable').forEach((tr) => tr.addEventListener('click', () => openMarket(tr.dataset.id)));
+      } catch (e) { if (String(e.message) !== '401') $('mBody').innerHTML = `<tr><td colspan="8" class="bad">${esc(e.message)}</td></tr>`; }
+    }
+    function tableFrom(rows, cols) {
+      if (!rows || !rows.length) return '<div class="hint">none</div>';
+      return `<div class="tblwrap"><table class="tbl"><thead><tr>${cols.map((c) => `<th>${c[0]}</th>`).join('')}</tr></thead>
+        <tbody>${rows.map((r) => `<tr>${cols.map((c) => `<td>${c[1](r)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
+    }
+    async function openMarket(id) {
+      try {
+        const d = await api('/api/markets/' + id);
+        const mk = d.market;
+        $('drawer').innerHTML = `
+          <button class="secondary mini" id="drawerClose" style="float:right">Close</button>
+          <h2>Market #${mk.id}</h2>
+          <div class="hint">${mk.modeLabel} · <span class="badge ${mk.status==='active'?'active':''}">${esc(mk.status)}</span></div>
+          <div class="row"><span class="k">Requester</span><span class="v">${addrLink(mk.requester)}</span></div>
+          <div class="row"><span class="k">Worker</span><span class="v">${addrLink(mk.worker)}</span></div>
+          <div class="row"><span class="k">Escrow</span><span class="v mono">${mk.escrowUsdc} USDC</span></div>
+          <div class="row"><span class="k">Ghost deadline</span><span class="v hint">${mk.ghost_deadline?fmtTime(mk.ghost_deadline):'—'}</span></div>
+          <div class="row"><span class="k">Created</span><span class="v hint">${fmtTime(mk.created_at)}</span></div>
+          <h3>Applications (${d.applications.length})</h3>
+          ${tableFrom(d.applications, [['Participant',(r)=>addrLink(r.participant)],['Tier',(r)=>r.tier_reached],['Status',(r)=>esc(r.status)]])}
+          <h3>Findings (${d.findings.length})</h3>
+          ${tableFrom(d.findings, [['#',(r)=>r.idx],['Submitter',(r)=>addrLink(r.submitter)],['Status',(r)=>r.status],['Award',(r)=>r.awardUsdc]])}
+          <h3>Milestones (${d.milestones.length})</h3>
+          ${tableFrom(d.milestones, [['#',(r)=>r.idx],['Amount',(r)=>r.amountUsdc],['Status',(r)=>r.status]])}
+          <h3>Content (${d.contents.length})</h3>
+          ${tableFrom(d.contents, [['Kind',(r)=>esc(r.kind)],['Author',(r)=>addrLink(r.author)],['When',(r)=>fmtTime(r.created_at)]])}
+          <h3>Disputes (${d.disputes.length})</h3>
+          ${tableFrom(d.disputes, [['#',(r)=>r.id],['Status',(r)=>r.status],['For/Against',(r)=>`${r.for_opener}/${r.against}`],['Bond',(r)=>r.bondUsdc]])}`;
+        $('drawerClose').addEventListener('click', closeDrawer);
+        $('drawer').classList.add('open'); $('scrim').classList.add('open');
+      } catch (e) { if (String(e.message) !== '401') toast(e.message, 'bad'); }
+    }
+    function closeDrawer() { $('drawer').classList.remove('open'); $('scrim').classList.remove('open'); }
+
+    // ── Activity ────────────────────────────────────────────────────────────
+    async function loadActivity() {
+      const p = new URLSearchParams();
+      if ($('aFilterEvent').value.trim()) p.set('event', $('aFilterEvent').value.trim());
+      if ($('aFilterActor').value.trim()) p.set('actor', $('aFilterActor').value.trim());
+      if ($('aFilterMarket').value) p.set('market', $('aFilterMarket').value);
+      p.set('limit', '80');
+      try {
+        const rows = await api('/api/activity?' + p.toString());
+        $('aBody').innerHTML = rows.length ? rows.map((r) => `
+          <tr><td class="hint">${fmtTime(r.ts)}</td><td><span class="badge">${esc(r.event)}</span></td>
+          <td class="mono">${r.marketId ?? '—'}</td><td>${addrLink(r.actor)}</td>
+          <td class="mono">${r.block}</td><td>${txLink(r.tx)}</td></tr>`).join('')
+          : '<tr><td colspan="6" class="hint">No events.</td></tr>';
+      } catch (e) { if (String(e.message) !== '401') $('aBody').innerHTML = `<tr><td colspan="6" class="bad">${esc(e.message)}</td></tr>`; }
     }
 
-    // wire on-chain actions
-    $('t-modeA').addEventListener('change', (e) =>
-      onchain('/api/onchain/mode-a-stake', { enabled: e.target.checked }, 'Mode-A staking ' + (e.target.checked ? 'ON' : 'OFF')));
+    // ── Audit ───────────────────────────────────────────────────────────────
+    async function loadAudit() {
+      try {
+        const rows = await api('/api/audit?limit=200');
+        $('auBody').innerHTML = rows.length ? rows.map((r) => `
+          <tr><td class="hint">${fmtTime(r.ts)}</td><td><span class="badge">${esc(r.action)}</span></td>
+          <td class="mono">${esc(r.detail || '')}</td><td>${esc(r.actor || '')}</td><td>${txLink(r.tx)}</td></tr>`).join('')
+          : '<tr><td colspan="5" class="hint">No actions logged yet.</td></tr>';
+      } catch (e) { if (String(e.message) !== '401') $('auBody').innerHTML = `<tr><td colspan="5" class="bad">${esc(e.message)}</td></tr>`; }
+    }
+
+    // ── Flags ───────────────────────────────────────────────────────────────
+    async function loadFlags() {
+      try {
+        const flags = await api('/api/flags');
+        const box = $('flags'); box.innerHTML = '';
+        for (const f of flags) {
+          const row = document.createElement('div'); row.className = 'row';
+          row.innerHTML = `<span class="k">${esc(f.label)}<br><span class="mono hint">${esc(f.key)}</span></span><label class="sw"><input type="checkbox" ${f.enabled?'checked':''}><span></span></label>`;
+          const cb = row.querySelector('input');
+          cb.addEventListener('change', async () => {
+            try { await api('/api/flags/' + encodeURIComponent(f.key), { method: 'POST', body: JSON.stringify({ enabled: cb.checked }) }); toast(f.key + ' → ' + (cb.checked ? 'ON' : 'OFF'), 'ok'); }
+            catch (e) { cb.checked = !cb.checked; toast(e.message, 'bad'); }
+          });
+          box.appendChild(row);
+        }
+      } catch (e) { if (String(e.message) !== '401') toast('flags: ' + e.message, 'bad'); }
+    }
+
+    // ── On-chain actions ────────────────────────────────────────────────────
+    async function onchain(path, body, label) {
+      try { const r = await api(path, { method: 'POST', body: JSON.stringify(body) }); toast(label + ' — tx ' + short(r.tx), 'ok'); setTimeout(loadOverview, 1500); }
+      catch (e) { toast(label + ': ' + e.message, 'bad'); }
+    }
+    $('t-modeA').addEventListener('change', (e) => onchain('/api/onchain/mode-a-stake', { enabled: e.target.checked }, 'Mode-A staking ' + (e.target.checked ? 'ON' : 'OFF')));
     $('jurorOn').addEventListener('click', () => onchain('/api/onchain/juror', { address: $('jurorAddr').value.trim(), active: true }, 'Seat juror'));
     $('jurorOff').addEventListener('click', () => onchain('/api/onchain/juror', { address: $('jurorAddr').value.trim(), active: false }, 'Remove juror'));
     $('attesterOn').addEventListener('click', () => onchain('/api/onchain/attester', { address: $('attesterAddr').value.trim(), allowed: true }, 'Allow attester'));
@@ -243,29 +433,50 @@
     $('reindexBtn').addEventListener('click', async () => {
       const block = Number($('reindexBlock').value);
       if (!Number.isInteger(block) || block < 0) return toast('enter a valid block', 'bad');
-      try { const r = await api('/api/indexer/reindex', { method: 'POST', body: JSON.stringify({ block }) });
-        toast('cursor rewound to ' + r.cursor, 'ok'); setTimeout(refresh, 800);
-      } catch (e) { toast(e.message, 'bad'); }
+      try { const r = await api('/api/indexer/reindex', { method: 'POST', body: JSON.stringify({ block }) }); toast('cursor rewound to ' + r.cursor, 'ok'); } catch (e) { toast(e.message, 'bad'); }
     });
+    $('mApply').addEventListener('click', loadMarkets);
+    $('mFilterQ').addEventListener('keydown', (e) => e.key === 'Enter' && loadMarkets());
+    $('aApply').addEventListener('click', loadActivity);
 
-    // gate
+    // ── Tabs + polling ──────────────────────────────────────────────────────
+    const LOADERS = { overview: loadOverview, markets: loadMarkets, activity: loadActivity, audit: loadAudit, flags: loadFlags, controls: loadOverview };
+    function switchTab(name) {
+      activeTab = name;
+      document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t.dataset.tab === name));
+      document.querySelectorAll('.pane').forEach((p) => p.classList.toggle('active', p.id === 'pane-' + name));
+      (LOADERS[name] || (() => {}))();
+    }
+    document.querySelectorAll('.tab').forEach((t) => t.addEventListener('click', () => switchTab(t.dataset.tab)));
+    $('scrim').addEventListener('click', closeDrawer);
+
+    function tick() {
+      if (activeTab === 'overview' || activeTab === 'controls') loadOverview();
+      else if (activeTab === 'activity' && $('aLive').checked) loadActivity();
+    }
+
+    // ── Auth gate ───────────────────────────────────────────────────────────
     function unlock() {
-      $('gate').classList.add('hidden'); $('app').classList.remove('hidden');
-      refresh(); loadFlags();
-      clearInterval(window.__poll); window.__poll = setInterval(refresh, 10000);
+      $('gate').classList.add('hidden'); $('app').classList.remove('hidden'); $('tabs').classList.remove('hidden');
+      switchTab('overview'); loadFlags();
+      clearInterval(window.__poll); window.__poll = setInterval(tick, 6000);
     }
     function lock() {
-      token = ''; localStorage.removeItem('ops_token');
-      clearInterval(window.__poll);
-      $('app').classList.add('hidden'); $('gate').classList.remove('hidden');
+      token = ''; localStorage.removeItem('ops_token'); clearInterval(window.__poll);
+      $('app').classList.add('hidden'); $('tabs').classList.add('hidden'); $('gate').classList.remove('hidden');
     }
-    $('unlockBtn').addEventListener('click', () => {
-      token = $('tokenInput').value.trim();
-      if (!token) return toast('enter a token', 'bad');
-      localStorage.setItem('ops_token', token); unlock();
+    $('unlockBtn').addEventListener('click', async () => {
+      const code = $('codeInput').value.trim();
+      if (!/^\d{6}$/.test(code)) return toast('enter the 6-digit code', 'bad');
+      try {
+        const res = await fetch('/api/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code }) });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body.error || res.status);
+        token = body.token; localStorage.setItem('ops_token', token); $('codeInput').value = ''; unlock();
+      } catch (e) { toast('sign in: ' + e.message, 'bad'); }
     });
-    $('tokenInput').addEventListener('keydown', (e) => e.key === 'Enter' && $('unlockBtn').click());
-    $('refreshBtn').addEventListener('click', refresh);
+    $('codeInput').addEventListener('keydown', (e) => e.key === 'Enter' && $('unlockBtn').click());
+    $('refreshBtn').addEventListener('click', () => (LOADERS[activeTab] || loadOverview)());
     $('logoutBtn').addEventListener('click', lock);
 
     if (token) unlock();

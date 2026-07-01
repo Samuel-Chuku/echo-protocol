@@ -42,6 +42,48 @@ export async function migrate(): Promise<void> {
       ON CONFLICT (key) DO UPDATE SET label = EXCLUDED.label, category = EXCLUDED.category
     `;
   }
+  // Append-only record of every admin action taken through the dashboard (accountability).
+  await sql.unsafe(`
+    CREATE TABLE IF NOT EXISTS ops_audit_log (
+      id SERIAL PRIMARY KEY,
+      ts INTEGER NOT NULL,
+      actor TEXT,
+      action TEXT NOT NULL,
+      detail TEXT,
+      tx TEXT
+    );
+    CREATE INDEX IF NOT EXISTS ops_audit_ts ON ops_audit_log(ts DESC);
+  `);
+}
+
+// ── Audit log ────────────────────────────────────────────────────────────────
+
+export interface AuditEntry {
+  id: number;
+  ts: number;
+  actor: string | null;
+  action: string;
+  detail: string | null;
+  tx: string | null;
+}
+
+export async function recordAudit(
+  action: string,
+  detail: Record<string, unknown>,
+  meta: { actor?: string; tx?: string } = {},
+): Promise<void> {
+  const ts = Math.floor(Date.now() / 1000);
+  await sql`
+    INSERT INTO ops_audit_log (ts, actor, action, detail, tx)
+    VALUES (${ts}, ${meta.actor ?? 'admin'}, ${action}, ${JSON.stringify(detail)}, ${meta.tx ?? null})
+  `;
+}
+
+export async function listAudit(limit = 100): Promise<AuditEntry[]> {
+  return sql<AuditEntry[]>`
+    SELECT id, ts, actor, action, detail, tx
+    FROM ops_audit_log ORDER BY id DESC LIMIT ${Math.min(limit, 500)}
+  `;
 }
 
 export async function listFlags(): Promise<FeatureFlag[]> {
