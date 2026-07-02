@@ -101,7 +101,12 @@ export const isTxHash = (s: unknown): s is string => typeof s === 'string' && /^
 export const MODE_NAMES = ['Open / Reveal', 'Direct Job', 'Bounty'] as const;
 export const modeName = (m: number | bigint) => MODE_NAMES[Number(m)] ?? `mode ${m}`;
 
-/** Tailwind classes for a mode pill: 0 Open/Reveal (indigo), 1 DirectJob (emerald), 2 Bounty (amber). */
+/** Badge tone for a mode pill: 0 Open/Reveal -> teal, 1 DirectJob -> success (green), 2 Bounty -> warning (amber). */
+export const MODE_BADGE_TONE = ['teal', 'success', 'warning'] as const;
+export const modeBadgeTone = (m: number | bigint) => MODE_BADGE_TONE[Number(m)] ?? 'neutral';
+
+/** Light-theme mode-pill classes. Still used by the (light-themed) Receipt panel; the redesign moved
+ *  most surfaces to <Badge tone={modeBadgeTone(...)}> but Receipt was not re-themed. */
 export const MODE_TAG_CLASS = [
   'bg-indigo-100 text-indigo-700',
   'bg-emerald-100 text-emerald-700',
