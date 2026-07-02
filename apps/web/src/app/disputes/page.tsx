@@ -36,26 +36,26 @@ export default function DisputesPage() {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold mb-1">Disputes</h1>
-      <p className="text-sm text-gray-500 mb-6">The staked-jury rung. Each bond is approved automatically when you post it.</p>
+      <h1 className="text-2xl font-bold text-white mb-1">Disputes</h1>
+      <p className="text-sm text-white/50 mb-6">The staked-jury rung. Each bond is approved automatically when you post it.</p>
 
       {cfg && (
         <div className="mb-6">
           <KV rows={[
-            ['min bond', usdc(cfg.minBond)],
+            ['min bond', `$${usdc(cfg.minBond)}`],
             ['voting period', `${Number(cfg.votingPeriod) / 86400}d`],
             ['ModeAStake enabled', String(cfg.modeAStakeEnabled)],
             ['jurors seated', String(cfg.jurorCount)],
           ]} />
           {cfg.jurorCount === 0n && (
-            <p className="mt-2 text-xs text-amber-600">No jurors seated yet — disputes can be opened/countered but not voted/resolved until the owner runs setJuror().</p>
+            <p className="mt-2 text-xs text-warning">No jurors seated yet, disputes can be opened/countered but not voted/resolved until the owner runs setJuror().</p>
           )}
         </div>
       )}
 
       <Section title="Open a dispute">
         <Card title="Open finding dispute" hint="openFindingDispute — submitter contests a REJECTED bounty finding.">
-          <div className="grid grid-cols-3 gap-1">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-1">
             <Field label="marketId" value={marketId} onChange={(e) => setMarketId(e.target.value)} />
             <Field label="finding idx" value={findingIndex} onChange={(e) => setFindingIndex(e.target.value)} />
             <Field label="bond USDC" value={bond} onChange={(e) => setBond(e.target.value)} />
@@ -132,7 +132,7 @@ export default function DisputesPage() {
               ['market', String(d.marketId)],
               ['opener', short(d.opener)],
               ['counter', short(d.counter)],
-              ['bond', usdc(d.bond)],
+              ['bond', `$${usdc(d.bond)}`],
               ['for / against', `${d.forOpener} / ${d.against}`],
             ]} />
           )}

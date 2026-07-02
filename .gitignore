@@ -67,3 +67,8 @@ apps/web/tsconfig.tsbuildinfo
 # PERSONAL / LOCAL-ONLY DOCS
 # ═══════════════════════════════════════
 docs/guidelines/SMOKE_TEST.md
+
+# Brand docs / binaries — keep these out of the repo
+*.docx
+*.pdf
+/public/
