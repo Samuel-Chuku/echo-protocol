@@ -332,7 +332,7 @@
         $('s-head').textContent = s.chain.head ?? '—';
         $('s-indexer').innerHTML = s.indexer.up ? '<span class="ok">up</span>' : '<span class="bad">down</span>';
         $('s-cursor').textContent = s.indexer.cursor ?? '—';
-        const lag = s.indexer.lag; $('s-lag').textContent = lag ?? '—'; $('s-lag').className = 'v mono ' + (lag == null ? '' : lag > 50 ? 'warn' : 'ok');
+        const lag = s.indexer.lag; $('s-lag').textContent = lag ?? '—'; $('s-lag').className = 'v mono ' + (lag == null ? '' : lag > 5000 ? 'warn' : 'ok');
         $('s-disputes').textContent = s.disputes.open + ' / ' + s.disputes.total;
         $('s-deployer').textContent = short(s.deployer.address);
         $('s-balance').textContent = s.deployer.usdcBalance != null ? s.deployer.usdcBalance + ' USDC' : '—';

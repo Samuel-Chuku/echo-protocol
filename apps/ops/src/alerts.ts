@@ -11,12 +11,24 @@ export interface Alert {
 }
 
 // Thresholds — tune as the protocol grows.
-const LAG_WARN = 50; // blocks behind head
-const LAG_CRIT = 500;
+// Lag is measured in TIME, not blocks: Arc mints blocks so fast that a healthy, caught-up indexer
+// is always a few hundred blocks behind yet only seconds stale. Block-count thresholds cried wolf.
+const LAG_WARN_SECS = 60; // data older than this = worth a yellow flag
+const LAG_STALL_SECS = 300; // older than this AND not advancing = a real (red) stall
 const BALANCE_WARN_USDC = 1; // deployer gas (USDC) running low
 const BALANCE_CRIT_USDC = 0.2;
 const DISPUTE_STALE_SECS = 24 * 3600; // open dispute with no resolution
 const GHOST_SOON_SECS = 3600; // ghost deadline within the hour
+
+// Cross-request memory of the last cursor, so we can tell "backfilling (advancing)" from "stalled".
+let lastCursorSample: number | null = null;
+
+function humanDuration(s: number): string {
+  if (s < 90) return `${s}s`;
+  if (s < 5400) return `${Math.round(s / 60)}m`;
+  if (s < 172800) return `${Math.round(s / 3600)}h`;
+  return `${Math.round(s / 86400)}d`;
+}
 
 /** Compute the operator health signals shown as the Overview alert banner. */
 export async function alerts(): Promise<Alert[]> {
@@ -31,12 +43,36 @@ export async function alerts(): Promise<Alert[]> {
     out.push({ level: 'critical', title: 'RPC unreachable', detail: config.rpcUrl });
   }
   const cursor = await indexerCursor();
-  if (head != null && cursor != null) {
-    const lag = head - cursor;
-    if (lag >= LAG_CRIT) out.push({ level: 'critical', title: 'Indexer far behind', detail: `${lag} blocks behind head` });
-    else if (lag >= LAG_WARN) out.push({ level: 'warn', title: 'Indexer lagging', detail: `${lag} blocks behind head` });
-  } else if (cursor == null) {
+  if (cursor == null) {
     out.push({ level: 'warn', title: 'Indexer not started', detail: 'no cursor row yet' });
+  } else if (head != null) {
+    const blockLag = head - cursor;
+    // Time lag = how stale our newest ingested block is. Falls back to block count if the timestamp
+    // read fails.
+    let timeLag: number | null = null;
+    try {
+      const blk = await publicClient.getBlock({ blockNumber: BigInt(cursor) });
+      timeLag = Math.max(0, now - Number(blk.timestamp));
+    } catch {
+      /* fall through to the block-count fallback below */
+    }
+    // Advancing since the last check? First sample assumes yes, so a fresh backfill isn't cried as a stall.
+    const advancing = lastCursorSample === null ? true : cursor > lastCursorSample;
+    lastCursorSample = cursor;
+
+    if (timeLag != null) {
+      if (timeLag > LAG_STALL_SECS) {
+        out.push(
+          advancing
+            ? { level: 'warn', title: 'Indexer catching up', detail: `${humanDuration(timeLag)} behind, backfilling (${blockLag.toLocaleString()} blocks)` }
+            : { level: 'critical', title: 'Indexer stalled', detail: `${humanDuration(timeLag)} behind and not advancing` },
+        );
+      } else if (timeLag > LAG_WARN_SECS) {
+        out.push({ level: 'warn', title: 'Indexer lagging', detail: `${humanDuration(timeLag)} behind` });
+      }
+    } else if (blockLag > 50_000) {
+      out.push({ level: 'warn', title: 'Indexer lagging', detail: `${blockLag.toLocaleString()} blocks behind` });
+    }
   }
 
   // Deployer gas balance (only meaningful when a key is loaded)

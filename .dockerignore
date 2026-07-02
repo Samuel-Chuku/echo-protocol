@@ -1,0 +1,31 @@
+# Keep the build context small + force a clean pnpm install inside the image.
+**/node_modules
+.git
+.github
+
+# Secrets never enter the image (envs are provided at runtime via compose env_file).
+**/.env
+**/.env.*
+!**/.env.example
+
+# Build outputs / caches
+**/dist
+**/.next
+**/.turbo
+**/out
+**/coverage
+
+# Foundry artifacts (huge; the Node services don't need them). Keep the package.json.
+packages/contracts/cache
+packages/contracts/lib
+packages/contracts/broadcast
+packages/contracts/out
+
+# Local data / logs
+apps/indexer/*.db*
+**/*.log
+
+# Editor / OS
+.vscode
+.idea
+.DS_Store
