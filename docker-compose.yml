@@ -1,0 +1,53 @@
+# Always-on backends for Echo on a single VPS, fronted by Caddy (auto-HTTPS).
+#
+#   indexer  → api.$DOMAIN   (GraphQL, :4000)
+#   ops      → ops.$DOMAIN   (operator dashboard, :4100)
+#
+# Before `docker compose up -d --build`, on the VPS:
+#   1. Create apps/indexer/.env and apps/ops/.env (from their .env.example) — these hold
+#      DATABASE_URL (Supabase), ARC_RPC_URL, OPS_TOTP_SECRET, etc. They are gitignored, so
+#      they are NOT in the clone; you create them on the host.
+#   2. Set DOMAIN and ACME_EMAIL below (or in a root .env that compose reads).
+#
+# The app ports are NOT published to the host — only Caddy is. The backends are reachable
+# only inside the compose network and through Caddy.
+
+services:
+  indexer:
+    build:
+      context: .
+      args: { APP_DIR: apps/indexer }
+    env_file: [apps/indexer/.env]
+    restart: unless-stopped
+    expose: ["4000"]
+
+  ops:
+    build:
+      context: .
+      args: { APP_DIR: apps/ops }
+    env_file: [apps/ops/.env]
+    # Override the local-only bind so Caddy (a sibling container) can reach it. The container
+    # is not published to the host, so 0.0.0.0 here is still private to the compose network.
+    # Also reach the indexer by its service name, not 127.0.0.1 (which is the ops container itself).
+    environment:
+      OPS_HOST: 0.0.0.0
+      INDEXER_GRAPHQL_URL: http://indexer:4000/graphql
+    restart: unless-stopped
+    expose: ["4100"]
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in a root .env or the shell}
+      ACME_EMAIL: ${ACME_EMAIL:-admin@example.com}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on: [indexer, ops]
+
+volumes:
+  caddy_data:
+  caddy_config:

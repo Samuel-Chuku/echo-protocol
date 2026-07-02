@@ -8,6 +8,7 @@ import { Provider as UrqlProvider } from 'urql';
 import { config } from './wagmi';
 import { AgentProvider } from './agent';
 import { TxProvider } from './tx';
+import { FlagsProvider } from './flags';
 import { gqlClient } from './gql';
 
 const queryClient = new QueryClient();
@@ -21,7 +22,9 @@ export function Providers({ children, initialState }: { children: React.ReactNod
         <RainbowKitProvider>
           <UrqlProvider value={gqlClient}>
             <AgentProvider>
-              <TxProvider>{children}</TxProvider>
+              <TxProvider>
+                <FlagsProvider>{children}</FlagsProvider>
+              </TxProvider>
             </AgentProvider>
           </UrqlProvider>
         </RainbowKitProvider>
