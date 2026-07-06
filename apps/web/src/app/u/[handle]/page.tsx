@@ -152,10 +152,10 @@ export default function ProfilePage({ params }: { params: Promise<{ handle: stri
           {isNewUser ? (
             <div className="flex flex-col items-center text-center py-6 px-4">
               <div className="h-28 w-28 rounded-full border-4 border-teal-500/30 flex items-center justify-center">
-                <span className="text-lg font-bold text-white">0<span className="text-white/30 text-sm font-normal"> / 1000</span></span>
+                <span className="text-lg font-bold text-white/40">—<span className="text-white/25 text-sm font-normal"> / 1000</span></span>
               </div>
               <h3 className="mt-4 text-base font-semibold text-white">Start building your reputation</h3>
-              <p className="mt-1 text-sm text-white/50 max-w-sm">Complete your first market to earn points.</p>
+              <p className="mt-1 text-sm text-white/50 max-w-sm">Complete your first market to start a record. Scoring goes live once on-chain reputation ships.</p>
             </div>
           ) : (
             <EmptyState

@@ -5,7 +5,7 @@ import { CONTRACTS } from '@echo/sdk';
 import { useEcho } from '@/lib/sdk';
 import { Section, Card, Field, KV } from '@/components/ui';
 import { Command } from '@/components/Command';
-import { usdc, toUnits, short, scope } from '@/lib/format';
+import { usdc, toUnits, short, scope, duration } from '@/lib/format';
 
 const C = CONTRACTS.arcTestnet;
 const SUBJECTS = ['BountyFinding', 'ModeAStake', 'TierJobRejection'] as const;
@@ -43,7 +43,7 @@ export default function DisputesPage() {
         <div className="mb-6">
           <KV rows={[
             ['min bond', `$${usdc(cfg.minBond)}`],
-            ['voting period', `${Number(cfg.votingPeriod) / 86400}d`],
+            ['voting period', duration(Number(cfg.votingPeriod))],
             ['ModeAStake enabled', String(cfg.modeAStakeEnabled)],
             ['jurors seated', String(cfg.jurorCount)],
           ]} />

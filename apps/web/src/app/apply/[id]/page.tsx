@@ -187,13 +187,24 @@ function OpenApply({ sdk, account, agentId, marketId, closed }: { sdk: ReturnTyp
   const [appLoading, setAppLoading] = useState(false);
   const [applyOpen, setApplyOpen] = useState(false);
   const [identityOpen, setIdentityOpen] = useState(false);
+  const [stake, setStake] = useState<bigint | null>(null);
   const need = !account;
+
+  // Stake is per-market and set by the requester at creation (0 = none). Read the real value so the
+  // UI shows the actual amount — or "no stake" — instead of a hardcoded figure.
+  useEffect(() => {
+    sdk.marketStakeRequired(marketId).then((s) => setStake(s as bigint)).catch(() => setStake(0n));
+  }, [sdk, marketId]);
 
   const loadApp = useCallback(async () => {
     if (!account) return;
     setAppLoading(true);
     try {
+      // getApplication reverts with NotParticipant() when this wallet hasn't applied yet — treat that
+      // as "no application" rather than letting the revert surface as a runtime error.
       setApp(await sdk.getApplication(marketId, account));
+    } catch {
+      setApp(null);
     } finally {
       setAppLoading(false);
     }
@@ -202,6 +213,8 @@ function OpenApply({ sdk, account, agentId, marketId, closed }: { sdk: ReturnTyp
   useEffect(() => { loadApp(); }, [loadApp]);
 
   const applied = !!app && Number(app.appliedAt) > 0;
+  const hasStake = stake !== null && stake > 0n;
+  const stakeText = stake !== null && stake > 0n ? `${usdc(stake)} USDC` : null;
 
   return (
     <Section title="Apply" desc="Submit your application. The requester reveals, grades, and advances applicants through tiers.">
@@ -213,11 +226,19 @@ function OpenApply({ sdk, account, agentId, marketId, closed }: { sdk: ReturnTyp
             </span>
             <span className="text-white/60"> held until you are revealed, refunded in full if you withdraw first.</span>
           </div>
-        ) : (
+        ) : stake === null ? (
+          <div className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 text-sm text-white/50">
+            Checking the stake requirement for this market…
+          </div>
+        ) : hasStake ? (
           <div className="rounded-xl border border-warning/20 bg-warning/[0.06] px-4 py-3 text-sm text-white/70">
-            <b className="font-semibold text-white">$5 stake required to apply.</b> It is held until you are revealed.
+            <b className="font-semibold text-white">{stakeText} stake required to apply.</b> It is held until you are revealed.
             Withdraw before being revealed and the full stake is refunded. Get revealed and fail to deliver, and the
             stake is forfeited to cover the requester&apos;s review cost.
+          </div>
+        ) : (
+          <div className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 text-sm text-white/60">
+            <b className="font-semibold text-white">No stake required</b> to apply for this market. You can submit your application directly.
           </div>
         )}
 
@@ -243,10 +264,10 @@ function OpenApply({ sdk, account, agentId, marketId, closed }: { sdk: ReturnTyp
                 onClick={() => (agentId ? setApplyOpen(true) : setIdentityOpen(true))}
                 disabled={need || closed}
               >
-                Apply, pay $5 stake
+                {hasStake ? `Apply, pay ${stakeText} stake` : 'Apply'}
               </Button>
               <Command label="Load my application" tone="neutral" disabled={!account} onDone={() => loadApp()}
-                run={async () => { setApp(await sdk.getApplication(marketId, account!)); return 'loaded'; }} />
+                run={async () => { try { setApp(await sdk.getApplication(marketId, account!)); } catch { setApp(null); } return 'loaded'; }} />
             </div>
           </Card>
         )}
@@ -254,8 +275,10 @@ function OpenApply({ sdk, account, agentId, marketId, closed }: { sdk: ReturnTyp
         {applyOpen && (
           <TxModal
             title="Apply to this market"
-            description="This pulls your $5 USDC stake into the market escrow. It is refunded if you withdraw before being revealed."
-            confirmLabel="Apply, pay $5 stake"
+            description={hasStake
+              ? `This pulls your ${stakeText} stake into the market escrow. It is refunded if you withdraw before being revealed.`
+              : 'This market requires no stake — applying just mints your participation receipt.'}
+            confirmLabel={hasStake ? `Apply, pay ${stakeText} stake` : 'Apply'}
             run={async () => {
               const stake = await sdk.marketStakeRequired(marketId).catch(() => 0n);
               if (stake > 0n) await sdk.ensureUsdcAllowance(C.marketRegistry, stake, account!);
