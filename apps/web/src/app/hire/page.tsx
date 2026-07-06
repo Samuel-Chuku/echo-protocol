@@ -8,6 +8,7 @@ import { useAccount } from 'wagmi';
 import { EchoMode, buildMetadata, CONTRACTS } from '@echo/sdk';
 import { useEcho } from '@/lib/sdk';
 import { useAgent } from '@/lib/agent';
+import { useFlag } from '@/lib/flags';
 import { Card, Field, TextArea, Badge, Button, EmptyState, CARD_CLASS, ProgressSteps, TierTrack, type TierStep } from '@/components/ui';
 import { IdentityBanner } from '@/components/IdentityBanner';
 import { RegisterIdentityModal } from '@/components/RegisterIdentityModal';
@@ -46,12 +47,20 @@ function CreateMarket({ sdk, account, agentId, feeBps, onCreated }: {
   agentId: string; feeBps?: bigint; onCreated: () => void;
 }) {
   const [type, setType] = useState<EchoMode | null>(null);
+  const paused = useFlag('web.pauseMarketCreation');
+
+  const pausedNotice = paused && (
+    <p className="text-xs text-warning bg-warning/10 border border-warning/20 rounded-md px-3 py-2 mb-3">
+      New market creation is temporarily paused by the operator. Existing markets are unaffected.
+    </p>
+  );
 
   if (type === null) {
     return (
       <section className="mb-8">
         <h2 className="text-lg font-bold text-white">Create work</h2>
         <p className="text-sm text-white/50 mt-0.5 mb-3">Pick the shape that fits. You can manage it below once it&apos;s live.</p>
+        {pausedNotice}
         <div className="grid gap-4 sm:grid-cols-3">
           {[EchoMode.OpenMarket, EchoMode.DirectJob, EchoMode.Bounty].map((m) => (
             <button
@@ -72,6 +81,7 @@ function CreateMarket({ sdk, account, agentId, feeBps, onCreated }: {
   return (
     <section className="mb-8">
       <button onClick={() => setType(null)} className="text-xs text-white/40 hover:text-white transition mb-3">Back to type picker</button>
+      {pausedNotice}
       {type === EchoMode.OpenMarket && <OpenWizard sdk={sdk} account={account} agentId={agentId} feeBps={feeBps} onCreated={onCreated} />}
       {type === EchoMode.DirectJob && <DirectWizard sdk={sdk} account={account} agentId={agentId} feeBps={feeBps} onCreated={onCreated} />}
       {type === EchoMode.Bounty && <BountyWizard sdk={sdk} account={account} agentId={agentId} feeBps={feeBps} onCreated={onCreated} />}
@@ -89,9 +99,11 @@ function feeOn(amountHuman: string, feeBps?: bigint) {
 
 function IdentityGate({ agentId, onOk }: { agentId: string; onOk: () => void }) {
   const [open, setOpen] = useState(false);
+  const paused = useFlag('web.pauseMarketCreation');
   return (
     <>
-      <Button onClick={() => (agentId ? onOk() : setOpen(true))}>Approve &amp; deploy</Button>
+      <Button disabled={paused} onClick={() => (agentId ? onOk() : setOpen(true))}>Approve &amp; deploy</Button>
+      {paused && <p className="text-xs text-warning mt-1">Market creation is paused by the operator.</p>}
       {open && <RegisterIdentityModal onClose={() => setOpen(false)} onRegistered={onOk} />}
     </>
   );

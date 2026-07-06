@@ -1,0 +1,26 @@
+# Caddy fronts the two backends with automatic HTTPS (Let's Encrypt).
+# DOMAIN + ACME_EMAIL are injected by docker-compose.
+
+{
+	email {$ACME_EMAIL}
+}
+
+# Public GraphQL indexer — the web app reads from here.
+api.{$DOMAIN} {
+	reverse_proxy indexer:4000
+}
+
+# Operator dashboard. TOTP guards the login, but this panel can hold the deployer key, so do
+# NOT rely on the token alone once it is internet-reachable. Put a network gate in front:
+#
+#   • Recommended: Cloudflare Tunnel + Cloudflare Access (SSO allowlist) instead of exposing this.
+#   • Or restrict by IP here, e.g.:
+#       @allowed remote_ip 203.0.113.4 198.51.100.0/24
+#       handle @allowed { reverse_proxy ops:4100 }
+#       handle { respond "forbidden" 403 }
+#   • Or add Caddy basicauth (bcrypt hash) as a second factor in front of the token.
+#
+# The baseline below just proxies it — harden before pointing real DNS at ops.
+ops.{$DOMAIN} {
+	reverse_proxy ops:4100
+}

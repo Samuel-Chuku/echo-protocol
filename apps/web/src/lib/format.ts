@@ -105,6 +105,16 @@ export const modeName = (m: number | bigint) => MODE_NAMES[Number(m)] ?? `mode $
 export const MODE_BADGE_TONE = ['teal', 'success', 'warning'] as const;
 export const modeBadgeTone = (m: number | bigint) => MODE_BADGE_TONE[Number(m)] ?? 'neutral';
 
+/** Light-theme mode-pill classes. Still used by the (light-themed) Receipt panel; the redesign moved
+ *  most surfaces to <Badge tone={modeBadgeTone(...)}> but Receipt was not re-themed. */
+export const MODE_TAG_CLASS = [
+  'bg-indigo-100 text-indigo-700',
+  'bg-emerald-100 text-emerald-700',
+  'bg-amber-100 text-amber-700',
+] as const;
+export const modeTagClass = (m: number | bigint) =>
+  MODE_TAG_CLASS[Number(m)] ?? 'bg-gray-100 text-gray-600';
+
 /** One-line "when to use this" blurb for the create type-picker (index = EchoMode). */
 export const MODE_BLURBS = [
   'Open call — many applicants compete through reveal + tiers. You fund one escrow.',

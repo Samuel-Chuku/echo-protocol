@@ -7,6 +7,7 @@ import { useQuery, gql } from 'urql';
 import { EchoMode, CONTRACTS } from '@echo/sdk';
 import { useEcho } from '@/lib/sdk';
 import { useContent } from '@/lib/content';
+import { useFlag } from '@/lib/flags';
 import { Section, Card, Field, TextArea, KV, Badge, Button, EmptyState, CARD_CLASS } from '@/components/ui';
 import { Command } from '@/components/Command';
 import { TxModal } from '@/components/TxModal';
@@ -24,6 +25,17 @@ type PayoutSummary = {
 const HOOK_TIER_LABELS: Record<number, string> = {
   0: 'Submitted', 1: 'Substantive', 2: 'Shortlist', 3: 'Final', 4: 'Ghost', 5: 'Milestone', 6: 'Finding',
 };
+
+// Arc JobStatus pills — dark-theme variants matching the redesign palette.
+const JOB_STATUS = ['Open', 'Funded', 'Submitted', 'Completed', 'Rejected', 'Expired'];
+const JOB_STATUS_CLASS = [
+  'bg-teal-500/10 text-teal-300 border-teal-500/20',
+  'bg-teal-500/10 text-teal-300 border-teal-500/20',
+  'bg-warning/10 text-warning border-warning/20',
+  'bg-success/10 text-success border-success/20',
+  'bg-danger/10 text-danger border-danger/20',
+  'bg-white/5 text-white/40 border-white/10',
+];
 
 const C = CONTRACTS.arcTestnet;
 
@@ -296,6 +308,9 @@ function ApplicantList({
   const tierAmounts: bigint[] = data.market?.tierAmounts ?? [];
   const ghostAmount = tierAmounts[3] !== undefined ? usdc(tierAmounts[3]) : '0';
   const now = Math.floor(Date.now() / 1000);
+  // Tier-job accept/reject/revision + deliverable reads are the evaluator's tools — requester-only.
+  const isRequester =
+    !!account && !!data.market?.requester && account.toLowerCase() === data.market.requester.toLowerCase();
 
   function nextAction(a: any) {
     const t = Number(a.tierReached);
@@ -327,47 +342,56 @@ function ApplicantList({
           const ghostDeadlineEstimate = t === 3 && data.ghostDeadline ? Number(a.appliedAt) + Number(data.ghostDeadline) : null;
           const ghostPassed = ghostDeadlineEstimate !== null && now > ghostDeadlineEstimate;
 
+          const tierJobIds = (a.tierJobIds ?? []) as bigint[];
+
           return (
-            <li key={a.participant} className="py-3 flex flex-wrap items-center gap-3">
-              <span className="font-mono text-sm text-white">{short(a.participant)}</span>
-              <Badge tone={t === 3 ? 'success' : 'neutral'}>{TIER_LABELS[t] ?? `tier ${t}`}</Badge>
-              <span className="text-xs text-white/30 font-mono truncate max-w-[10rem]" title={a.submissionHash}>
-                {a.submissionHash}
-              </span>
-
-              {t === 3 && ghostDeadlineEstimate !== null && (
-                <span className={`text-xs flex items-center gap-1 ${ghostPassed ? 'text-danger' : 'text-warning'}`}>
-                  <Clock className="w-3 h-3" />
-                  {ghostPassed ? 'Ghost deadline passed (est.)' : `~${Math.max(0, Math.ceil((ghostDeadlineEstimate - now) / 86400))}d to ghost deadline (est.)`}
+            <li key={a.participant} className="py-3">
+              <div className="flex flex-wrap items-center gap-3">
+                <span className="font-mono text-sm text-white">{short(a.participant)}</span>
+                <Badge tone={t === 3 ? 'success' : 'neutral'}>{TIER_LABELS[t] ?? `tier ${t}`}</Badge>
+                <span className="text-xs text-white/30 font-mono truncate max-w-[10rem]" title={a.submissionHash}>
+                  {a.submissionHash}
                 </span>
-              )}
 
-              <span className="ml-auto flex items-center gap-2">
-                {next && (
-                  <Button
-                    variant="secondary"
-                    onClick={() => setAdvance({ participant: a.participant, fromLabel: TIER_LABELS[t], toLabel: next.toLabel, amount: next.amount, run: next.run })}
-                  >
-                    {next.label}
-                  </Button>
+                {t === 3 && ghostDeadlineEstimate !== null && (
+                  <span className={`text-xs flex items-center gap-1 ${ghostPassed ? 'text-danger' : 'text-warning'}`}>
+                    <Clock className="w-3 h-3" />
+                    {ghostPassed ? 'Ghost deadline passed (est.)' : `~${Math.max(0, Math.ceil((ghostDeadlineEstimate - now) / 86400))}d to ghost deadline (est.)`}
+                  </span>
                 )}
-                {t >= 1 && data.revealFee > 0n && (
-                  <Command label="Settle stake" tone="neutral" disabled={!account}
-                    run={() => sdk.settleRevealStake(marketId, a.participant, account!)} onDone={onChanged} />
-                )}
-                {t === 3 && (
-                  <Command
-                    label="Trigger ghost"
-                    tone="neutral"
-                    disabled={!account}
-                    run={() => sdk.triggerGhost(marketId, a.participant, account!)}
-                    onDone={() => {
-                      onChanged();
-                      onGhost({ amount: ghostAmount, finalists: apps.filter((x: any) => Number(x.tierReached) === 3).map((x: any) => x.participant) });
-                    }}
-                  />
-                )}
-              </span>
+
+                <span className="ml-auto flex items-center gap-2">
+                  {next && (
+                    <Button
+                      variant="secondary"
+                      onClick={() => setAdvance({ participant: a.participant, fromLabel: TIER_LABELS[t], toLabel: next.toLabel, amount: next.amount, run: next.run })}
+                    >
+                      {next.label}
+                    </Button>
+                  )}
+                  {t >= 1 && data.revealFee > 0n && (
+                    <Command label="Settle stake" tone="neutral" disabled={!account}
+                      run={() => sdk.settleRevealStake(marketId, a.participant, account!)} onDone={onChanged} />
+                  )}
+                  {t === 3 && (
+                    <Command
+                      label="Trigger ghost"
+                      tone="neutral"
+                      disabled={!account}
+                      run={() => sdk.triggerGhost(marketId, a.participant, account!)}
+                      onDone={() => {
+                        onChanged();
+                        onGhost({ amount: ghostAmount, finalists: apps.filter((x: any) => Number(x.tierReached) === 3).map((x: any) => x.participant) });
+                      }}
+                    />
+                  )}
+                </span>
+              </div>
+
+              {/* Requester-only tier-job evaluation: accept & pay, Final reject, request revision, read deliverables. */}
+              {isRequester && tierJobIds.length > 0 && (
+                <ApplicantTierJobs sdk={sdk} account={account!} marketId={marketId} tierJobIds={tierJobIds} onDone={onChanged} />
+              )}
             </li>
           );
         })}
@@ -389,6 +413,159 @@ function ApplicantList({
           onDone={onChanged}
         />
       )}
+    </div>
+  );
+}
+
+/** Lazy-fetch + render a content blob from the indexer. Signs once on click — the indexer
+ *  enforces gating (apply: requester after reveal; deliver: provider or evaluator of the Arc job). */
+function ContentView({ marketId, kind, contentKey, viewer }: {
+  marketId: number; kind: 'apply' | 'deliver' | 'reject'; contentKey: string; viewer: `0x${string}`;
+}) {
+  const { fetch: fetchContent } = useContent();
+  const [body, setBody] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true); setErr(null);
+    (async () => {
+      try {
+        const row = await fetchContent(marketId, kind, contentKey, viewer);
+        if (!cancelled) setBody(row?.body ?? null);
+      } catch (e: unknown) {
+        if (!cancelled) setErr(e instanceof Error ? e.message : 'Failed to read content');
+      } finally { if (!cancelled) setLoading(false); }
+    })();
+    return () => { cancelled = true; };
+  }, [marketId, kind, contentKey, viewer, fetchContent]);
+
+  return (
+    <div className="mt-2 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2">
+      <div className="text-[10px] uppercase tracking-wide text-white/40 mb-1">
+        {kind === 'apply' ? 'Application body' : kind === 'reject' ? 'Reject reason' : 'Deliverable body'}
+      </div>
+      {loading && <p className="text-xs text-white/40">Loading… (sign to authorize read)</p>}
+      {err && <p className="text-xs text-danger break-all">{err}</p>}
+      {!loading && !err && body === null && <p className="text-xs text-white/40 italic">No body stored.</p>}
+      {!loading && body !== null && <p className="text-sm text-white/70 whitespace-pre-wrap">{body}</p>}
+    </div>
+  );
+}
+
+/** Requester's tier-job evaluation panel: read the deliverable, then Accept & pay, Request revision,
+ *  or (Final tier only) Reject. `web.hideReject` hides the Reject control when the operator flips it. */
+function ApplicantTierJobs({ sdk, account, marketId, tierJobIds, onDone }: {
+  sdk: ReturnType<typeof useEcho>['sdk']; account: `0x${string}`; marketId: bigint;
+  tierJobIds: bigint[]; onDone: () => void;
+}) {
+  type Job = { jobId: bigint; status: number; tier: number; tierAmount: bigint; revisionUsed: boolean };
+  const [jobs, setJobs] = useState<Job[]>([]);
+  const [rejectReason, setRejectReason] = useState('');
+  const hideReject = useFlag('web.hideReject');
+  const { store } = useContent();
+  const idsKey = tierJobIds.map((j) => j.toString()).join(',');
+
+  const load = useCallback(async () => {
+    if (tierJobIds.length === 0) { setJobs([]); return; }
+    const rows = await Promise.all(tierJobIds.map(async (jobId) => {
+      const [arcJob, ctx, rev] = await Promise.all([
+        sdk.getArcJob(jobId).catch(() => null) as Promise<{ status: number } | null>,
+        sdk.getJobContext(jobId).catch(() => null) as Promise<{ tier: number; tierAmount: bigint } | null>,
+        sdk.revisionInfo(jobId).catch(() => ({ used: false, extensions: 0 })),
+      ]);
+      return {
+        jobId, status: arcJob?.status ?? 0, tier: ctx?.tier ?? 0, tierAmount: ctx?.tierAmount ?? 0n,
+        revisionUsed: rev.used,
+      };
+    }));
+    setJobs(rows);
+  }, [sdk, idsKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { load(); }, [load]);
+
+  return (
+    <div className="mt-2 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 space-y-2">
+      <div className="text-[10px] uppercase tracking-wide text-white/40">Tier jobs</div>
+      {jobs.length === 0 && <p className="text-xs text-white/40">Loading…</p>}
+      {jobs.map((j) => (
+        <div key={j.jobId.toString()} className="border-t border-white/[0.08] first:border-0 pt-2 first:pt-0 space-y-1">
+          <div className="flex items-center gap-2 flex-wrap text-xs">
+            <span className="font-medium text-white/80">{HOOK_TIER_LABELS[j.tier] ?? `Tier ${j.tier}`}</span>
+            <span className="text-white/30">job #{j.jobId.toString()}</span>
+            <span className={`rounded border px-1.5 py-0.5 text-[10px] font-medium ${JOB_STATUS_CLASS[j.status] ?? JOB_STATUS_CLASS[0]}`}>
+              {JOB_STATUS[j.status] ?? `status ${j.status}`}
+            </span>
+            <span className="text-white/40 ml-auto">{usdc(j.tierAmount)} USDC on accept</span>
+          </div>
+          {j.status === 2 && (
+            <>
+              <ContentView marketId={Number(marketId)} kind="deliver" contentKey={j.jobId.toString()} viewer={account} />
+              {/* Reject is a FINAL-tier-only escape hatch from the ghost penalty (tier 3 = Final).
+                  Lower tiers have no ghost timer, so Accept is the only action there. */}
+              {j.tier === 3 ? (
+                <>
+                  <textarea
+                    value={rejectReason}
+                    onChange={(e) => setRejectReason(e.target.value)}
+                    placeholder="Optional: reason for rejection — the worker sees this so they know what went wrong."
+                    rows={2}
+                    className="w-full rounded-md border border-white/10 bg-white/[0.04] px-2 py-1 text-xs text-white placeholder:text-white/30 focus:border-teal-500/50 focus:outline-none"
+                  />
+                  <div className="flex flex-wrap gap-1.5">
+                    <Command label={`Accept & pay ${usdc(j.tierAmount)}`} disabled={!account}
+                      onDone={() => { load(); onDone(); }}
+                      run={() => sdk.completeTierJob(j.jobId, scope('accept'), account)} />
+                    {!hideReject && (
+                      <Command label="Reject" tone="neutral" disabled={!account}
+                        onDone={() => { setRejectReason(''); load(); onDone(); }}
+                        run={async () => {
+                          // Store the (optional) reason in the content channel BEFORE rejecting, so the
+                          // worker can read why. Authored by the requester = the job's evaluator.
+                          if (rejectReason.trim()) {
+                            await store(Number(marketId), 'reject', j.jobId.toString(), rejectReason.trim(), account);
+                          }
+                          return sdk.rejectTierJob(j.jobId, scope('reject'), account);
+                        }} />
+                    )}
+                    <Command label="Request revision" tone="neutral" disabled={!account || j.revisionUsed}
+                      onDone={() => { load(); onDone(); }}
+                      run={() => sdk.requestRevision(j.jobId, account)} />
+                  </div>
+                  <p className="text-[11px] text-white/40 italic">
+                    <b>Request revision</b> (once) sends it back for a fix — reopens the job, gives the
+                    worker a fresh hour (they can self-extend). <b>Reject</b> kills it: no payout, no
+                    slash, reserve refunds to you on Close. Either avoids the ghost penalty.
+                    {j.revisionUsed && ' (Revision already used for this job.)'}
+                  </p>
+                </>
+              ) : (
+                <Command label={`Accept & pay ${usdc(j.tierAmount)}`} disabled={!account}
+                  onDone={() => { load(); onDone(); }}
+                  run={() => sdk.completeTierJob(j.jobId, scope('accept'), account)} />
+              )}
+            </>
+          )}
+          {j.status === 0 && (
+            <p className="text-[11px] text-white/40 italic">Waiting on the worker to submit a deliverable.</p>
+          )}
+          {j.status === 3 && (
+            <p className="text-[11px] text-success">Completed — {usdc(j.tierAmount)} USDC paid.</p>
+          )}
+          {j.status === 4 && (
+            <>
+              <p className="text-[11px] text-warning">Rejected — no payout; the amount refunds to you on Close market.</p>
+              <ContentView marketId={Number(marketId)} kind="reject" contentKey={j.jobId.toString()} viewer={account} />
+              {j.tier === 3 && (
+                <p className="text-[11px] text-white/40">
+                  The worker may contest a Final-tier rejection. If they do, Close is blocked until it
+                  resolves — <Link href="/disputes" className="underline hover:text-white">counter the dispute</Link> (post a matching bond) to defend it before the jury.
+                </p>
+              )}
+            </>
+          )}
+        </div>
+      ))}
     </div>
   );
 }

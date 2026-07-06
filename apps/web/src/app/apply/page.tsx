@@ -43,7 +43,6 @@ type MarketRow = {
   stakeRequired: string | null;
   createdAt: number;
   tiers: string[] | null;
-  createdAt: number;
   ghostDeadline: number | null;
 };
 
