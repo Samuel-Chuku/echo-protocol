@@ -2,7 +2,7 @@
 
 import { use, useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { ChevronLeft, ChevronUp, ChevronDown, ExternalLink, Clock, Ghost, MessageSquare, Star } from 'lucide-react';
+import { ChevronLeft, ChevronUp, ChevronDown, ExternalLink, Clock, Ghost, MessageSquare, Star, Lock } from 'lucide-react';
 import { useQuery, gql } from 'urql';
 import { EchoMode, CONTRACTS } from '@echo/sdk';
 import { useEcho } from '@/lib/sdk';
@@ -80,6 +80,11 @@ export default function ManageMarketPage({ params }: { params: Promise<{ id: str
   // hide them from non-requesters (e.g. a worker viewing their own market page).
   const isRequester =
     !!account && !!data?.market?.requester && account.toLowerCase() === data.market.requester.toLowerCase();
+
+  // A closed market is terminal: escrow has been returned and every on-chain write (grade, ghost,
+  // settle, close, attribution funding) reverts. When closed we drop all action affordances and keep
+  // the page read-only — status, applicant results, timeline, and feedback.
+  const isClosed = !!data?.market?.closed;
 
   // Single source of truth for marketActivity rows — used by both the Timeline AND the per-applicant
   // payout rollup (so we only hit the indexer once per refresh).
@@ -201,31 +206,47 @@ export default function ManageMarketPage({ params }: { params: Promise<{ id: str
           )}
         </Card>
 
+        {isClosed && (
+          <div className="sm:col-span-2 flex items-start gap-3 rounded-card border border-white/10 bg-white/[0.03] p-4">
+            <Lock className="w-4 h-4 text-white/40 mt-0.5 shrink-0" />
+            <div>
+              <h3 className="text-sm font-semibold text-white">Market closed</h3>
+              <p className="text-xs text-white/50 mt-0.5">
+                This market has been closed and settled — any unspent escrow was returned to you. No
+                further on-chain actions can be taken. Everything below is read-only; you can still
+                review the timeline and leave feedback.
+              </p>
+            </div>
+          </div>
+        )}
+
         {data?.mode === EchoMode.OpenMarket && (
           <div className="sm:col-span-2 space-y-3">
-            <ApplicantList sdk={sdk} account={account} data={data} marketId={marketId()} onChanged={load} onGhost={setGhostResult} />
-            <div className={CARD_CLASS}>
-              <h3 className="text-sm font-semibold text-white">Close market</h3>
-              <p className="text-xs text-white/40 mt-0.5">Returns unspent USDC to you. A reveal market needs its minimum-reveal floor met first.</p>
-              <Button variant="danger" className="mt-3" onClick={() => setCloseOpen(true)}>Close market</Button>
-            </div>
+            <ApplicantList sdk={sdk} account={account} data={data} marketId={marketId()} onChanged={load} onGhost={setGhostResult} closed={isClosed} />
+            {!isClosed && (
+              <div className={CARD_CLASS}>
+                <h3 className="text-sm font-semibold text-white">Close market</h3>
+                <p className="text-xs text-white/40 mt-0.5">Returns unspent USDC to you. A reveal market needs its minimum-reveal floor met first.</p>
+                <Button variant="danger" className="mt-3" onClick={() => setCloseOpen(true)}>Close market</Button>
+              </div>
+            )}
           </div>
         )}
 
         {/* Direct Job actions */}
         {data?.mode === EchoMode.DirectJob && (
-          <DirectJobActions sdk={sdk} account={account} data={data} marketId={marketId()} onChanged={load} />
+          <DirectJobActions sdk={sdk} account={account} data={data} marketId={marketId()} onChanged={load} closed={isClosed} />
         )}
 
         {/* Bounty actions */}
         {data?.mode === EchoMode.Bounty && (
-          <BountyActions sdk={sdk} account={account} data={data} marketId={marketId()} onChanged={load} />
+          <BountyActions sdk={sdk} account={account} data={data} marketId={marketId()} onChanged={load} closed={isClosed} />
         )}
       </Section>
 
       <MarketTimeline rows={activityRows} fetching={actFetching} onRefresh={() => refetchActivity({ requestPolicy: 'network-only' })} />
 
-      <AttributionOptIn sdk={sdk} account={account} marketId={marketId} />
+      <AttributionOptIn sdk={sdk} account={account} marketId={marketId} closed={isClosed} />
       <FeedbackPreview />
 
       {closeOpen && (
@@ -296,7 +317,7 @@ function MarketTimeline({ rows, fetching, onRefresh }: { rows: ActivityRow[]; fe
 /* ──────────────────────────── Open/Reveal applicant list ──────────────────────────── */
 
 function ApplicantList({
-  sdk, account, data, marketId, onChanged, onGhost,
+  sdk, account, data, marketId, onChanged, onGhost, closed,
 }: {
   sdk: ReturnType<typeof useEcho>['sdk'];
   account?: `0x${string}`;
@@ -304,6 +325,8 @@ function ApplicantList({
   marketId: bigint;
   onChanged: () => void;
   onGhost: (r: { recipient: string; amount: string; paid: boolean }) => void;
+  /** When the market is closed, the list is read-only: results stay, all action controls hide. */
+  closed: boolean;
 }) {
   const [advance, setAdvance] = useState<{ participant: string; fromLabel: string; toLabel: string; amount: string; paysNow: boolean; run: () => Promise<unknown> } | null>(null);
   const apps = data.apps ?? [];
@@ -389,6 +412,7 @@ function ApplicantList({
                   </span>
                 )}
 
+                {!closed && (
                 <span className="ml-auto flex items-center gap-2">
                   {next && (
                     <Button
@@ -426,10 +450,12 @@ function ApplicantList({
                     />
                   )}
                 </span>
+                )}
               </div>
 
-              {/* Requester-only tier-job evaluation: accept & pay, Final reject, request revision, read deliverables. */}
-              {isRequester && tierJobIds.length > 0 && (
+              {/* Requester-only tier-job evaluation: accept & pay, Final reject, request revision, read
+                  deliverables. Hidden once closed — those writes revert on a settled market. */}
+              {isRequester && !closed && tierJobIds.length > 0 && (
                 <ApplicantTierJobs sdk={sdk} account={account!} marketId={marketId} tierJobIds={tierJobIds} onDone={onChanged} />
               )}
             </li>
@@ -437,10 +463,12 @@ function ApplicantList({
         })}
       </ul>
 
-      <p className="mt-2 text-xs text-white/30">
-        Flag a revealed applicant as bait-and-switch instead of advancing them by opening a{' '}
-        <Link href="/disputes" className="underline hover:text-white">bonded stake dispute</Link>.
-      </p>
+      {!closed && (
+        <p className="mt-2 text-xs text-white/30">
+          Flag a revealed applicant as bait-and-switch instead of advancing them by opening a{' '}
+          <Link href="/disputes" className="underline hover:text-white">bonded stake dispute</Link>.
+        </p>
+      )}
 
       {advance && (
         <TierAdvanceModal
@@ -613,40 +641,54 @@ function ApplicantTierJobs({ sdk, account, marketId, tierJobIds, onDone }: {
 
 /* ──────────────────────────── Direct Job / Bounty actions ──────────────────────────── */
 
-function DirectJobActions({ sdk, account, data, marketId, onChanged }: { sdk: ReturnType<typeof useEcho>['sdk']; account?: `0x${string}`; data: Loaded; marketId: bigint; onChanged: () => void }) {
+function DirectJobActions({ sdk, account, data, marketId, onChanged, closed }: { sdk: ReturnType<typeof useEcho>['sdk']; account?: `0x${string}`; data: Loaded; marketId: bigint; onChanged: () => void; closed: boolean }) {
   const [idx, setIdx] = useState('0');
   return (
-    <Card title="Direct Job actions" hint="Accept pays the milestone; auto-release after the review window; cancel refunds pending.">
-      <Field label="milestone index" value={idx} onChange={(e) => setIdx(e.target.value)} />
-      <div className="flex flex-wrap gap-2">
-        <Command label="Accept milestone" disabled={!account} onDone={onChanged} run={() => sdk.acceptMilestone(marketId, BigInt(idx), account!)} />
-        <Command label="Auto-release" tone="neutral" disabled={!account} onDone={onChanged} run={() => sdk.autoReleaseMilestone(marketId, BigInt(idx), account!)} />
-        <Command label="Cancel job" tone="danger" disabled={!account} onDone={onChanged} run={() => sdk.cancelDirectJob(marketId, account!)} />
-      </div>
+    <Card title="Direct Job actions" hint={closed ? 'Market closed — milestones are read-only.' : 'Accept pays the milestone; auto-release after the review window; cancel refunds pending.'}>
+      {!closed && (
+        <>
+          <Field label="milestone index" value={idx} onChange={(e) => setIdx(e.target.value)} />
+          <div className="flex flex-wrap gap-2">
+            <Command label="Accept milestone" disabled={!account} onDone={onChanged} run={() => sdk.acceptMilestone(marketId, BigInt(idx), account!)} />
+            <Command label="Auto-release" tone="neutral" disabled={!account} onDone={onChanged} run={() => sdk.autoReleaseMilestone(marketId, BigInt(idx), account!)} />
+            <Command label="Cancel job" tone="danger" disabled={!account} onDone={onChanged} run={() => sdk.cancelDirectJob(marketId, account!)} />
+          </div>
+        </>
+      )}
       {data.milestones?.length > 0 && (
         <KV rows={data.milestones.map((m: any, i: number) => [`#${i} $${usdc(m.amount)}`, MILESTONE_STATUS[Number(m.status)] ?? String(m.status)])} />
+      )}
+      {closed && !(data.milestones?.length > 0) && (
+        <p className="text-xs text-white/40">No milestones to show.</p>
       )}
     </Card>
   );
 }
 
-function BountyActions({ sdk, account, data, marketId, onChanged }: { sdk: ReturnType<typeof useEcho>['sdk']; account?: `0x${string}`; data: Loaded; marketId: bigint; onChanged: () => void }) {
+function BountyActions({ sdk, account, data, marketId, onChanged, closed }: { sdk: ReturnType<typeof useEcho>['sdk']; account?: `0x${string}`; data: Loaded; marketId: bigint; onChanged: () => void; closed: boolean }) {
   const [idx, setIdx] = useState('0');
   const [award, setAward] = useState('50');
   return (
-    <Card title="Bounty actions" hint="Accept pays at least the default award; reject is free; auto-escalate force-pays an ignored finding after the window.">
-      <div className="grid grid-cols-2 gap-1">
-        <Field label="finding index" value={idx} onChange={(e) => setIdx(e.target.value)} />
-        <Field label="award USDC" value={award} onChange={(e) => setAward(e.target.value)} />
-      </div>
-      <div className="flex flex-wrap gap-2">
-        <Command label="Accept finding" disabled={!account} onDone={onChanged} run={() => sdk.acceptFinding(marketId, BigInt(idx), toUnits(award), account!)} />
-        <Command label="Reject" tone="neutral" disabled={!account} onDone={onChanged} run={() => sdk.rejectFinding(marketId, BigInt(idx), account!)} />
-        <Command label="Auto-escalate" tone="neutral" disabled={!account} onDone={onChanged} run={() => sdk.autoEscalateFinding(marketId, BigInt(idx), account!)} />
-        <Command label="Close bounty" tone="danger" disabled={!account} onDone={onChanged} run={() => sdk.closeBounty(marketId, account!)} />
-      </div>
+    <Card title="Bounty actions" hint={closed ? 'Market closed — findings are read-only.' : 'Accept pays at least the default award; reject is free; auto-escalate force-pays an ignored finding after the window.'}>
+      {!closed && (
+        <>
+          <div className="grid grid-cols-2 gap-1">
+            <Field label="finding index" value={idx} onChange={(e) => setIdx(e.target.value)} />
+            <Field label="award USDC" value={award} onChange={(e) => setAward(e.target.value)} />
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Command label="Accept finding" disabled={!account} onDone={onChanged} run={() => sdk.acceptFinding(marketId, BigInt(idx), toUnits(award), account!)} />
+            <Command label="Reject" tone="neutral" disabled={!account} onDone={onChanged} run={() => sdk.rejectFinding(marketId, BigInt(idx), account!)} />
+            <Command label="Auto-escalate" tone="neutral" disabled={!account} onDone={onChanged} run={() => sdk.autoEscalateFinding(marketId, BigInt(idx), account!)} />
+            <Command label="Close bounty" tone="danger" disabled={!account} onDone={onChanged} run={() => sdk.closeBounty(marketId, account!)} />
+          </div>
+        </>
+      )}
       {data.findings?.length > 0 && (
         <KV rows={data.findings.map((f: any, i: number) => [`#${i} ${short(f.submitter)}`, `${FINDING_STATUS[Number(f.status)] ?? f.status}${f.award ? ' · $' + usdc(f.award) : ''}`])} />
+      )}
+      {closed && !(data.findings?.length > 0) && (
+        <p className="text-xs text-white/40">No findings to show.</p>
       )}
     </Card>
   );
@@ -654,7 +696,7 @@ function BountyActions({ sdk, account, data, marketId, onChanged }: { sdk: Retur
 
 /* ──────────────────────────── attribution opt-in (#9) ──────────────────────────── */
 
-function AttributionOptIn({ sdk, account, marketId }: { sdk: ReturnType<typeof useEcho>['sdk']; account?: `0x${string}`; marketId: () => bigint }) {
+function AttributionOptIn({ sdk, account, marketId, closed }: { sdk: ReturnType<typeof useEcho>['sdk']; account?: `0x${string}`; marketId: () => bigint; closed: boolean }) {
   const [open, setOpen] = useState(false);
   const [amount, setAmount] = useState('100');
   const [shareBps, setShareBps] = useState('500');
@@ -663,7 +705,9 @@ function AttributionOptIn({ sdk, account, marketId }: { sdk: ReturnType<typeof u
     <Section title="Attribution pool" desc="Optional. Reward whoever introduced workers who advance in your market.">
       <div className="sm:col-span-2">
         <Card title="Reward introducers (optional)">
-          {!open ? (
+          {closed ? (
+            <p className="text-sm text-white/50">This market is closed — an attribution pool can no longer be funded.</p>
+          ) : !open ? (
             <>
               <p className="text-sm text-white/60">
                 When a worker advances a tier, Echo can pay a share of their payout to whoever introduced
