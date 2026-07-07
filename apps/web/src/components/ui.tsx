@@ -248,11 +248,33 @@ export function TierTrack({ steps, currentIndex }: { steps: TierStep[]; currentI
               }`}
             />
             <span className="mt-2 text-xs font-semibold text-white">{s.label}</span>
-            <span className="mt-0.5 text-sm font-mono text-teal-400">${s.amount}</span>
+            {/* App callers pass bare USDC numbers (prefix "$"); the marketing surface passes words
+                like "stake"/"+USDC"/"split" (render as-is). */}
+            <span className="mt-0.5 text-sm font-mono text-teal-400">{/^-?\d/.test(s.amount) ? `$${s.amount}` : s.amount}</span>
             {s.note && <span className="mt-0.5 text-[11px] text-white/40 max-w-[8rem]">{s.note}</span>}
           </li>
         );
       })}
     </ol>
+  );
+}
+
+/** Asset-free Echo wordmark glyph: a source dot emitting concentric arcs ("echo"). Used on the
+ *  marketing surface header/footer; no external image dependency. */
+export function LogoMark({ className = 'h-8 w-8' }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 32 32" className={className} role="img" aria-label="Echo Protocol">
+      <circle cx="16" cy="16" r="15" fill="#00E5C0" />
+      <circle cx="11" cy="16" r="2.2" fill="#0A2540" />
+      <path d="M15 11 a6 6 0 0 1 0 10" fill="none" stroke="#0A2540" strokeWidth="2" strokeLinecap="round" />
+      <path
+        d="M18.5 8.5 a10 10 0 0 1 0 15"
+        fill="none"
+        stroke="#0A2540"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeOpacity="0.55"
+      />
+    </svg>
   );
 }
