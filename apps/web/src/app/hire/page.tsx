@@ -157,7 +157,7 @@ function LiveTotal({ label, totalHuman, feeBps }: { label: string; totalHuman: s
   return (
     <div className="rounded-lg border border-teal-500/20 bg-teal-500/[0.05] p-3 text-sm space-y-1.5">
       <div className="flex justify-between"><span className="text-white/50">{label}</span><span className="font-mono text-white">${totalHuman} USDC</span></div>
-      <div className="flex justify-between"><span className="text-white/50">Platform fee (2% on payouts)</span><span className="font-mono text-teal-400">${feeOn(totalHuman, feeBps)} USDC est.</span></div>
+      <div className="flex justify-between"><span className="text-white/50">Platform fee{feeBps !== undefined ? ` (${Number(feeBps) / 100}% on payouts)` : ' on payouts'}</span><span className="font-mono text-teal-400">${feeOn(totalHuman, feeBps)} USDC est.</span></div>
     </div>
   );
 }

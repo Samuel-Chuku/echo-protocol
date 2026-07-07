@@ -9,6 +9,7 @@ export function TierAdvanceModal({
   fromLabel,
   toLabel,
   amount,
+  paysNow,
   run,
   onClose,
   onDone,
@@ -17,6 +18,9 @@ export function TierAdvanceModal({
   fromLabel: string;
   toLabel: string;
   amount: string;
+  // Reveal pays the fee atomically; grade advances only reserve the tier amount — it's paid when the
+  // worker submits and the requester accepts. Drives whether we say "paid now" or "paid on accept".
+  paysNow: boolean;
   run: () => Promise<unknown>;
   onClose: () => void;
   onDone?: (result: unknown) => void;
@@ -29,7 +33,16 @@ export function TierAdvanceModal({
           <div className="flex justify-between"><span className="text-white/40">Applicant</span><span className="font-mono text-white">{short(participant)}</span></div>
           <div className="flex justify-between"><span className="text-white/40">Current tier</span><span className="text-white">{fromLabel}</span></div>
           <div className="flex justify-between"><span className="text-white/40">Next tier</span><span className="text-white">{toLabel}</span></div>
-          <div className="flex justify-between"><span className="text-white/40">Payout triggered</span><span className="font-mono text-teal-400">${amount} USDC</span></div>
+          <div className="flex justify-between">
+            <span className="text-white/40">{paysNow ? 'Payout (now)' : 'Payout (on accept)'}</span>
+            <span className="font-mono text-teal-400">${amount} USDC</span>
+          </div>
+          {!paysNow && (
+            <p className="pt-1 text-xs text-white/40">
+              Advancing opens a tier job. The ${amount} USDC is paid from escrow when the worker submits
+              and you accept — not at this step.
+            </p>
+          )}
         </div>
       }
       confirmLabel={`Advance to ${toLabel}`}

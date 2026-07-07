@@ -72,7 +72,7 @@ export default function ManageMarketPage({ params }: { params: Promise<{ id: str
   const [data, setData] = useState<Loaded | null>(null);
   const [err, setErr] = useState('');
   const [closeOpen, setCloseOpen] = useState(false);
-  const [ghostResult, setGhostResult] = useState<{ amount: string; finalists: string[] } | null>(null);
+  const [ghostResult, setGhostResult] = useState<{ recipient: string; amount: string; paid: boolean } | null>(null);
 
   const marketId = () => BigInt(id || '0');
 
@@ -112,11 +112,13 @@ export default function ManageMarketPage({ params }: { params: Promise<{ id: str
       const e = m.get(who) ?? { total: 0n, perTier: new Map<number, bigint>(), ghostSlashed: 0n };
       if (r.eventName === 'TierPayout') {
         const tier = Number(args.tier ?? 0);
-        const net = BigInt(String(args.net ?? '0'));
+        // Indexer stores the payout under `args.amount` (reducers.ts: TierPayout → args.amount).
+        const net = BigInt(String(args.amount ?? '0'));
         e.total += net;
         e.perTier.set(tier, (e.perTier.get(tier) ?? 0n) + net);
       } else {
-        e.ghostSlashed += BigInt(String(args.ghostAmount ?? '0'));
+        // GhostPenalty amount is likewise `args.amount`, not `args.ghostAmount`.
+        e.ghostSlashed += BigInt(String(args.amount ?? '0'));
       }
       m.set(who, e);
     }
@@ -192,8 +194,8 @@ export default function ManageMarketPage({ params }: { params: Promise<{ id: str
               ['requester', short(data.market?.requester)],
               ['escrow remaining', `$${usdc(data.remaining)}`],
               ['reveal fee', data.revealFee ? `$${usdc(data.revealFee)}` : '—'],
-              ['flag window', data.flagWindow ? `${Number(data.flagWindow) / 86400}d` : '—'],
-              ['ghost deadline', data.ghostDeadline ? `${Number(data.ghostDeadline) / 86400}d after final round` : '—'],
+              ['flag window', data.flagWindow ? duration(Number(data.flagWindow)) : '—'],
+              ['ghost deadline', data.ghostDeadline ? `${duration(Number(data.ghostDeadline))} after final round` : '—'],
               ['applicants', String(data.market?.applicantCount ?? '—')],
             ]} />
           )}
@@ -236,7 +238,7 @@ export default function ManageMarketPage({ params }: { params: Promise<{ id: str
           onDone={load}
         />
       )}
-      {ghostResult && <GhostPenaltyModal amount={ghostResult.amount} finalists={ghostResult.finalists} onClose={() => setGhostResult(null)} />}
+      {ghostResult && <GhostPenaltyModal recipient={ghostResult.recipient} amount={ghostResult.amount} paid={ghostResult.paid} onClose={() => setGhostResult(null)} />}
     </div>
   );
 }
@@ -301,9 +303,9 @@ function ApplicantList({
   data: Loaded;
   marketId: bigint;
   onChanged: () => void;
-  onGhost: (r: { amount: string; finalists: string[] }) => void;
+  onGhost: (r: { recipient: string; amount: string; paid: boolean }) => void;
 }) {
-  const [advance, setAdvance] = useState<{ participant: string; fromLabel: string; toLabel: string; amount: string; run: () => Promise<unknown> } | null>(null);
+  const [advance, setAdvance] = useState<{ participant: string; fromLabel: string; toLabel: string; amount: string; paysNow: boolean; run: () => Promise<unknown> } | null>(null);
   const apps = data.apps ?? [];
   const tierAmounts: bigint[] = data.market?.tierAmounts ?? [];
   const ghostAmount = tierAmounts[3] !== undefined ? usdc(tierAmounts[3]) : '0';
@@ -312,15 +314,37 @@ function ApplicantList({
   const isRequester =
     !!account && !!data.market?.requester && account.toLowerCase() === data.market.requester.toLowerCase();
 
+  // Real per-job ghost deadlines. The contract starts the Final job's ghost clock at grade-to-Final
+  // time (MarketRegistry._createTierJob), NOT at apply time — so read sdk.ghostDeadline(finalJobId)
+  // for each tier-3 applicant. Keyed by participant → unix seconds; falls back to an estimate below.
+  const [ghostDeadlines, setGhostDeadlines] = useState<Map<string, number>>(new Map());
+  useEffect(() => {
+    let cancelled = false;
+    const finalists = apps.filter((a: any) => Number(a.tierReached) === 3 && (a.tierJobIds ?? []).length > 0);
+    if (finalists.length === 0) { setGhostDeadlines(new Map()); return; }
+    (async () => {
+      const entries = await Promise.all(finalists.map(async (a: any) => {
+        const ids = a.tierJobIds as bigint[];
+        const finalJobId = ids[ids.length - 1];
+        const dl = await sdk.ghostDeadline(finalJobId).catch(() => 0n);
+        return [a.participant as string, Number(dl)] as const;
+      }));
+      if (!cancelled) setGhostDeadlines(new Map(entries.filter(([, v]) => v > 0)));
+    })();
+    return () => { cancelled = true; };
+  }, [sdk, apps]);
+
   function nextAction(a: any) {
     const t = Number(a.tierReached);
     if (t === 0) {
+      // Reveal pays the fee atomically (echoHook.settleReveal). Grade* only spawn a tier job — the
+      // payout fires later when the worker submits and the requester accepts, so paysNow is false.
       return data.revealFee > 0n
-        ? { label: 'Reveal', toLabel: 'Revealed', amount: usdc(data.revealFee), run: () => sdk.reveal(marketId, a.participant, account!) }
-        : { label: 'Grade Substantive', toLabel: 'Revealed', amount: usdc(tierAmounts[0] ?? 0n), run: () => sdk.gradeSubstantive(marketId, a.participant, account!) };
+        ? { label: 'Reveal', toLabel: 'Revealed', amount: usdc(data.revealFee), paysNow: true, run: () => sdk.reveal(marketId, a.participant, account!) }
+        : { label: 'Grade Substantive', toLabel: 'Revealed', amount: usdc(tierAmounts[0] ?? 0n), paysNow: false, run: () => sdk.gradeSubstantive(marketId, a.participant, account!) };
     }
-    if (t === 1) return { label: 'Advance', toLabel: 'Shortlist', amount: usdc(tierAmounts[1] ?? 0n), run: () => sdk.gradeShortlist(marketId, a.participant, account!) };
-    if (t === 2) return { label: 'Advance', toLabel: 'Final', amount: usdc(tierAmounts[2] ?? 0n), run: () => sdk.gradeFinal(marketId, a.participant, account!) };
+    if (t === 1) return { label: 'Advance', toLabel: 'Shortlist', amount: usdc(tierAmounts[1] ?? 0n), paysNow: false, run: () => sdk.gradeShortlist(marketId, a.participant, account!) };
+    if (t === 2) return { label: 'Advance', toLabel: 'Final', amount: usdc(tierAmounts[2] ?? 0n), paysNow: false, run: () => sdk.gradeFinal(marketId, a.participant, account!) };
     return null;
   }
 
@@ -339,8 +363,11 @@ function ApplicantList({
         {apps.map((a: any) => {
           const t = Number(a.tierReached);
           const next = nextAction(a);
-          const ghostDeadlineEstimate = t === 3 && data.ghostDeadline ? Number(a.appliedAt) + Number(data.ghostDeadline) : null;
-          const ghostPassed = ghostDeadlineEstimate !== null && now > ghostDeadlineEstimate;
+          const realGhostDeadline = ghostDeadlines.get(a.participant) ?? null;
+          const estGhostDeadline = t === 3 && data.ghostDeadline ? Number(a.appliedAt) + Number(data.ghostDeadline) : null;
+          const ghostDeadline = realGhostDeadline ?? estGhostDeadline;
+          const ghostIsReal = realGhostDeadline !== null;
+          const ghostPassed = ghostDeadline !== null && now > ghostDeadline;
 
           const tierJobIds = (a.tierJobIds ?? []) as bigint[];
 
@@ -353,10 +380,12 @@ function ApplicantList({
                   {a.submissionHash}
                 </span>
 
-                {t === 3 && ghostDeadlineEstimate !== null && (
+                {t === 3 && ghostDeadline !== null && (
                   <span className={`text-xs flex items-center gap-1 ${ghostPassed ? 'text-danger' : 'text-warning'}`}>
                     <Clock className="w-3 h-3" />
-                    {ghostPassed ? 'Ghost deadline passed (est.)' : `~${Math.max(0, Math.ceil((ghostDeadlineEstimate - now) / 86400))}d to ghost deadline (est.)`}
+                    {ghostPassed
+                      ? `Ghost deadline passed${ghostIsReal ? '' : ' (est.)'}`
+                      : `~${Math.max(0, Math.ceil((ghostDeadline - now) / 86400))}d to ghost deadline${ghostIsReal ? '' : ' (est.)'}`}
                   </span>
                 )}
 
@@ -364,7 +393,7 @@ function ApplicantList({
                   {next && (
                     <Button
                       variant="secondary"
-                      onClick={() => setAdvance({ participant: a.participant, fromLabel: TIER_LABELS[t], toLabel: next.toLabel, amount: next.amount, run: next.run })}
+                      onClick={() => setAdvance({ participant: a.participant, fromLabel: TIER_LABELS[t], toLabel: next.toLabel, amount: next.amount, paysNow: next.paysNow, run: next.run })}
                     >
                       {next.label}
                     </Button>
@@ -378,11 +407,22 @@ function ApplicantList({
                       label="Trigger ghost"
                       tone="neutral"
                       disabled={!account}
-                      run={() => sdk.triggerGhost(marketId, a.participant, account!)}
-                      onDone={() => {
-                        onChanged();
-                        onGhost({ amount: ghostAmount, finalists: apps.filter((x: any) => Number(x.tierReached) === 3).map((x: any) => x.participant) });
+                      run={async () => {
+                        // Which branch fires depends on the Final job's Arc status at the deadline:
+                        //   Submitted/Funded → full ghost reserve pays the worker (job.provider)
+                        //   Open (never delivered) → worker slashed, NO USDC moves (WorkerGhosted)
+                        // Read the status BEFORE triggering so the receipt modal reports the truth.
+                        const finalJobId = tierJobIds.length > 0 ? tierJobIds[tierJobIds.length - 1] : null;
+                        let paid = false;
+                        if (finalJobId !== null) {
+                          const j = await sdk.getArcJob(finalJobId).catch(() => null) as { status: number } | null;
+                          paid = !!j && (Number(j.status) === 1 || Number(j.status) === 2);
+                        }
+                        await sdk.triggerGhost(marketId, a.participant, account!);
+                        onGhost({ recipient: a.participant, amount: ghostAmount, paid });
+                        return 'done';
                       }}
+                      onDone={onChanged}
                     />
                   )}
                 </span>
@@ -408,6 +448,7 @@ function ApplicantList({
           fromLabel={advance.fromLabel}
           toLabel={advance.toLabel}
           amount={advance.amount}
+          paysNow={advance.paysNow}
           run={advance.run}
           onClose={() => setAdvance(null)}
           onDone={onChanged}
@@ -662,7 +703,7 @@ function AttributionOptIn({ sdk, account, marketId }: { sdk: ReturnType<typeof u
 function FeedbackPreview() {
   const [rating, setRating] = useState(5);
   return (
-    <Section title="Feedback" desc="Send feedback on a finalist within 7 days of their final round to avoid a ghost penalty.">
+    <Section title="Feedback" desc="Leave a rating on a finalist's work. Note: feedback does not affect the ghost penalty — you avoid that by resolving the Final tier job (Accept, Reject, or Request revision) before its ghost deadline.">
       <div className="sm:col-span-2">
         <div className={CARD_CLASS}>
           <div className="flex items-center gap-2 mb-3">
