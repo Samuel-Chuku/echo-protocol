@@ -1,6 +1,6 @@
 'use client';
 
-import { use, useCallback, useEffect, useMemo, useState } from 'react';
+import { use, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { ChevronLeft, ChevronUp, ChevronDown, ExternalLink, Clock, Ghost, MessageSquare, Star, Lock } from 'lucide-react';
 import { useQuery, gql } from 'urql';
@@ -206,6 +206,8 @@ export default function ManageMarketPage({ params }: { params: Promise<{ id: str
           )}
         </Card>
 
+        {data && <StatusReport data={data} closed={isClosed} rows={activityRows} />}
+
         {isClosed && (
           <div className="sm:col-span-2 flex items-start gap-3 rounded-card border border-white/10 bg-white/[0.03] p-4">
             <Lock className="w-4 h-4 text-white/40 mt-0.5 shrink-0" />
@@ -266,10 +268,16 @@ export default function ManageMarketPage({ params }: { params: Promise<{ id: str
 
 /* ──────────────────────────── per-market timeline ──────────────────────────── */
 
+const TIMELINE_PREVIEW = 10;
+
 function MarketTimeline({ rows, fetching, onRefresh }: { rows: ActivityRow[]; fetching: boolean; onRefresh: () => void }) {
   const now = Math.floor(Date.now() / 1000);
   const [order, setOrder] = useState<'desc' | 'asc'>('desc');
+  const [expanded, setExpanded] = useState(false);
   const sorted = useMemo(() => (order === 'desc' ? [...rows].reverse() : rows), [rows, order]);
+  const visible = expanded ? sorted : sorted.slice(0, TIMELINE_PREVIEW);
+  const hiddenCount = sorted.length - visible.length;
+
   return (
     <Section title="Timeline" desc={`Every on-chain event for this market, ${order === 'desc' ? 'newest first' : 'oldest first'}.`}>
       <div className="sm:col-span-2">
@@ -288,29 +296,142 @@ function MarketTimeline({ rows, fetching, onRefresh }: { rows: ActivityRow[]; fe
           {fetching && sorted.length === 0 && <p className="text-xs text-white/40">Loading…</p>}
           {!fetching && sorted.length === 0 && <p className="text-xs text-white/40">No events yet.</p>}
           {sorted.length > 0 && (
-            <ol className="relative border-l border-white/10 ml-2 space-y-3">
-              {sorted.map((r) => (
-                <li key={r.id} className="ml-4">
-                  <span className="absolute -left-1.5 mt-1.5 h-3 w-3 rounded-full bg-teal-500 border border-ink" />
-                  <div className="flex items-start gap-2">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-sm font-medium text-white">{eventLabel(r.eventName)}</span>
-                        <span className="text-[10px] text-white/40 tabular-nums">{timeAgo(r.createdAt, now)} · block {r.blockNumber}</span>
-                      </div>
-                      <div className="text-xs text-white/50 font-mono mt-0.5 truncate">{summarizeArgs(r.args)}</div>
-                    </div>
-                    <a href={txLink(r.txHash)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs text-white/30 hover:text-white shrink-0 transition">
-                      Tx: <span className="font-mono">{short(r.txHash)}</span> <ExternalLink className="w-3 h-3" />
-                    </a>
-                  </div>
-                </li>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {visible.map((r) => (
+                <TimelineCard key={r.id} row={r} now={now} />
               ))}
-            </ol>
+            </div>
+          )}
+          {sorted.length > TIMELINE_PREVIEW && (
+            <button
+              onClick={() => setExpanded((e) => !e)}
+              className="mt-3 inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-white/10 py-2 text-xs font-medium text-white/60 hover:border-white/25 hover:text-white transition"
+            >
+              {expanded ? (
+                <>Show fewer <ChevronUp className="w-3.5 h-3.5" /></>
+              ) : (
+                <>View full timeline · {hiddenCount} more <ChevronDown className="w-3.5 h-3.5" /></>
+              )}
+            </button>
           )}
         </Card>
       </div>
     </Section>
+  );
+}
+
+/** One event as a compact card: label, when + block, decoded context, and a single Arcscan icon-link
+ *  (no raw hash text — the icon is the affordance). */
+function TimelineCard({ row, now }: { row: ActivityRow; now: number }) {
+  const ctx = summarizeArgs(row.args);
+  return (
+    <div className="flex items-start gap-2.5 rounded-lg border border-white/10 bg-white/[0.03] p-3">
+      <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-teal-500" />
+      <div className="min-w-0 flex-1">
+        <div className="flex items-baseline justify-between gap-2">
+          <span className="text-sm font-medium text-white truncate">{eventLabel(row.eventName)}</span>
+          <span className="shrink-0 text-[10px] text-white/40 tabular-nums">{timeAgo(row.createdAt, now)}</span>
+        </div>
+        {ctx && <div className="mt-0.5 text-xs text-white/50 font-mono truncate">{ctx}</div>}
+        <div className="mt-0.5 text-[10px] text-white/30 tabular-nums">block {row.blockNumber}</div>
+      </div>
+      <a
+        href={txLink(row.txHash)}
+        target="_blank"
+        rel="noreferrer"
+        title="View transaction on Arcscan"
+        aria-label="View transaction on Arcscan"
+        className="shrink-0 flex h-8 w-8 items-center justify-center rounded-md border border-white/10 text-white/40 hover:border-white/30 hover:text-white transition"
+      >
+        <ExternalLink className="w-3.5 h-3.5" />
+      </a>
+    </div>
+  );
+}
+
+/* ──────────────────────────── at-a-glance status report ──────────────────────────── */
+
+/**
+ * Companion to the Overview card: an at-a-glance summary — live/closed state, the ghost-penalty
+ * countdown (accurate: the on-chain ghost clock starts at grade-to-Final, so we read the
+ * `TierAdvanced(toTier:3)` event time from the indexed timeline, not apply time), and a plain-English
+ * "what's pending and from whom" line derived from applicant tiers / job mode.
+ */
+function StatusReport({ data, closed, rows }: { data: Loaded; closed: boolean; rows: ActivityRow[] }) {
+  const now = Math.floor(Date.now() / 1000);
+  const mode = data.mode;
+  const apps = data.apps ?? [];
+
+  // Soonest ghost deadline across finalists, from the grade-to-Final event time + the market's ghost window.
+  const ghostDeadline = useMemo(() => {
+    if (mode !== EchoMode.OpenMarket || !data.ghostDeadline) return null;
+    const secs = Number(data.ghostDeadline);
+    let soonest: number | null = null;
+    for (const r of rows) {
+      if (r.eventName !== 'TierAdvanced') continue;
+      let a: Record<string, unknown>;
+      try { a = JSON.parse(r.args); } catch { continue; }
+      if (Number(a.toTier) !== 3) continue;
+      const dl = r.createdAt + secs;
+      if (soonest === null || dl < soonest) soonest = dl;
+    }
+    return soonest;
+  }, [rows, data.ghostDeadline, mode]);
+  const ghostPassed = ghostDeadline !== null && now > ghostDeadline;
+
+  // "What happens next" — who is on the hook, in plain English.
+  const action: { label: string; who?: string } = (() => {
+    if (closed) return { label: 'Closed and settled — no action required.' };
+    if (mode === EchoMode.OpenMarket) {
+      if (apps.length === 0) return { label: 'Waiting for the first applicant.', who: 'workers' };
+      const t0 = apps.filter((a: any) => Number(a.tierReached) === 0).length;
+      const t12 = apps.filter((a: any) => [1, 2].includes(Number(a.tierReached))).length;
+      const t3 = apps.filter((a: any) => Number(a.tierReached) === 3).length;
+      if (t0) return { label: `Reveal or grade ${t0} new applicant${t0 > 1 ? 's' : ''}.`, who: 'you' };
+      if (t12) return { label: `Advance ${t12} applicant${t12 > 1 ? 's' : ''} to the next tier.`, who: 'you' };
+      if (t3) return { label: 'Resolve the Final tier (accept, reject, or request revision) before the ghost deadline.', who: 'you' };
+      return { label: 'In progress.' };
+    }
+    if (mode === EchoMode.DirectJob) return { label: 'Review milestones below and release payment as work is delivered.', who: 'you' };
+    return { label: 'Review submitted findings below; accept, reject, or auto-escalate.', who: 'you' };
+  })();
+
+  const metrics: [string, ReactNode][] = [['escrow remaining', `$${usdc(data.remaining)}`]];
+  if (mode === EchoMode.OpenMarket) {
+    metrics.push(['applicants', String(apps.length)]);
+    metrics.push(['reached Final', String(apps.filter((a: any) => Number(a.tierReached) === 3).length)]);
+  } else if (mode === EchoMode.DirectJob) {
+    metrics.push(['milestones', String((data.milestones ?? []).length)]);
+  } else {
+    metrics.push(['findings', String((data.findings ?? []).length)]);
+  }
+
+  return (
+    <Card title="Status report">
+      <div className="flex items-center gap-2">
+        <Badge tone={closed ? 'neutral' : 'success'}>{closed ? 'Closed' : 'Active'}</Badge>
+        <span className="text-xs text-white/40">{modeName(mode)}</span>
+      </div>
+
+      {ghostDeadline !== null && (
+        <div className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-xs ${ghostPassed ? 'border-danger/20 bg-danger/5 text-danger' : 'border-warning/20 bg-warning/5 text-warning'}`}>
+          <Clock className="w-3.5 h-3.5 shrink-0" />
+          {ghostPassed
+            ? 'Ghost deadline passed — trigger the ghost penalty or close the market.'
+            : `Ghost penalty in ${duration(ghostDeadline - now)}.`}
+        </div>
+      )}
+
+      <div>
+        <div className="text-[10px] uppercase tracking-wide text-white/40">Pending action</div>
+        <p className="mt-0.5 text-sm text-white/80">{action.label}</p>
+        {action.who && !closed && (
+          <p className="mt-0.5 text-xs text-white/40">Waiting on: <span className="text-white/60">{action.who}</span></p>
+        )}
+      </div>
+
+      <KV rows={metrics} />
+    </Card>
   );
 }
 
