@@ -88,9 +88,13 @@ export default function ManageMarketPage({ params }: { params: Promise<{ id: str
 
   // Single source of truth for marketActivity rows — used by both the Timeline AND the per-applicant
   // payout rollup (so we only hit the indexer once per refresh).
+  // `variables` MUST be referentially stable: an inline object literal is a fresh identity every
+  // render, which makes urql re-read the cache and setState *during* render under cache-and-network
+  // ("Cannot update a component while rendering a different component"). Memoize on the numeric id.
+  const actVars = useMemo(() => ({ marketId: Number(id) }), [id]);
   const [{ data: actData, fetching: actFetching }, refetchActivity] = useQuery<{ marketActivity: ActivityRow[] }>({
     query: MARKET_ACTIVITY,
-    variables: { marketId: Number(id) },
+    variables: actVars,
     requestPolicy: 'cache-and-network',
   });
   const activityRows = actData?.marketActivity ?? [];

@@ -16,7 +16,17 @@ const C = CONTRACTS.arcTestnet;
 const PENDING = new Set([
   'Applied', 'FindingSubmitted', 'MilestoneSubmitted', 'DisputeOpened', 'DisputeCountered', 'Voted', 'RevealFlagged',
 ]);
-const stateOf = (name: string) => (PENDING.has(name) ? 'PENDING' : 'COMPLETED');
+
+// An event is only PENDING while its market is still open. Every market is terminal eventually
+// (closed / cancelled — deadlines guarantee nothing stays open forever), and once it settles nothing
+// on it can still need action. So a would-be-PENDING event on a non-active market reads COMPLETED.
+// `activeMarketIds` is the set of market ids whose status is still 'active'; pass null when unknown
+// (e.g. the market row is missing) to fall back to the name-only rule.
+const stateOf = (name: string, marketId: number | null, activeMarketIds: Set<number> | null) => {
+  if (!PENDING.has(name)) return 'COMPLETED';
+  if (activeMarketIds && marketId !== null && !activeMarketIds.has(marketId)) return 'COMPLETED';
+  return 'PENDING';
+};
 
 const marketOut = (m: any) => ({ ...m, tiers: m.tiers ? JSON.parse(m.tiers) : null });
 
@@ -59,8 +69,12 @@ export const resolvers = {
       const ownership = ids.length ? or(eq(events.actor, addr), inArray(events.marketId, ids)) : eq(events.actor, addr);
       const rows = await db.select().from(events).where(ownership)
         .orderBy(desc(events.blockNumber), desc(events.logIndex)).limit(a.limit ?? 100);
+      // Which of the referenced markets are still open? Anything closed/cancelled resolves its
+      // otherwise-pending events to COMPLETED so nothing lingers as "Pending" past settlement.
+      const active = await db.select({ id: markets.id }).from(markets).where(eq(markets.status, 'active'));
+      const activeIds = new Set(active.map((r) => r.id));
       return rows
-        .map((e) => ({ ...e, state: stateOf(e.eventName) }))
+        .map((e) => ({ ...e, state: stateOf(e.eventName, e.marketId, activeIds) }))
         .filter((e) => !a.status || e.state === a.status);
     },
 
@@ -68,7 +82,9 @@ export const resolvers = {
       // Oldest-first for the timeline UI; the page reads it as a linear progression.
       const rows = await db.select().from(events).where(eq(events.marketId, a.marketId))
         .orderBy(events.blockNumber, events.logIndex).limit(a.limit ?? 200);
-      return rows.map((e) => ({ ...e, state: stateOf(e.eventName) }));
+      const [m] = await db.select({ status: markets.status }).from(markets).where(eq(markets.id, a.marketId)).limit(1);
+      const activeIds = m ? (m.status === 'active' ? new Set([a.marketId]) : new Set<number>()) : null;
+      return rows.map((e) => ({ ...e, state: stateOf(e.eventName, e.marketId, activeIds) }));
     },
 
     disputes: (_: unknown, a: { status?: number }) =>
