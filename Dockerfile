@@ -6,9 +6,6 @@
 # Pick the app with a build arg:  --build-arg APP_DIR=apps/indexer  (or apps/ops)
 FROM node:20-alpine
 
-ARG APP_DIR
-ENV APP_DIR=${APP_DIR}
-
 RUN corepack enable
 WORKDIR /app
 
@@ -38,6 +35,13 @@ COPY . .
 
 # Runtime is production (Express optimizations) — set AFTER install so dev deps still landed.
 ENV NODE_ENV=production
+
+# Per-service selector goes LAST so everything above (corepack, manifest copies, the heavy
+# `pnpm install`, and `COPY . .`) is byte-identical for both indexer and ops — Docker then shares
+# those cached layers across the two builds instead of redoing the install for each. Only this tiny
+# final ENV + CMD layer differs per service.
+ARG APP_DIR
+ENV APP_DIR=${APP_DIR}
 
 # Run the selected app with tsx. cd into the app so its relative paths (ops serves ./public,
 # indexer reads ./ .env via the env_file) resolve as they do in dev.
