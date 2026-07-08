@@ -41,6 +41,9 @@ type Rep = {
 };
 type ProfileData = { asRequester: Mkt[]; asWorker: App[]; reputation: Rep | null; activity: ActivityRow[] };
 
+// Profile shows the most recent 20 as cards; the full history lives on the /activity page.
+const PROFILE_ACTIVITY_PREVIEW = 20;
+
 function earnedFrom(json: string): number {
   try {
     const args = JSON.parse(json);
@@ -58,9 +61,11 @@ export default function ProfilePage({ params }: { params: Promise<{ handle: stri
   const [copied, setCopied] = useState(false);
   const [shared, setShared] = useState(false);
 
+  // Stable variables identity — an inline literal re-triggers urql's cache read during render.
+  const vars = useMemo(() => ({ address: address ?? '' }), [address]);
   const [{ data, fetching, error }] = useQuery<ProfileData>({
     query: PROFILE,
-    variables: { address: address ?? '' },
+    variables: vars,
     pause: !address,
   });
 
@@ -242,33 +247,42 @@ export default function ProfilePage({ params }: { params: Promise<{ handle: stri
       <section>
         <h2 className="text-lg font-bold text-white">Recent activity</h2>
         <p className="text-sm text-white/50 mt-0.5 mb-3">Latest events involving this address.</p>
-        <div className={CARD_CLASS}>
-          {activity.length === 0 ? (
+        {activity.length === 0 ? (
+          <div className={CARD_CLASS}>
             <EmptyState icon={Award} title="No activity yet" desc="Nothing recorded for this address yet." />
-          ) : (
-            <ul className="divide-y divide-white/[0.08]">
-              {activity.map((r) => {
+          </div>
+        ) : (
+          <>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {activity.slice(0, PROFILE_ACTIVITY_PREVIEW).map((r) => {
                 const href = marketHref(r, address);
-                const body = (
-                  <>
-                    <Badge tone={r.state === 'PENDING' ? 'warning' : 'neutral'}>{r.state === 'PENDING' ? 'Pending' : 'Done'}</Badge>
-                    <span className="flex-1 min-w-0">
-                      <b className="font-medium text-white">{eventLabel(r.eventName)}</b>
-                      <span className="text-white/40 font-mono text-xs ml-2">{r.marketId !== null && `#${r.marketId} `}{summarizeArgs(r.args)}</span>
-                    </span>
-                    <span className="text-xs text-white/40 shrink-0">{timeAgo(r.createdAt, now)}</span>
-                  </>
-                );
                 return (
-                  <li key={r.id} className="flex items-center gap-3 py-2.5">
-                    {href ? <Link href={href} className="flex items-center gap-3 flex-1 min-w-0 hover:opacity-80">{body}</Link> : <span className="flex items-center gap-3 flex-1 min-w-0">{body}</span>}
-                    <a href={txLink(r.txHash)} target="_blank" rel="noreferrer" className="text-white/20 hover:text-white shrink-0"><ExternalLink className="w-3.5 h-3.5" /></a>
-                  </li>
+                  <div key={r.id} className="flex items-start gap-2.5 rounded-lg border border-white/10 bg-white/[0.03] p-3">
+                    <span className={`mt-1 h-2 w-2 shrink-0 rounded-full ${r.state === 'PENDING' ? 'bg-warning' : 'bg-teal-500'}`} />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-baseline justify-between gap-2">
+                        {href ? (
+                          <Link href={href} className="text-sm font-medium text-white truncate hover:text-teal-400 transition">{eventLabel(r.eventName)}</Link>
+                        ) : (
+                          <span className="text-sm font-medium text-white truncate">{eventLabel(r.eventName)}</span>
+                        )}
+                        <span className="shrink-0 text-[10px] text-white/40 tabular-nums">{timeAgo(r.createdAt, now)}</span>
+                      </div>
+                      <div className="mt-0.5 flex items-center gap-2">
+                        {r.state === 'PENDING' && <Badge tone="warning">Pending</Badge>}
+                        <span className="text-xs text-white/50 font-mono truncate">{r.marketId !== null && `#${r.marketId} `}{summarizeArgs(r.args)}</span>
+                      </div>
+                    </div>
+                    <a href={txLink(r.txHash)} target="_blank" rel="noreferrer" title="View transaction on Arcscan" aria-label="View transaction on Arcscan" className="shrink-0 flex h-8 w-8 items-center justify-center rounded-md border border-white/10 text-white/40 hover:border-white/30 hover:text-white transition"><ExternalLink className="w-3.5 h-3.5" /></a>
+                  </div>
                 );
               })}
-            </ul>
-          )}
-        </div>
+            </div>
+            <Link href="/activity" className="mt-3 inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-white/10 py-2 text-xs font-medium text-white/60 hover:border-white/25 hover:text-white transition">
+              View all activity <ExternalLink className="w-3.5 h-3.5" />
+            </Link>
+          </>
+        )}
       </section>
     </div>
   );

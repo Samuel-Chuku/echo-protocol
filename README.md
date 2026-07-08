@@ -97,8 +97,9 @@ Echo also rewards introductions. A requester can fund a pool that pays the perso
 ```
 echo-protocol/
   apps/
-    web/        Next.js app: apply, hire, profiles, disputes, landing
+    web/        Next.js app: marketing (/site) + apply, hire, profiles, disputes
     indexer/    Node and GraphQL indexer over the on chain events
+    ops/        Operator dashboard: monitoring, feature flags, owner on-chain toggles
   packages/
     contracts/  Solidity (Foundry): MarketRegistry, EchoHook, DisputeResolver, and friends
     sdk/        TypeScript SDK (viem) for builders and the web app

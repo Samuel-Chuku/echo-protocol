@@ -1,6 +1,6 @@
 'use client';
 
-import { use, useCallback, useEffect, useState, type ReactNode } from 'react';
+import { use, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { ChevronLeft, ShieldCheck, CheckCircle2 } from 'lucide-react';
 import { useQuery, useClient, gql } from 'urql';
@@ -95,7 +95,9 @@ export default function JobDetailPage({ params }: { params: Promise<{ id: string
   const { agentId } = useAgent();
   const [ghostDeadline, setGhostDeadline] = useState<bigint | null>(null);
 
-  const [{ data, fetching, error }] = useQuery<{ market: MarketDetail | null }>({ query: MARKET, variables: { id: Number(id) } });
+  // Stable variables identity — an inline literal makes urql setState during render (setstate-in-render).
+  const marketVars = useMemo(() => ({ id: Number(id) }), [id]);
+  const [{ data, fetching, error }] = useQuery<{ market: MarketDetail | null }>({ query: MARKET, variables: marketVars });
   const m = data?.market ?? null;
 
   useEffect(() => {

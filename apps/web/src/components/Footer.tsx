@@ -1,6 +1,9 @@
 import { ArrowRight, Github, Twitter, MessageCircle } from 'lucide-react';
-import { APP_URL } from '@/lib/config';
 import { LogoMark } from './ui';
+
+// This footer renders on the marketing surface (/site). Its links point at the app, which in
+// production is the app.* subdomain; falls back to the local app dev server in development.
+const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
 
 const PROTOCOL_LINKS = [
   { label: 'Find work', href: `${APP_URL}/apply` },

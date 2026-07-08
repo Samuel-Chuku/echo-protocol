@@ -1,14 +1,16 @@
 const CENTER = { x: 320, y: 190 };
 
+// Genericized: labels describe the flow (stake → advance → earn USDC + reputation) without asserting
+// specific dollar amounts, since payouts are set per market by the requester.
 const NODES = [
-  { key: 'submit', label: 'Submit', amount: '$5', x: 320, y: 60 },
-  { key: 'shortlist', label: 'Shortlist', amount: '+$50', x: 443.6, y: 149.8 },
-  { key: 'final', label: 'Final', amount: '+$250', x: 396.4, y: 295.2 },
+  { key: 'submit', label: 'Submit', amount: 'stake', x: 320, y: 60 },
+  { key: 'shortlist', label: 'Shortlist', amount: '+USDC', x: 443.6, y: 149.8 },
+  { key: 'final', label: 'Final', amount: '+USDC', x: 396.4, y: 295.2 },
   { key: 'win', label: 'Win', amount: 'Badge', x: 243.6, y: 295.2 },
-  { key: 'reputation', label: 'Reputation', amount: '+500 pts', x: 196.4, y: 149.8 },
+  { key: 'reputation', label: 'Reputation', amount: '+Rep', x: 196.4, y: 149.8 },
 ];
 
-/** Animated SVG showing the Echo flow: stake, advance through tiers, earn USDC + reputation. SMIL/CSS only, no animation libraries. */
+/** Animated SVG of the Echo flow: stake, advance through tiers, earn USDC + reputation. CSS/SMIL only. */
 export function EchoFlowGraphic() {
   return (
     <svg
@@ -69,14 +71,23 @@ export function EchoFlowGraphic() {
         </g>
       ))}
 
+      {/* Center: teal disc with an asset-free "echo" mark (source dot emitting concentric arcs). */}
       <circle cx={CENTER.x} cy={CENTER.y} r={70} fill="#00E5C0" />
-      <image
-        href="/logo-white-mark.png"
-        x={CENTER.x - 44}
-        y={CENTER.y - 44}
-        width={88}
-        height={88}
-        preserveAspectRatio="xMidYMid meet"
+      <circle cx={CENTER.x - 22} cy={CENTER.y} r={7} fill="#0A2540" />
+      <path
+        d={`M${CENTER.x - 6},${CENTER.y - 26} a26 26 0 0 1 0 52`}
+        fill="none"
+        stroke="#0A2540"
+        strokeWidth={5}
+        strokeLinecap="round"
+      />
+      <path
+        d={`M${CENTER.x + 10},${CENTER.y - 40} a42 42 0 0 1 0 80`}
+        fill="none"
+        stroke="#0A2540"
+        strokeWidth={5}
+        strokeLinecap="round"
+        strokeOpacity={0.55}
       />
     </svg>
   );

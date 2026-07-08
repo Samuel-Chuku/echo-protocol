@@ -1,8 +1,11 @@
 import { ArrowRight, Layers, Briefcase, Award } from 'lucide-react';
-import { APP_URL } from '@/lib/config';
 import { StatCard, CARD_CLASS, TierTrack, LogoMark, type TierStep } from '@/components/ui';
 import { EchoFlowGraphic } from '@/components/EchoFlowGraphic';
 import { Footer } from '@/components/Footer';
+
+// Marketing surface, served at the bare domain (echoprotocol.site) via middleware host-rewrite.
+// "Go to App" links cross to the app.* subdomain in production, or the local app dev server in dev.
+const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
 
 // Honest, protocol-/Arc-level facts only — no per-market figures asserted as constants.
 const STATS = [

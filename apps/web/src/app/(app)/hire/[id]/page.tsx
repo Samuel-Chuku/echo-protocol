@@ -1,8 +1,8 @@
 'use client';
 
-import { use, useCallback, useEffect, useMemo, useState } from 'react';
+import { use, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import Link from 'next/link';
-import { ChevronLeft, ChevronUp, ChevronDown, ExternalLink, Clock, Ghost, MessageSquare, Star } from 'lucide-react';
+import { ChevronLeft, ChevronUp, ChevronDown, ExternalLink, Clock, Ghost, MessageSquare, Star, Lock } from 'lucide-react';
 import { useQuery, gql } from 'urql';
 import { EchoMode, CONTRACTS } from '@echo/sdk';
 import { useEcho } from '@/lib/sdk';
@@ -81,11 +81,20 @@ export default function ManageMarketPage({ params }: { params: Promise<{ id: str
   const isRequester =
     !!account && !!data?.market?.requester && account.toLowerCase() === data.market.requester.toLowerCase();
 
+  // A closed market is terminal: escrow has been returned and every on-chain write (grade, ghost,
+  // settle, close, attribution funding) reverts. When closed we drop all action affordances and keep
+  // the page read-only — status, applicant results, timeline, and feedback.
+  const isClosed = !!data?.market?.closed;
+
   // Single source of truth for marketActivity rows — used by both the Timeline AND the per-applicant
   // payout rollup (so we only hit the indexer once per refresh).
+  // `variables` MUST be referentially stable: an inline object literal is a fresh identity every
+  // render, which makes urql re-read the cache and setState *during* render under cache-and-network
+  // ("Cannot update a component while rendering a different component"). Memoize on the numeric id.
+  const actVars = useMemo(() => ({ marketId: Number(id) }), [id]);
   const [{ data: actData, fetching: actFetching }, refetchActivity] = useQuery<{ marketActivity: ActivityRow[] }>({
     query: MARKET_ACTIVITY,
-    variables: { marketId: Number(id) },
+    variables: actVars,
     requestPolicy: 'cache-and-network',
   });
   const activityRows = actData?.marketActivity ?? [];
@@ -201,31 +210,49 @@ export default function ManageMarketPage({ params }: { params: Promise<{ id: str
           )}
         </Card>
 
+        {data && <StatusReport data={data} closed={isClosed} rows={activityRows} />}
+
+        {isClosed && (
+          <div className="sm:col-span-2 flex items-start gap-3 rounded-card border border-white/10 bg-white/[0.03] p-4">
+            <Lock className="w-4 h-4 text-white/40 mt-0.5 shrink-0" />
+            <div>
+              <h3 className="text-sm font-semibold text-white">Market closed</h3>
+              <p className="text-xs text-white/50 mt-0.5">
+                This market has been closed and settled — any unspent escrow was returned to you. No
+                further on-chain actions can be taken. Everything below is read-only; you can still
+                review the timeline and leave feedback.
+              </p>
+            </div>
+          </div>
+        )}
+
         {data?.mode === EchoMode.OpenMarket && (
           <div className="sm:col-span-2 space-y-3">
-            <ApplicantList sdk={sdk} account={account} data={data} marketId={marketId()} onChanged={load} onGhost={setGhostResult} />
-            <div className={CARD_CLASS}>
-              <h3 className="text-sm font-semibold text-white">Close market</h3>
-              <p className="text-xs text-white/40 mt-0.5">Returns unspent USDC to you. A reveal market needs its minimum-reveal floor met first.</p>
-              <Button variant="danger" className="mt-3" onClick={() => setCloseOpen(true)}>Close market</Button>
-            </div>
+            <ApplicantList sdk={sdk} account={account} data={data} marketId={marketId()} onChanged={load} onGhost={setGhostResult} closed={isClosed} />
+            {!isClosed && (
+              <div className={CARD_CLASS}>
+                <h3 className="text-sm font-semibold text-white">Close market</h3>
+                <p className="text-xs text-white/40 mt-0.5">Returns unspent USDC to you. A reveal market needs its minimum-reveal floor met first.</p>
+                <Button variant="danger" className="mt-3" onClick={() => setCloseOpen(true)}>Close market</Button>
+              </div>
+            )}
           </div>
         )}
 
         {/* Direct Job actions */}
         {data?.mode === EchoMode.DirectJob && (
-          <DirectJobActions sdk={sdk} account={account} data={data} marketId={marketId()} onChanged={load} />
+          <DirectJobActions sdk={sdk} account={account} data={data} marketId={marketId()} onChanged={load} closed={isClosed} />
         )}
 
         {/* Bounty actions */}
         {data?.mode === EchoMode.Bounty && (
-          <BountyActions sdk={sdk} account={account} data={data} marketId={marketId()} onChanged={load} />
+          <BountyActions sdk={sdk} account={account} data={data} marketId={marketId()} onChanged={load} closed={isClosed} />
         )}
       </Section>
 
       <MarketTimeline rows={activityRows} fetching={actFetching} onRefresh={() => refetchActivity({ requestPolicy: 'network-only' })} />
 
-      <AttributionOptIn sdk={sdk} account={account} marketId={marketId} />
+      <AttributionOptIn sdk={sdk} account={account} marketId={marketId} closed={isClosed} />
       <FeedbackPreview />
 
       {closeOpen && (
@@ -245,10 +272,16 @@ export default function ManageMarketPage({ params }: { params: Promise<{ id: str
 
 /* ──────────────────────────── per-market timeline ──────────────────────────── */
 
+const TIMELINE_PREVIEW = 10;
+
 function MarketTimeline({ rows, fetching, onRefresh }: { rows: ActivityRow[]; fetching: boolean; onRefresh: () => void }) {
   const now = Math.floor(Date.now() / 1000);
   const [order, setOrder] = useState<'desc' | 'asc'>('desc');
+  const [expanded, setExpanded] = useState(false);
   const sorted = useMemo(() => (order === 'desc' ? [...rows].reverse() : rows), [rows, order]);
+  const visible = expanded ? sorted : sorted.slice(0, TIMELINE_PREVIEW);
+  const hiddenCount = sorted.length - visible.length;
+
   return (
     <Section title="Timeline" desc={`Every on-chain event for this market, ${order === 'desc' ? 'newest first' : 'oldest first'}.`}>
       <div className="sm:col-span-2">
@@ -267,25 +300,23 @@ function MarketTimeline({ rows, fetching, onRefresh }: { rows: ActivityRow[]; fe
           {fetching && sorted.length === 0 && <p className="text-xs text-white/40">Loading…</p>}
           {!fetching && sorted.length === 0 && <p className="text-xs text-white/40">No events yet.</p>}
           {sorted.length > 0 && (
-            <ol className="relative border-l border-white/10 ml-2 space-y-3">
-              {sorted.map((r) => (
-                <li key={r.id} className="ml-4">
-                  <span className="absolute -left-1.5 mt-1.5 h-3 w-3 rounded-full bg-teal-500 border border-ink" />
-                  <div className="flex items-start gap-2">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-sm font-medium text-white">{eventLabel(r.eventName)}</span>
-                        <span className="text-[10px] text-white/40 tabular-nums">{timeAgo(r.createdAt, now)} · block {r.blockNumber}</span>
-                      </div>
-                      <div className="text-xs text-white/50 font-mono mt-0.5 truncate">{summarizeArgs(r.args)}</div>
-                    </div>
-                    <a href={txLink(r.txHash)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs text-white/30 hover:text-white shrink-0 transition">
-                      Tx: <span className="font-mono">{short(r.txHash)}</span> <ExternalLink className="w-3 h-3" />
-                    </a>
-                  </div>
-                </li>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {visible.map((r) => (
+                <TimelineCard key={r.id} row={r} now={now} />
               ))}
-            </ol>
+            </div>
+          )}
+          {sorted.length > TIMELINE_PREVIEW && (
+            <button
+              onClick={() => setExpanded((e) => !e)}
+              className="mt-3 inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-white/10 py-2 text-xs font-medium text-white/60 hover:border-white/25 hover:text-white transition"
+            >
+              {expanded ? (
+                <>Show fewer <ChevronUp className="w-3.5 h-3.5" /></>
+              ) : (
+                <>View full timeline · {hiddenCount} more <ChevronDown className="w-3.5 h-3.5" /></>
+              )}
+            </button>
           )}
         </Card>
       </div>
@@ -293,10 +324,125 @@ function MarketTimeline({ rows, fetching, onRefresh }: { rows: ActivityRow[]; fe
   );
 }
 
+/** One event as a compact card: label, when + block, decoded context, and a single Arcscan icon-link
+ *  (no raw hash text — the icon is the affordance). */
+function TimelineCard({ row, now }: { row: ActivityRow; now: number }) {
+  const ctx = summarizeArgs(row.args);
+  return (
+    <div className="flex items-start gap-2.5 rounded-lg border border-white/10 bg-white/[0.03] p-3">
+      <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-teal-500" />
+      <div className="min-w-0 flex-1">
+        <div className="flex items-baseline justify-between gap-2">
+          <span className="text-sm font-medium text-white truncate">{eventLabel(row.eventName)}</span>
+          <span className="shrink-0 text-[10px] text-white/40 tabular-nums">{timeAgo(row.createdAt, now)}</span>
+        </div>
+        {ctx && <div className="mt-0.5 text-xs text-white/50 font-mono truncate">{ctx}</div>}
+        <div className="mt-0.5 text-[10px] text-white/30 tabular-nums">block {row.blockNumber}</div>
+      </div>
+      <a
+        href={txLink(row.txHash)}
+        target="_blank"
+        rel="noreferrer"
+        title="View transaction on Arcscan"
+        aria-label="View transaction on Arcscan"
+        className="shrink-0 flex h-8 w-8 items-center justify-center rounded-md border border-white/10 text-white/40 hover:border-white/30 hover:text-white transition"
+      >
+        <ExternalLink className="w-3.5 h-3.5" />
+      </a>
+    </div>
+  );
+}
+
+/* ──────────────────────────── at-a-glance status report ──────────────────────────── */
+
+/**
+ * Companion to the Overview card: an at-a-glance summary — live/closed state, the ghost-penalty
+ * countdown (accurate: the on-chain ghost clock starts at grade-to-Final, so we read the
+ * `TierAdvanced(toTier:3)` event time from the indexed timeline, not apply time), and a plain-English
+ * "what's pending and from whom" line derived from applicant tiers / job mode.
+ */
+function StatusReport({ data, closed, rows }: { data: Loaded; closed: boolean; rows: ActivityRow[] }) {
+  const now = Math.floor(Date.now() / 1000);
+  const mode = data.mode;
+  const apps = data.apps ?? [];
+
+  // Soonest ghost deadline across finalists, from the grade-to-Final event time + the market's ghost window.
+  const ghostDeadline = useMemo(() => {
+    if (mode !== EchoMode.OpenMarket || !data.ghostDeadline) return null;
+    const secs = Number(data.ghostDeadline);
+    let soonest: number | null = null;
+    for (const r of rows) {
+      if (r.eventName !== 'TierAdvanced') continue;
+      let a: Record<string, unknown>;
+      try { a = JSON.parse(r.args); } catch { continue; }
+      if (Number(a.toTier) !== 3) continue;
+      const dl = r.createdAt + secs;
+      if (soonest === null || dl < soonest) soonest = dl;
+    }
+    return soonest;
+  }, [rows, data.ghostDeadline, mode]);
+  const ghostPassed = ghostDeadline !== null && now > ghostDeadline;
+
+  // "What happens next" — who is on the hook, in plain English.
+  const action: { label: string; who?: string } = (() => {
+    if (closed) return { label: 'Closed and settled — no action required.' };
+    if (mode === EchoMode.OpenMarket) {
+      if (apps.length === 0) return { label: 'Waiting for the first applicant.', who: 'workers' };
+      const t0 = apps.filter((a: any) => Number(a.tierReached) === 0).length;
+      const t12 = apps.filter((a: any) => [1, 2].includes(Number(a.tierReached))).length;
+      const t3 = apps.filter((a: any) => Number(a.tierReached) === 3).length;
+      if (t0) return { label: `Reveal or grade ${t0} new applicant${t0 > 1 ? 's' : ''}.`, who: 'you' };
+      if (t12) return { label: `Advance ${t12} applicant${t12 > 1 ? 's' : ''} to the next tier.`, who: 'you' };
+      if (t3) return { label: 'Resolve the Final tier (accept, reject, or request revision) before the ghost deadline.', who: 'you' };
+      return { label: 'In progress.' };
+    }
+    if (mode === EchoMode.DirectJob) return { label: 'Review milestones below and release payment as work is delivered.', who: 'you' };
+    return { label: 'Review submitted findings below; accept, reject, or auto-escalate.', who: 'you' };
+  })();
+
+  const metrics: [string, ReactNode][] = [['escrow remaining', `$${usdc(data.remaining)}`]];
+  if (mode === EchoMode.OpenMarket) {
+    metrics.push(['applicants', String(apps.length)]);
+    metrics.push(['reached Final', String(apps.filter((a: any) => Number(a.tierReached) === 3).length)]);
+  } else if (mode === EchoMode.DirectJob) {
+    metrics.push(['milestones', String((data.milestones ?? []).length)]);
+  } else {
+    metrics.push(['findings', String((data.findings ?? []).length)]);
+  }
+
+  return (
+    <Card title="Status report">
+      <div className="flex items-center gap-2">
+        <Badge tone={closed ? 'neutral' : 'success'}>{closed ? 'Closed' : 'Active'}</Badge>
+        <span className="text-xs text-white/40">{modeName(mode)}</span>
+      </div>
+
+      {ghostDeadline !== null && (
+        <div className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-xs ${ghostPassed ? 'border-danger/20 bg-danger/5 text-danger' : 'border-warning/20 bg-warning/5 text-warning'}`}>
+          <Clock className="w-3.5 h-3.5 shrink-0" />
+          {ghostPassed
+            ? 'Ghost deadline passed — trigger the ghost penalty or close the market.'
+            : `Ghost penalty in ${duration(ghostDeadline - now)}.`}
+        </div>
+      )}
+
+      <div>
+        <div className="text-[10px] uppercase tracking-wide text-white/40">Pending action</div>
+        <p className="mt-0.5 text-sm text-white/80">{action.label}</p>
+        {action.who && !closed && (
+          <p className="mt-0.5 text-xs text-white/40">Waiting on: <span className="text-white/60">{action.who}</span></p>
+        )}
+      </div>
+
+      <KV rows={metrics} />
+    </Card>
+  );
+}
+
 /* ──────────────────────────── Open/Reveal applicant list ──────────────────────────── */
 
 function ApplicantList({
-  sdk, account, data, marketId, onChanged, onGhost,
+  sdk, account, data, marketId, onChanged, onGhost, closed,
 }: {
   sdk: ReturnType<typeof useEcho>['sdk'];
   account?: `0x${string}`;
@@ -304,6 +450,8 @@ function ApplicantList({
   marketId: bigint;
   onChanged: () => void;
   onGhost: (r: { recipient: string; amount: string; paid: boolean }) => void;
+  /** When the market is closed, the list is read-only: results stay, all action controls hide. */
+  closed: boolean;
 }) {
   const [advance, setAdvance] = useState<{ participant: string; fromLabel: string; toLabel: string; amount: string; paysNow: boolean; run: () => Promise<unknown> } | null>(null);
   const apps = data.apps ?? [];
@@ -389,6 +537,7 @@ function ApplicantList({
                   </span>
                 )}
 
+                {!closed && (
                 <span className="ml-auto flex items-center gap-2">
                   {next && (
                     <Button
@@ -426,10 +575,12 @@ function ApplicantList({
                     />
                   )}
                 </span>
+                )}
               </div>
 
-              {/* Requester-only tier-job evaluation: accept & pay, Final reject, request revision, read deliverables. */}
-              {isRequester && tierJobIds.length > 0 && (
+              {/* Requester-only tier-job evaluation: accept & pay, Final reject, request revision, read
+                  deliverables. Hidden once closed — those writes revert on a settled market. */}
+              {isRequester && !closed && tierJobIds.length > 0 && (
                 <ApplicantTierJobs sdk={sdk} account={account!} marketId={marketId} tierJobIds={tierJobIds} onDone={onChanged} />
               )}
             </li>
@@ -437,10 +588,12 @@ function ApplicantList({
         })}
       </ul>
 
-      <p className="mt-2 text-xs text-white/30">
-        Flag a revealed applicant as bait-and-switch instead of advancing them by opening a{' '}
-        <Link href="/disputes" className="underline hover:text-white">bonded stake dispute</Link>.
-      </p>
+      {!closed && (
+        <p className="mt-2 text-xs text-white/30">
+          Flag a revealed applicant as bait-and-switch instead of advancing them by opening a{' '}
+          <Link href="/disputes" className="underline hover:text-white">bonded stake dispute</Link>.
+        </p>
+      )}
 
       {advance && (
         <TierAdvanceModal
@@ -613,40 +766,54 @@ function ApplicantTierJobs({ sdk, account, marketId, tierJobIds, onDone }: {
 
 /* ──────────────────────────── Direct Job / Bounty actions ──────────────────────────── */
 
-function DirectJobActions({ sdk, account, data, marketId, onChanged }: { sdk: ReturnType<typeof useEcho>['sdk']; account?: `0x${string}`; data: Loaded; marketId: bigint; onChanged: () => void }) {
+function DirectJobActions({ sdk, account, data, marketId, onChanged, closed }: { sdk: ReturnType<typeof useEcho>['sdk']; account?: `0x${string}`; data: Loaded; marketId: bigint; onChanged: () => void; closed: boolean }) {
   const [idx, setIdx] = useState('0');
   return (
-    <Card title="Direct Job actions" hint="Accept pays the milestone; auto-release after the review window; cancel refunds pending.">
-      <Field label="milestone index" value={idx} onChange={(e) => setIdx(e.target.value)} />
-      <div className="flex flex-wrap gap-2">
-        <Command label="Accept milestone" disabled={!account} onDone={onChanged} run={() => sdk.acceptMilestone(marketId, BigInt(idx), account!)} />
-        <Command label="Auto-release" tone="neutral" disabled={!account} onDone={onChanged} run={() => sdk.autoReleaseMilestone(marketId, BigInt(idx), account!)} />
-        <Command label="Cancel job" tone="danger" disabled={!account} onDone={onChanged} run={() => sdk.cancelDirectJob(marketId, account!)} />
-      </div>
+    <Card title="Direct Job actions" hint={closed ? 'Market closed — milestones are read-only.' : 'Accept pays the milestone; auto-release after the review window; cancel refunds pending.'}>
+      {!closed && (
+        <>
+          <Field label="milestone index" value={idx} onChange={(e) => setIdx(e.target.value)} />
+          <div className="flex flex-wrap gap-2">
+            <Command label="Accept milestone" disabled={!account} onDone={onChanged} run={() => sdk.acceptMilestone(marketId, BigInt(idx), account!)} />
+            <Command label="Auto-release" tone="neutral" disabled={!account} onDone={onChanged} run={() => sdk.autoReleaseMilestone(marketId, BigInt(idx), account!)} />
+            <Command label="Cancel job" tone="danger" disabled={!account} onDone={onChanged} run={() => sdk.cancelDirectJob(marketId, account!)} />
+          </div>
+        </>
+      )}
       {data.milestones?.length > 0 && (
         <KV rows={data.milestones.map((m: any, i: number) => [`#${i} $${usdc(m.amount)}`, MILESTONE_STATUS[Number(m.status)] ?? String(m.status)])} />
+      )}
+      {closed && !(data.milestones?.length > 0) && (
+        <p className="text-xs text-white/40">No milestones to show.</p>
       )}
     </Card>
   );
 }
 
-function BountyActions({ sdk, account, data, marketId, onChanged }: { sdk: ReturnType<typeof useEcho>['sdk']; account?: `0x${string}`; data: Loaded; marketId: bigint; onChanged: () => void }) {
+function BountyActions({ sdk, account, data, marketId, onChanged, closed }: { sdk: ReturnType<typeof useEcho>['sdk']; account?: `0x${string}`; data: Loaded; marketId: bigint; onChanged: () => void; closed: boolean }) {
   const [idx, setIdx] = useState('0');
   const [award, setAward] = useState('50');
   return (
-    <Card title="Bounty actions" hint="Accept pays at least the default award; reject is free; auto-escalate force-pays an ignored finding after the window.">
-      <div className="grid grid-cols-2 gap-1">
-        <Field label="finding index" value={idx} onChange={(e) => setIdx(e.target.value)} />
-        <Field label="award USDC" value={award} onChange={(e) => setAward(e.target.value)} />
-      </div>
-      <div className="flex flex-wrap gap-2">
-        <Command label="Accept finding" disabled={!account} onDone={onChanged} run={() => sdk.acceptFinding(marketId, BigInt(idx), toUnits(award), account!)} />
-        <Command label="Reject" tone="neutral" disabled={!account} onDone={onChanged} run={() => sdk.rejectFinding(marketId, BigInt(idx), account!)} />
-        <Command label="Auto-escalate" tone="neutral" disabled={!account} onDone={onChanged} run={() => sdk.autoEscalateFinding(marketId, BigInt(idx), account!)} />
-        <Command label="Close bounty" tone="danger" disabled={!account} onDone={onChanged} run={() => sdk.closeBounty(marketId, account!)} />
-      </div>
+    <Card title="Bounty actions" hint={closed ? 'Market closed — findings are read-only.' : 'Accept pays at least the default award; reject is free; auto-escalate force-pays an ignored finding after the window.'}>
+      {!closed && (
+        <>
+          <div className="grid grid-cols-2 gap-1">
+            <Field label="finding index" value={idx} onChange={(e) => setIdx(e.target.value)} />
+            <Field label="award USDC" value={award} onChange={(e) => setAward(e.target.value)} />
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Command label="Accept finding" disabled={!account} onDone={onChanged} run={() => sdk.acceptFinding(marketId, BigInt(idx), toUnits(award), account!)} />
+            <Command label="Reject" tone="neutral" disabled={!account} onDone={onChanged} run={() => sdk.rejectFinding(marketId, BigInt(idx), account!)} />
+            <Command label="Auto-escalate" tone="neutral" disabled={!account} onDone={onChanged} run={() => sdk.autoEscalateFinding(marketId, BigInt(idx), account!)} />
+            <Command label="Close bounty" tone="danger" disabled={!account} onDone={onChanged} run={() => sdk.closeBounty(marketId, account!)} />
+          </div>
+        </>
+      )}
       {data.findings?.length > 0 && (
         <KV rows={data.findings.map((f: any, i: number) => [`#${i} ${short(f.submitter)}`, `${FINDING_STATUS[Number(f.status)] ?? f.status}${f.award ? ' · $' + usdc(f.award) : ''}`])} />
+      )}
+      {closed && !(data.findings?.length > 0) && (
+        <p className="text-xs text-white/40">No findings to show.</p>
       )}
     </Card>
   );
@@ -654,7 +821,7 @@ function BountyActions({ sdk, account, data, marketId, onChanged }: { sdk: Retur
 
 /* ──────────────────────────── attribution opt-in (#9) ──────────────────────────── */
 
-function AttributionOptIn({ sdk, account, marketId }: { sdk: ReturnType<typeof useEcho>['sdk']; account?: `0x${string}`; marketId: () => bigint }) {
+function AttributionOptIn({ sdk, account, marketId, closed }: { sdk: ReturnType<typeof useEcho>['sdk']; account?: `0x${string}`; marketId: () => bigint; closed: boolean }) {
   const [open, setOpen] = useState(false);
   const [amount, setAmount] = useState('100');
   const [shareBps, setShareBps] = useState('500');
@@ -663,7 +830,9 @@ function AttributionOptIn({ sdk, account, marketId }: { sdk: ReturnType<typeof u
     <Section title="Attribution pool" desc="Optional. Reward whoever introduced workers who advance in your market.">
       <div className="sm:col-span-2">
         <Card title="Reward introducers (optional)">
-          {!open ? (
+          {closed ? (
+            <p className="text-sm text-white/50">This market is closed — an attribution pool can no longer be funded.</p>
+          ) : !open ? (
             <>
               <p className="text-sm text-white/60">
                 When a worker advances a tier, Echo can pay a share of their payout to whoever introduced
