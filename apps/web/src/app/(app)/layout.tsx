@@ -3,6 +3,7 @@ import { cookieToInitialState } from 'wagmi';
 import { Providers } from '@/lib/provider';
 import { config } from '@/lib/wagmi';
 import { Nav } from '@/components/Nav';
+import { AppFooter } from '@/components/AppFooter';
 import { MaintenanceBanner } from '@/components/MaintenanceBanner';
 
 // Chrome for the app surface (everything except the marketing page at /site): wallet Providers,
@@ -16,7 +17,8 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     <Providers initialState={initialState}>
       <MaintenanceBanner />
       <Nav />
-      <main className="max-w-6xl mx-auto px-5 sm:px-6 py-8 overflow-x-hidden">{children}</main>
+      <main className="max-w-6xl mx-auto px-5 sm:px-6 py-8 overflow-x-hidden min-h-[70vh]">{children}</main>
+      <AppFooter />
     </Providers>
   );
 }

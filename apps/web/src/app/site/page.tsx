@@ -1,5 +1,6 @@
+import Image from 'next/image';
 import { ArrowRight, Layers, Briefcase, Award } from 'lucide-react';
-import { StatCard, CARD_CLASS, TierTrack, LogoMark, type TierStep } from '@/components/ui';
+import { StatCard, CARD_CLASS, TierTrack, type TierStep } from '@/components/ui';
 import { EchoFlowGraphic } from '@/components/EchoFlowGraphic';
 import { Footer } from '@/components/Footer';
 
@@ -100,9 +101,8 @@ export default function Landing() {
       {/* Header */}
       <header className="sticky top-0 z-30 -mx-5 sm:-mx-6 px-5 sm:px-6 py-4 bg-ink/80 backdrop-blur-md border-b border-white/[0.06]">
         <div className="flex items-center justify-between">
-          <a href="/" className="flex items-center gap-2">
-            <LogoMark className="h-7 w-7" />
-            <span className="text-base font-bold text-white">Echo Protocol</span>
+          <a href="/" className="flex items-center">
+            <Image src="/logo-white.png" alt="Echo Protocol" width={255} height={60} priority className="h-8 w-auto" />
           </a>
           <nav className="flex items-center gap-5">
             <a href="#how-it-works" className="hidden sm:inline text-sm text-white/50 hover:text-white transition">How it works</a>

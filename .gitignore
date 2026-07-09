@@ -2,6 +2,7 @@
 # SECRETS — NEVER COMMIT
 # ═══════════════════════════════════════
 .env
+.env.*deploy
 .env.local
 .env.*.local
 *.pem

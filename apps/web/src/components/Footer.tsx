@@ -1,5 +1,6 @@
-import { ArrowRight, Github, Twitter, MessageCircle } from 'lucide-react';
-import { LogoMark } from './ui';
+import Image from 'next/image';
+import { ArrowRight } from 'lucide-react';
+import { ArcMark, Socials } from './ui';
 
 // This footer renders on the marketing surface (/site). Its links point at the app, which in
 // production is the app.* subdomain; falls back to the local app dev server in development.
@@ -17,12 +18,6 @@ const DEVELOPER_LINKS = [
   { label: 'ERC-8004', href: 'https://eips.ethereum.org' },
   { label: 'CCTP v2', href: 'https://www.circle.com/en/cross-chain-transfer-protocol' },
   { label: 'USDC', href: 'https://www.circle.com/en/usdc' },
-];
-
-const SOCIALS = [
-  { icon: Twitter, label: 'Twitter' },
-  { icon: MessageCircle, label: 'Discord' },
-  { icon: Github, label: 'GitHub' },
 ];
 
 export function Footer() {
@@ -47,24 +42,11 @@ export function Footer() {
       {/* Link columns */}
       <div className="pt-14 grid gap-10 sm:grid-cols-2 lg:grid-cols-4">
         <div>
-          <div className="flex items-center gap-2">
-            <LogoMark className="h-8 w-8" />
-            <span className="text-lg font-bold text-white">Echo Protocol</span>
-          </div>
+          <Image src="/logo-white.png" alt="Echo Protocol" width={255} height={60} className="h-9 w-auto" />
           <p className="mt-4 text-sm text-white/50 max-w-xs">
             The LP layer for human markets. Get paid for showing up. Build reputation that travels. Built on Arc.
           </p>
-          <div className="mt-5 flex items-center gap-2">
-            {SOCIALS.map(({ icon: Icon, label }) => (
-              <span
-                key={label}
-                title={`${label} (coming soon)`}
-                className="flex h-10 w-10 items-center justify-center rounded-full border border-white/10 text-white/40"
-              >
-                <Icon className="w-4 h-4" />
-              </span>
-            ))}
-          </div>
+          <Socials className="mt-5" />
         </div>
 
         <div>
@@ -111,17 +93,23 @@ export function Footer() {
         </div>
       </div>
 
-      {/* Oversized wordmark watermark */}
-      <div className="mt-14 overflow-hidden" aria-hidden>
-        <p className="select-none text-center font-extrabold tracking-tight text-white/[0.04] leading-none text-[22vw] sm:text-[15vw]">
-          echo
-        </p>
+      {/* Oversized logo watermark */}
+      <div className="mt-14 flex justify-center overflow-hidden" aria-hidden>
+        <Image
+          src="/logo-white.png"
+          alt=""
+          width={1271}
+          height={676}
+          className="w-[85%] max-w-3xl select-none opacity-[0.045]"
+        />
       </div>
 
       {/* Bottom bar */}
       <div className="flex flex-col gap-3 border-t border-white/[0.08] py-6 text-sm text-white/30 sm:flex-row sm:items-center sm:justify-between">
         <span>© 2026 Echo Protocol</span>
-        <span>Built on Arc Network · Powered by USDC</span>
+        <span className="flex items-center gap-1.5">
+          Built on <ArcMark className="h-3.5 w-3.5 text-white/45" /> Arc Network · Powered by USDC
+        </span>
         <span className="flex items-center gap-4">
           <span className="hover:text-white/60 transition cursor-default">Privacy</span>
           <span className="hover:text-white/60 transition cursor-default">Terms</span>

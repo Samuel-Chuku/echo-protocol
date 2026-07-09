@@ -8,7 +8,7 @@ import {
   type ButtonHTMLAttributes,
 } from 'react';
 import Link from 'next/link';
-import { Loader2 } from 'lucide-react';
+import { Loader2, Github, Twitter } from 'lucide-react';
 
 /** Shared card surface classes — dark surface, subtle border, teal top-line on hover (no heavy shadows). */
 export const CARD_CLASS =
@@ -276,5 +276,43 @@ export function LogoMark({ className = 'h-8 w-8' }: { className?: string }) {
         strokeOpacity="0.55"
       />
     </svg>
+  );
+}
+
+/** Arc network mark (Circle's Arc). Fills with currentColor so callers tint it via text-* classes. */
+export function ArcMark({ className = 'h-4 w-4' }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 164 171" className={className} fill="currentColor" role="img" aria-label="Arc">
+      <path d="M0 171C1.39327 129.136 8.52567 90.067 20.4481 59.6871C35.5477 21.1972 57.4057 0 81.9919 0C106.578 0 128.433 21.1972 143.536 59.6871C151.391 79.7058 157.17 103.491 160.594 129.366C160.9 131.677 161.161 134.026 161.428 136.369C161.515 136.514 161.568 136.649 161.55 136.758C161.55 136.758 163.562 149.265 163.99 171H163.763C160.778 168.562 125.578 141.038 67.2282 149.007C68.1086 139.181 69.3194 129.62 70.8835 120.456C70.9634 119.987 71.0558 119.535 71.1373 119.07C94.0233 118.383 114.055 121.028 129.416 124.494C129.359 124.131 129.311 123.758 129.253 123.397C126.095 103.83 121.437 85.9161 115.43 70.6073C105.61 45.576 92.7953 30.0239 81.9919 30.0239C71.189 30.0239 58.3744 45.576 48.554 70.6073C46.1769 76.6621 44.0128 83.1192 42.0721 89.9301C39.3438 99.4735 37.0517 109.704 35.2212 120.455C32.5117 136.331 30.8189 153.358 30.1954 171H0Z" />
+    </svg>
+  );
+}
+
+// Canonical off-site links, shared by both footers.
+export const ECHO_TWITTER = 'https://x.com/echoprotocol_tm';
+export const ECHO_GITHUB = 'https://github.com/Samuel-Chuku/echo-protocol';
+
+/** Pronounced social row (Twitter/X + GitHub). Real links, filled-teal hover. */
+export function Socials({ className = '' }: { className?: string }) {
+  const items = [
+    { Icon: Twitter, label: 'Twitter / X', href: ECHO_TWITTER },
+    { Icon: Github, label: 'GitHub', href: ECHO_GITHUB },
+  ];
+  return (
+    <div className={`flex items-center gap-3 ${className}`}>
+      {items.map(({ Icon, label, href }) => (
+        <a
+          key={label}
+          href={href}
+          target="_blank"
+          rel="noreferrer"
+          title={label}
+          aria-label={label}
+          className="flex h-11 w-11 items-center justify-center rounded-full border border-white/15 bg-white/[0.04] text-white/70 hover:text-ink hover:bg-teal-500 hover:border-teal-500 transition"
+        >
+          <Icon className="w-5 h-5" />
+        </a>
+      ))}
+    </div>
   );
 }

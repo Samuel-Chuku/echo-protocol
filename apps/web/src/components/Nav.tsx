@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { Menu, X } from 'lucide-react';
 import { WalletStatus } from './WalletStatus';
+import { ChainBadge } from './ChainBadge';
 
 // Role-first IA. Disputes is intentionally NOT here: it's market-specific, reached from inside a job.
 const LINKS = [
@@ -56,7 +57,8 @@ export function Nav() {
           <ReputationPill />
         </div>
 
-        <div className="hidden md:flex ml-auto">
+        <div className="hidden md:flex ml-auto items-center gap-3">
+          <ChainBadge />
           <WalletStatus />
         </div>
 
@@ -104,7 +106,8 @@ export function Nav() {
           <ReputationPill className="min-h-[44px]" />
         </div>
 
-        <div className="border-t border-white/[0.08] px-5 py-4">
+        <div className="border-t border-white/[0.08] px-5 py-4 space-y-3">
+          <ChainBadge />
           {open && <WalletStatus />}
         </div>
       </div>
