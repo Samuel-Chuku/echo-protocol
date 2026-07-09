@@ -12,6 +12,7 @@ import { usdcShort, short } from '@/lib/format';
 import { CIRCLE_CONNECTOR_ID, forgetCircleSession, readCircleSession, setCircleMode, setCircleUsername } from '@/lib/circle';
 import { Bell } from './Bell';
 import { SignInModal } from './SignInModal';
+import { UsdcMark } from './ui';
 
 /**
  * Right-side wallet cluster in the nav: USDC balance (auto-refreshing), the notification bell, an
@@ -52,7 +53,8 @@ export function WalletStatus() {
     <div className="flex items-center gap-2 flex-wrap">
       {account && (
         <div className="flex flex-col items-end leading-tight">
-          <span className="text-sm text-white font-medium tabular-nums">
+          <span className="inline-flex items-center gap-1 text-sm text-white font-medium tabular-nums">
+            <UsdcMark className="h-4 w-4" />
             {usdcShort(bal)} <span className="text-xs text-white/40 font-normal">USDC</span>
           </span>
           {isPasskey && (

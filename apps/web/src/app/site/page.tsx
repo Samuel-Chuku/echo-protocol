@@ -102,7 +102,7 @@ export default function Landing() {
       <header className="sticky top-0 z-30 -mx-5 sm:-mx-6 px-5 sm:px-6 py-4 bg-ink/80 backdrop-blur-md border-b border-white/[0.06]">
         <div className="flex items-center justify-between">
           <a href="/" className="flex items-center">
-            <Image src="/logo-white.png" alt="Echo Protocol" width={255} height={60} priority className="h-8 w-auto" />
+            <Image src="/logo-white-tight.png" alt="Echo Protocol" width={907} height={279} priority className="h-9 sm:h-10 w-auto" />
           </a>
           <nav className="flex items-center gap-5">
             <a href="#how-it-works" className="hidden sm:inline text-sm text-white/50 hover:text-white transition">How it works</a>

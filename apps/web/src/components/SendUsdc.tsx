@@ -5,7 +5,7 @@ import { useAccount } from 'wagmi';
 import { useEcho } from '@/lib/sdk';
 import { CIRCLE_CONNECTOR_ID } from '@/lib/circle';
 import { usdc, toUnits } from '@/lib/format';
-import { Card, Field } from './ui';
+import { Card, Field, UsdcMark } from './ui';
 import { Command } from './Command';
 
 /** True only when the connected wallet is the Circle passkey (smart account). Sending is offered to
@@ -38,7 +38,7 @@ export function SendUsdcCard({ onSent }: { onSent?: () => void }) {
 
   return (
     <Card title="Send USDC" hint="A transfer from your passkey wallet. Gas is sponsored on Arc.">
-      <p className="text-xs text-gray-500">Balance: <b className="font-mono">{bal !== undefined ? usdc(bal) : '—'} USDC</b></p>
+      <p className="inline-flex items-center gap-1 text-xs text-gray-500">Balance: <UsdcMark className="h-3.5 w-3.5" /> <b className="font-mono">{bal !== undefined ? usdc(bal) : '—'} USDC</b></p>
       <Field label="recipient address" value={to} onChange={(e) => setTo(e.target.value)} placeholder="0x…" />
       <Field label="amount (USDC)" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0.00" />
       {to && !validTo && <p className="text-xs text-amber-600">Enter a valid 0x address.</p>}

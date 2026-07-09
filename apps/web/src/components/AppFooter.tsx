@@ -1,6 +1,6 @@
 import Image from 'next/image';
 import Link from 'next/link';
-import { ArcMark, Socials } from './ui';
+import { ArcMark, UsdcMark, Socials } from './ui';
 
 // Slim footer shown on every app page. The marketing surface (/site) uses the full <Footer/>.
 const APP_LINKS = [
@@ -17,7 +17,7 @@ export function AppFooter() {
         <div className="flex flex-col gap-6 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-5">
             <Link href="/" className="shrink-0">
-              <Image src="/logo-white.png" alt="Echo Protocol" width={255} height={60} className="h-7 w-auto" />
+              <Image src="/logo-white-tight.png" alt="Echo Protocol" width={907} height={279} className="h-8 w-auto" />
             </Link>
             <nav className="hidden md:flex items-center gap-4">
               {APP_LINKS.map((l) => (
@@ -30,10 +30,10 @@ export function AppFooter() {
           <Socials />
         </div>
 
-        <div className="mt-6 flex flex-col gap-2 border-t border-white/[0.06] pt-5 text-xs text-white/30 sm:flex-row sm:items-center sm:justify-between">
+        <div className="mt-6 flex flex-col items-center gap-2 border-t border-white/[0.06] pt-5 text-xs text-white/30 sm:flex-row sm:justify-between">
           <span>© 2026 Echo Protocol</span>
-          <span className="flex items-center gap-1.5">
-            Built on <ArcMark className="h-3 w-3 text-white/40" /> Arc Network · Powered by USDC
+          <span className="text-center">
+            Built on <ArcMark className="inline-block h-3 w-3 align-middle text-white/40" /> Arc Network · Powered by <UsdcMark className="h-3 w-3 align-middle" /> USDC
           </span>
         </div>
       </div>

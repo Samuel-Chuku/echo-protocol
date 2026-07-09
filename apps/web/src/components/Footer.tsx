@@ -1,6 +1,6 @@
 import Image from 'next/image';
 import { ArrowRight } from 'lucide-react';
-import { ArcMark, Socials } from './ui';
+import { ArcMark, UsdcMark, Socials } from './ui';
 
 // This footer renders on the marketing surface (/site). Its links point at the app, which in
 // production is the app.* subdomain; falls back to the local app dev server in development.
@@ -42,7 +42,7 @@ export function Footer() {
       {/* Link columns */}
       <div className="pt-14 grid gap-10 sm:grid-cols-2 lg:grid-cols-4">
         <div>
-          <Image src="/logo-white.png" alt="Echo Protocol" width={255} height={60} className="h-9 w-auto" />
+          <Image src="/logo-white-tight.png" alt="Echo Protocol" width={907} height={279} className="h-10 w-auto" />
           <p className="mt-4 text-sm text-white/50 max-w-xs">
             The LP layer for human markets. Get paid for showing up. Build reputation that travels. Built on Arc.
           </p>
@@ -93,22 +93,22 @@ export function Footer() {
         </div>
       </div>
 
-      {/* Oversized logo watermark */}
-      <div className="mt-14 flex justify-center overflow-hidden" aria-hidden>
+      {/* Oversized logo watermark (kept compact — tight crop removes the empty padding) */}
+      <div className="mt-9 flex justify-center overflow-hidden" aria-hidden>
         <Image
-          src="/logo-white.png"
+          src="/logo-white-tight.png"
           alt=""
-          width={1271}
-          height={676}
-          className="w-[85%] max-w-3xl select-none opacity-[0.045]"
+          width={907}
+          height={279}
+          className="w-[55%] max-w-xl select-none opacity-[0.05]"
         />
       </div>
 
       {/* Bottom bar */}
-      <div className="flex flex-col gap-3 border-t border-white/[0.08] py-6 text-sm text-white/30 sm:flex-row sm:items-center sm:justify-between">
+      <div className="mt-8 flex flex-col items-center gap-2 border-t border-white/[0.08] pt-8 pb-6 text-sm text-white/30 sm:flex-row sm:justify-between">
         <span>© 2026 Echo Protocol</span>
-        <span className="flex items-center gap-1.5">
-          Built on <ArcMark className="h-3.5 w-3.5 text-white/45" /> Arc Network · Powered by USDC
+        <span className="text-center">
+          Built on <ArcMark className="inline-block h-3.5 w-3.5 align-middle text-white/45" /> Arc Network · Powered by <UsdcMark className="h-3.5 w-3.5 align-middle" /> USDC
         </span>
         <span className="flex items-center gap-4">
           <span className="hover:text-white/60 transition cursor-default">Privacy</span>

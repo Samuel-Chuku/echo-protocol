@@ -71,23 +71,15 @@ export function EchoFlowGraphic() {
         </g>
       ))}
 
-      {/* Center: teal disc with an asset-free "echo" mark (source dot emitting concentric arcs). */}
+      {/* Center: teal disc with the official Echo mark (navy, tuned for contrast on teal). */}
       <circle cx={CENTER.x} cy={CENTER.y} r={70} fill="#00E5C0" />
-      <circle cx={CENTER.x - 22} cy={CENTER.y} r={7} fill="#0A2540" />
-      <path
-        d={`M${CENTER.x - 6},${CENTER.y - 26} a26 26 0 0 1 0 52`}
-        fill="none"
-        stroke="#0A2540"
-        strokeWidth={5}
-        strokeLinecap="round"
-      />
-      <path
-        d={`M${CENTER.x + 10},${CENTER.y - 40} a42 42 0 0 1 0 80`}
-        fill="none"
-        stroke="#0A2540"
-        strokeWidth={5}
-        strokeLinecap="round"
-        strokeOpacity={0.55}
+      <image
+        href="/logo-navy-mark.png"
+        x={CENTER.x - 39}
+        y={CENTER.y - 44}
+        width={78}
+        height={88}
+        preserveAspectRatio="xMidYMid meet"
       />
     </svg>
   );

@@ -1,6 +1,7 @@
 'use client';
 
 import { TxModal } from './TxModal';
+import { UsdcMark } from './ui';
 import { short } from '@/lib/format';
 
 /** Confirmation modal for advancing one applicant to the next payout tier. */
@@ -35,7 +36,7 @@ export function TierAdvanceModal({
           <div className="flex justify-between"><span className="text-white/40">Next tier</span><span className="text-white">{toLabel}</span></div>
           <div className="flex justify-between">
             <span className="text-white/40">{paysNow ? 'Payout (now)' : 'Payout (on accept)'}</span>
-            <span className="font-mono text-teal-400">${amount} USDC</span>
+            <span className="inline-flex items-center gap-1 font-mono text-teal-400"><UsdcMark className="h-3.5 w-3.5" />${amount} USDC</span>
           </div>
           {!paysNow && (
             <p className="pt-1 text-xs text-white/40">

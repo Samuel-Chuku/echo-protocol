@@ -36,7 +36,7 @@ export function Nav() {
     <nav className="border-b border-white/[0.08] bg-ink/80 backdrop-blur sticky top-0 z-30">
       <div className="max-w-6xl mx-auto px-5 sm:px-6 flex items-center h-16">
         <Link href="/" className="flex items-center shrink-0">
-          <Image src="/logo-white.png" alt="Echo Protocol" width={255} height={60} priority className="h-9 sm:h-[60px] w-auto" />
+          <Image src="/logo-white-tight.png" alt="Echo Protocol" width={907} height={279} priority className="h-8 sm:h-10 w-auto" />
         </Link>
 
         <div className="hidden md:flex mx-auto items-center gap-1">
