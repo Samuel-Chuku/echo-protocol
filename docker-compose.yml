@@ -42,6 +42,9 @@ services:
     environment:
       DOMAIN: ${DOMAIN:?set DOMAIN in a root .env or the shell}
       ACME_EMAIL: ${ACME_EMAIL:-admin@example.com}
+      # Basic-auth gate in front of ops. (see Caddyfile). Set both in the VPS root .env.
+      OPS_BASICAUTH_USER: ${OPS_BASICAUTH_USER:?set OPS_BASICAUTH_USER in the root .env}
+      OPS_BASICAUTH_HASH: ${OPS_BASICAUTH_HASH:?set OPS_BASICAUTH_HASH (caddy hash-password) in the root .env}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data

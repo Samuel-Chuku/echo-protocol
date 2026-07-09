@@ -10,17 +10,31 @@ api.{$DOMAIN} {
 	reverse_proxy indexer:4000
 }
 
-# Operator dashboard. TOTP guards the login, but this panel can hold the deployer key, so do
-# NOT rely on the token alone once it is internet-reachable. Put a network gate in front:
+# Operator dashboard. The TOTP login (+ session→IP-pinned tokens) guards the app itself, but this
+# panel can hold the deployer key — so a network gate sits in FRONT of it as a second factor:
+# HTTP Basic Auth. A visitor must clear basic_auth before they can even see the login page, let
+# alone reach the admin API. Credentials come from the environment (OPS_BASICAUTH_USER / _HASH),
+# injected by docker-compose so the bcrypt hash never lands in this committed file.
 #
-#   • Recommended: Cloudflare Tunnel + Cloudflare Access (SSO allowlist) instead of exposing this.
-#   • Or restrict by IP here, e.g.:
-#       @allowed remote_ip 203.0.113.4 198.51.100.0/24
-#       handle @allowed { reverse_proxy ops:4100 }
-#       handle { respond "forbidden" 403 }
-#   • Or add Caddy basicauth (bcrypt hash) as a second factor in front of the token.
+# Generate the hash once (choose your own password):
+#   docker run --rm caddy:2-alpine caddy hash-password --plaintext 'your-strong-password'
+# then put OPS_BASICAUTH_USER + OPS_BASICAUTH_HASH in the VPS root .env (see .env.example).
 #
-# The baseline below just proxies it — harden before pointing real DNS at ops.
+# NOTE: `basic_auth` is the Caddy 2.8+ directive name; on older Caddy use `basicauth`.
+# Alternatives if you outgrow this: IP allowlist (@allowed remote_ip …) or Cloudflare Access (SSO).
 ops.{$DOMAIN} {
-	reverse_proxy ops:4100
+	# Public, unauthenticated — every site visitor's browser polls the maintenance flags from here
+	# with NO credentials, so these two paths must bypass basic_auth. They expose no secrets.
+	@public path /api/flags/public /api/health
+	handle @public {
+		reverse_proxy ops:4100
+	}
+
+	# Everything else — the dashboard UI, /api/login, and the whole admin/on-chain API — is gated.
+	handle {
+		basic_auth {
+			{$OPS_BASICAUTH_USER} {$OPS_BASICAUTH_HASH}
+		}
+		reverse_proxy ops:4100
+	}
 }

@@ -31,7 +31,7 @@ export function handleLogin(req: Request, res: Response): void {
     return;
   }
   clearFailures(ip);
-  const { token, expiresAt } = createSession();
+  const { token, expiresAt } = createSession(ip);
   res.json({ token, expiresAt });
 }
 
@@ -46,7 +46,7 @@ export function requireAdmin(req: Request, res: Response, next: NextFunction): v
   }
   const header = req.header('authorization') || '';
   const token = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
-  if (!validateSession(token)) {
+  if (!validateSession(token, clientIp(req))) {
     res.status(401).json({ error: 'unauthorized' });
     return;
   }

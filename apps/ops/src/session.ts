@@ -3,24 +3,32 @@ import { config } from './config.js';
 
 // In-memory session store. Single-process dashboard, so a Map is plenty; a server restart simply
 // invalidates all sessions (you re-enter a code). Tokens are 256-bit random, so plain Map.get
-// lookups leak nothing useful via timing.
-const sessions = new Map<string, number>(); // token -> expiresAt (ms)
+// lookups leak nothing useful via timing. Each token is pinned to the IP it was issued to, so a
+// leaked token can't be replayed from another host.
+interface Session {
+  expiresAt: number; // ms
+  ip: string; // client IP the token was minted for
+}
+const sessions = new Map<string, Session>(); // token -> session
 
-export function createSession(): { token: string; expiresAt: number } {
+export function createSession(ip: string): { token: string; expiresAt: number } {
   const token = randomBytes(32).toString('hex');
   const expiresAt = Date.now() + config.sessionTtlMin * 60_000;
-  sessions.set(token, expiresAt);
+  sessions.set(token, { expiresAt, ip });
   return { token, expiresAt };
 }
 
-export function validateSession(token: string): boolean {
+export function validateSession(token: string, ip: string): boolean {
   if (!token) return false;
-  const exp = sessions.get(token);
-  if (!exp) return false;
-  if (Date.now() > exp) {
+  const sess = sessions.get(token);
+  if (!sess) return false;
+  if (Date.now() > sess.expiresAt) {
     sessions.delete(token);
     return false;
   }
+  // Pinned to the issuing IP — reject replay from a different host (don't delete: a legit user
+  // whose IP flips just re-logs in; deleting would let a thief force-logout the real session).
+  if (sess.ip !== ip) return false;
   return true;
 }
 
@@ -31,7 +39,7 @@ export function destroySession(token: string): void {
 // Drop expired sessions periodically so the Map can't grow unbounded.
 setInterval(() => {
   const now = Date.now();
-  for (const [t, exp] of sessions) if (now > exp) sessions.delete(t);
+  for (const [t, sess] of sessions) if (now > sess.expiresAt) sessions.delete(t);
 }, 60_000).unref();
 
 // ── Login throttle ──────────────────────────────────────────────────────────
