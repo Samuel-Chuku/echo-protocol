@@ -8,7 +8,7 @@ import {
   type ButtonHTMLAttributes,
 } from 'react';
 import Link from 'next/link';
-import { Loader2, Github, Twitter } from 'lucide-react';
+import { Loader2, Github, Twitter, HelpCircle } from 'lucide-react';
 
 /** Shared card surface classes — dark surface, subtle border, teal top-line on hover (no heavy shadows). */
 export const CARD_CLASS =
@@ -42,10 +42,38 @@ export function Card({ title, hint, children }: { title: string; hint?: string; 
   );
 }
 
-export function Field({ label, ...props }: { label: string } & InputHTMLAttributes<HTMLInputElement>) {
+/**
+ * A "?" info affordance. Shows explanatory copy on hover AND keyboard focus (accessible), so dense
+ * financial fields can carry a plain-language explanation without cluttering the form. Self-contained
+ * CSS popover — no portal, no state.
+ */
+export function InfoTip({ text, label }: { text: ReactNode; label?: string }) {
+  return (
+    <span className="group relative inline-flex align-middle">
+      <button
+        type="button"
+        aria-label={label ? `What is ${label}?` : 'More info'}
+        className="text-white/30 hover:text-teal-400 focus:text-teal-400 focus:outline-none transition-colors"
+      >
+        <HelpCircle className="w-3.5 h-3.5" />
+      </button>
+      <span
+        role="tooltip"
+        className="pointer-events-none absolute left-1/2 bottom-full z-20 mb-1.5 w-56 -translate-x-1/2 rounded-lg border border-white/10 bg-[#0b2136] px-3 py-2 text-xs font-normal normal-case tracking-normal text-white/70 opacity-0 shadow-lg transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100"
+      >
+        {text}
+      </span>
+    </span>
+  );
+}
+
+export function Field({ label, tip, ...props }: { label: string; tip?: ReactNode } & InputHTMLAttributes<HTMLInputElement>) {
   return (
     <label className="block">
-      <span className="text-xs font-medium text-white/50">{label}</span>
+      <span className="inline-flex items-center gap-1 text-xs font-medium text-white/50">
+        {label}
+        {tip && <InfoTip text={tip} label={label} />}
+      </span>
       <input {...props} className={INPUT_CLASS} />
     </label>
   );
