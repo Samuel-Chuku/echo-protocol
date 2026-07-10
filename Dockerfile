@@ -27,7 +27,19 @@ COPY apps/indexer/package.json      apps/indexer/
 COPY apps/ops/package.json          apps/ops/
 # --prod=false: tsx is a devDependency and IS the runtime (it resolves the TS workspace deps),
 # so we must install dev deps even though the image runs in production.
-RUN pnpm install --frozen-lockfile --prod=false --filter "@echo/indexer..." --filter "@echo/ops..."
+#
+# The BuildKit cache mount persists pnpm's content-addressable store ACROSS builds. Without it, any
+# lockfile change re-downloads every package from scratch (~1000 pkgs, minutes on a VPS); with it,
+# pnpm reuses already-fetched packages from /pnpm-store and downloads only what's new. --store-dir
+# points pnpm at the mounted cache. (Requires BuildKit — docker compose uses it by default.)
+# --network-concurrency / --child-concurrency are dialed DOWN so a small (1-2GB) VPS doesn't OOM
+# (exit 137): fewer parallel tarball extractions + postinstall scripts = a much lower memory peak,
+# and it's gentler on a flaky network (fewer simultaneous sockets → fewer EPIPE/timeout retries).
+# The cost is a slower install, but a slow install that finishes beats a fast one the kernel kills.
+RUN --mount=type=cache,target=/pnpm-store \
+    pnpm install --frozen-lockfile --prod=false --store-dir=/pnpm-store \
+    --network-concurrency=4 --child-concurrency=1 \
+    --filter "@echo/indexer..." --filter "@echo/ops..."
 
 # 2) Source. node_modules / dist / .env etc. are excluded via .dockerignore, so the
 #    installed dependency tree from the layer above is preserved.
