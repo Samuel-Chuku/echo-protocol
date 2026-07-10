@@ -81,6 +81,24 @@ export function recommendedEscrow(tiers: [bigint, bigint, bigint, bigint], maxAp
   return n * (tiers[0] + tiers[1] + tiers[2]) + tiers[3];
 }
 
+/**
+ * The contract's HARD minimum escrow — anything below this reverts `InsufficientEscrow`. Mirrors
+ * MarketRegistry `_calculateMinEscrow` (probabilistic funnel: /5 revealed, /20 shortlisted, /50 final,
+ * + ghost reserve) AND `_validateRevealParams` (fund at least MIN_REVEALS=5 reveals). We return the
+ * larger of the two floors so the wizard can warn before the user hits an opaque on-chain revert.
+ * `tiers = [reveal, shortlist, final, ghost]` in base units.
+ */
+const MIN_REVEALS = 5n;
+export function minEscrow(tiers: [bigint, bigint, bigint, bigint], maxApplicants: bigint): bigint {
+  const funnel =
+    (maxApplicants / 5n) * tiers[0] +
+    (maxApplicants / 20n) * tiers[1] +
+    (maxApplicants / 50n) * tiers[2] +
+    tiers[3];
+  const revealFloor = tiers[0] * MIN_REVEALS; // _validateRevealParams: escrow >= reveal_fee * 5
+  return funnel > revealFloor ? funnel : revealFloor;
+}
+
 /** Parse a human USDC string ("12.5") into 6-decimal base units. */
 export function toUnits(human: string): bigint {
   const [w, f = ''] = human.trim().split('.');

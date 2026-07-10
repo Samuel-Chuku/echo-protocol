@@ -13,7 +13,7 @@ import { Card, Field, TextArea, Badge, Button, EmptyState, CARD_CLASS, ProgressS
 import { IdentityBanner } from '@/components/IdentityBanner';
 import { RegisterIdentityModal } from '@/components/RegisterIdentityModal';
 import { TxModal } from '@/components/TxModal';
-import { toUnits, usdc, scope, modeName, modeBadgeTone, MODE_BLURBS } from '@/lib/format';
+import { toUnits, usdc, scope, modeName, modeBadgeTone, MODE_BLURBS, recommendedEscrow, minEscrow } from '@/lib/format';
 
 const C = CONTRACTS.arcTestnet;
 const TYPE_ACCENT = ['border-teal-500/30 hover:border-teal-500/50', 'border-success/30 hover:border-success/50', 'border-warning/30 hover:border-warning/50'];
@@ -197,8 +197,11 @@ function OpenWizard({ sdk, account, agentId, feeBps, onCreated }: WizardProps) {
   const [subject, setSubject] = useState('');
   const [desc, setDesc] = useState('');
   const [tiers, setTiers] = useState(['5', '50', '250', '1000']);
-  const [escrow, setEscrow] = useState('2000');
   const [maxApplicants, setMax] = useState('50');
+  // Escrow auto-tracks the inputs (recommendedEscrow = safe upper bound) until the requester edits it
+  // manually, at which point we respect their number. `escrowTouched` flips on first manual edit.
+  const [escrow, setEscrow] = useState('');
+  const [escrowTouched, setEscrowTouched] = useState(false);
   const [ghostAmount, setGhostAmount] = useState('7');
   const [ghostUnit, setGhostUnit] = useState<DurationUnit>('days');
   const [stake, setStake] = useState('10');
@@ -207,8 +210,16 @@ function OpenWizard({ sdk, account, agentId, feeBps, onCreated }: WizardProps) {
   const [requiredProofs, setProofs] = useState('0');
   const [deployOpen, setDeployOpen] = useState(false);
 
+  const tierUnits = tiers.map((t) => toUnits(t || '0')) as [bigint, bigint, bigint, bigint];
+  const nApplicants = BigInt(Math.max(0, Math.floor(Number(maxApplicants || '0'))));
+  const recommended = recommendedEscrow(tierUnits, nApplicants);
+  const minRequired = minEscrow(tierUnits, nApplicants);
+  // The number the market is actually funded with: the auto-recommendation until manually overridden.
+  const totalEscrow = escrowTouched ? (escrow || '0') : usdc(recommended);
+  const escrowUnits = toUnits(totalEscrow);
+  const belowMin = escrowUnits < minRequired;
+
   const tierSteps: TierStep[] = tiers.map((t, i) => ({ label: ['Reveal', 'Shortlist', 'Final', 'Ghost'][i], amount: t }));
-  const totalEscrow = escrow;
   const tierTotal = usdc(tiers.reduce((sum, t) => sum + toUnits(t || '0'), 0n));
 
   return (
@@ -257,10 +268,26 @@ function OpenWizard({ sdk, account, agentId, feeBps, onCreated }: WizardProps) {
         <div className="space-y-3">
           <p className="text-xs text-white/50">Fund the market and set the rules. Hover any <span className="text-teal-400">?</span> for a plain-language explanation.</p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-1">
-            <Field label="escrow USDC" value={escrow} onChange={(e) => setEscrow(e.target.value)}
-              tip="Total USDC you lock up front to fund every payout and reserve. It must cover the rounds you actually expect to pay across your applicants — unspent escrow refunds to you when you close the market." />
             <Field label="max applicants" value={maxApplicants} onChange={(e) => setMax(e.target.value)}
-              tip="The most workers that can apply to this market." />
+              tip="The most workers that can apply to this market. Escrow is sized from this." />
+            <Field label="escrow USDC" value={totalEscrow}
+              onChange={(e) => { setEscrowTouched(true); setEscrow(e.target.value); }}
+              tip="Total USDC locked up front to fund every payout and reserve. Auto-filled to cover every applicant through every round; edit to override. Unspent escrow refunds to you when you close the market." />
+          </div>
+
+          {/* Escrow is auto-computed from the payout ladder × max applicants; show the math + the hard
+              floor so the requester never hits an opaque InsufficientEscrow revert (#2). */}
+          <div className={`rounded-lg border p-3 text-xs space-y-1 ${belowMin ? 'border-danger/40 bg-danger/[0.06]' : 'border-white/10 bg-white/[0.03]'}`}>
+            <div className="flex justify-between"><span className="text-white/50">Recommended (covers everyone, every round)</span><span className="font-mono text-white/80">${usdc(recommended)}</span></div>
+            <div className="flex justify-between"><span className="text-white/50">Contract minimum</span><span className="font-mono text-white/60">${usdc(minRequired)}</span></div>
+            {escrowTouched && (
+              <button type="button" onClick={() => { setEscrowTouched(false); setEscrow(''); }} className="text-teal-400 hover:underline">
+                Reset to recommended (${usdc(recommended)})
+              </button>
+            )}
+            {belowMin
+              ? <p className="text-danger">Below the contract minimum — deploy will revert. Raise escrow to at least ${usdc(minRequired)}.</p>
+              : <p className="text-white/40">Unspent escrow refunds to you on close, so over-funding only locks capital — it&apos;s never lost.</p>}
           </div>
 
           {/* #5 — the applicant stake, explained clearly */}
@@ -302,9 +329,14 @@ function OpenWizard({ sdk, account, agentId, feeBps, onCreated }: WizardProps) {
             <div className="flex justify-between"><span className="text-white/50">Max applicants</span><span className="font-mono text-white">{maxApplicants}</span></div>
             <div className="flex justify-between"><span className="text-white/50">Applicant stake</span><span className="font-mono text-white">{Number(stake) > 0 ? `$${stake} USDC` : 'none'}</span></div>
           </div>
+          {belowMin && (
+            <p className="text-xs text-danger">Escrow ${totalEscrow} is below the contract minimum ${usdc(minRequired)} — raise it on the previous step before deploying.</p>
+          )}
           <div className="flex gap-2 items-center">
             <Button variant="secondary" onClick={() => setStep(2)}>Back</Button>
-            <IdentityGate agentId={agentId} onOk={() => setDeployOpen(true)} />
+            {belowMin
+              ? <Button disabled>Approve &amp; deploy</Button>
+              : <IdentityGate agentId={agentId} onOk={() => setDeployOpen(true)} />}
           </div>
         </div>
       )}
