@@ -1,0 +1,103 @@
+name: Deploy backend (indexer + ops)
+
+# Build the two backend images in CI (plenty of RAM + fast network — no more VPS OOM on `sharp`),
+# push them to GHCR, then SSH to the VPS and swap the running containers for the fresh images.
+# The web app is NOT here — it auto-deploys via Vercel.
+
+on:
+  push:
+    branches: [main]
+    # Only rebuild when something that lands in the backend image changes.
+    paths:
+      - 'apps/indexer/**'
+      - 'apps/ops/**'
+      - 'packages/**'
+      - 'Dockerfile'
+      - 'docker-compose.yml'
+      - 'Caddyfile'
+      - 'pnpm-lock.yaml'
+      - '.github/workflows/deploy-backend.yml'
+  workflow_dispatch: {} # manual "Run workflow" button for redeploys without a code change
+
+# Lowercase the owner once — GHCR image paths must be lowercase (Samuel-Chuku → samuel-chuku).
+env:
+  REGISTRY: ghcr.io
+  OWNER: samuel-chuku
+
+jobs:
+  build:
+    name: Build & push ${{ matrix.app }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write # push to GHCR with the auto-provisioned GITHUB_TOKEN — no PAT needed
+    strategy:
+      matrix:
+        app: [indexer, ops]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Image tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.OWNER }}/echo-${{ matrix.app }}
+          tags: |
+            type=raw,value=latest
+            type=sha,format=short
+
+      - name: Build & push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          build-args: |
+            APP_DIR=apps/${{ matrix.app }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Persist the layer cache in the Actions cache so repeat builds are fast. Scoped per app so
+          # indexer and ops don't clobber each other's cache.
+          cache-from: type=gha,scope=${{ matrix.app }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.app }}
+
+  deploy:
+    name: Deploy to VPS
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read # the token is forwarded to the VPS to `docker login` + pull the private images
+    steps:
+      - name: SSH → pull images → recreate containers
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT || 22 }}
+          # GITHUB_TOKEN is short-lived (this job only) and has read access to our GHCR packages, so
+          # the VPS can pull private images without us storing a long-lived PAT on the box.
+          envs: GHCR_TOKEN,GHCR_USER
+          script: |
+            set -e
+            echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+            cd ${{ secrets.VPS_APP_PATH || '~/echo-protocol' }}
+            git pull origin main
+            docker compose pull indexer ops
+            docker compose up -d indexer ops
+            docker logout ghcr.io
+            docker image prune -f
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USER: ${{ github.actor }}
