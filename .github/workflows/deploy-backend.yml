@@ -86,6 +86,10 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           port: ${{ secrets.VPS_PORT || 22 }}
+          # appleboy kills the remote script after `command_timeout` (default 10m). A COLD image pull
+          # on a small VPS extracts every layer from scratch and can exceed that — bump it well past.
+          # Later deploys only fetch changed layers, so they finish in a fraction of this.
+          command_timeout: 40m
           # GITHUB_TOKEN is short-lived (this job only) and has read access to our GHCR packages, so
           # the VPS can pull private images without us storing a long-lived PAT on the box.
           envs: GHCR_TOKEN,GHCR_USER
