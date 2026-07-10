@@ -221,6 +221,27 @@ export class EchoSdk {
     });
   }
 
+  // Lazy provider resolver. The web app wires the wallet in an async effect after connect, so a user
+  // can click a write action in the window before that resolves (or, for connectors whose provider
+  // only exists after an explicit connect, before getProvider() returns one) — which used to throw a
+  // spurious "Wallet not connected". Registering a resolver lets ensureWallet() wire the wallet on
+  // demand at click-time instead of racing the effect.
+  private walletResolver?: () => Promise<any>;
+  setWalletResolver(resolver: () => Promise<any>) {
+    this.walletResolver = resolver;
+  }
+
+  /** Ensure a wallet client is wired, resolving the provider on demand if the effect hasn't yet.
+   *  Throws the same "Wallet not connected" only when no provider can be obtained at all. */
+  private async ensureWallet(): Promise<void> {
+    if (this.walletClient) return;
+    if (this.walletResolver) {
+      const provider = await this.walletResolver().catch(() => undefined);
+      if (provider) { this.connectWallet(provider); return; }
+    }
+    throw new Error('Wallet not connected');
+  }
+
   /**
    * Send a simulated `request` via the wallet client.
    *
@@ -456,7 +477,7 @@ export class EchoSdk {
     },
     account: Address
   ) {
-    if (!this.walletClient) throw new Error('Wallet not connected');
+    await this.ensureWallet();
     const { request } = await this.publicClient.simulateContract({
       address: this.contracts.marketRegistry,
       abi: MarketRegistryABI,
@@ -482,7 +503,7 @@ export class EchoSdk {
     submissionHash: `0x${string}`,
     account: Address
   ) {
-    if (!this.walletClient) throw new Error('Wallet not connected');
+    await this.ensureWallet();
     const { request } = await this.publicClient.simulateContract({
       address: this.contracts.marketRegistry,
       abi: MarketRegistryABI,
@@ -494,7 +515,7 @@ export class EchoSdk {
   }
 
   async gradeSubstantive(marketId: bigint, participant: Address, account: Address) {
-    if (!this.walletClient) throw new Error('Wallet not connected');
+    await this.ensureWallet();
     const { request } = await this.publicClient.simulateContract({
       address: this.contracts.marketRegistry,
       abi: MarketRegistryABI,
@@ -506,7 +527,7 @@ export class EchoSdk {
   }
 
   async gradeShortlist(marketId: bigint, participant: Address, account: Address) {
-    if (!this.walletClient) throw new Error('Wallet not connected');
+    await this.ensureWallet();
     const { request } = await this.publicClient.simulateContract({
       address: this.contracts.marketRegistry,
       abi: MarketRegistryABI,
@@ -518,7 +539,7 @@ export class EchoSdk {
   }
 
   async gradeFinal(marketId: bigint, participant: Address, account: Address) {
-    if (!this.walletClient) throw new Error('Wallet not connected');
+    await this.ensureWallet();
     const { request } = await this.publicClient.simulateContract({
       address: this.contracts.marketRegistry,
       abi: MarketRegistryABI,
@@ -539,7 +560,7 @@ export class EchoSdk {
   /** Worker submits a deliverable to their tier job. Hash is the on-chain commitment;
    *  the actual text is stored off-chain via the indexer's storeContent mutation. */
   async submitTierJob(jobId: bigint, deliverableHash: `0x${string}`, account: Address) {
-    if (!this.walletClient) throw new Error('Wallet not connected');
+    await this.ensureWallet();
     const { request } = await this.publicClient.simulateContract({
       address: this.contracts.agenticCommerce,
       abi: AgenticCommerceABI,
@@ -554,7 +575,7 @@ export class EchoSdk {
    *  _settle → pays the worker the tier amount net of fees. `reasonHash` is a free-form
    *  commitment (we pass keccak256("accept") by default). */
   async completeTierJob(jobId: bigint, reasonHash: `0x${string}`, account: Address) {
-    if (!this.walletClient) throw new Error('Wallet not connected');
+    await this.ensureWallet();
     const { request } = await this.publicClient.simulateContract({
       address: this.contracts.agenticCommerce,
       abi: AgenticCommerceABI,
@@ -573,7 +594,7 @@ export class EchoSdk {
    *  (staked-jury panel; a tie pays the worker). `reasonHash` is a free-form commitment (UI passes
    *  keccak256("reject") by default). */
   async rejectTierJob(jobId: bigint, reasonHash: `0x${string}`, account: Address) {
-    if (!this.walletClient) throw new Error('Wallet not connected');
+    await this.ensureWallet();
     const { request } = await this.publicClient.simulateContract({
       address: this.contracts.agenticCommerce,
       abi: AgenticCommerceABI,
@@ -589,7 +610,7 @@ export class EchoSdk {
    *  instead of Reject when the deliverable is close but needs a fix — it keeps the worker in the
    *  flow rather than killing the job. After this, the worker may call extendRevision up to 3×. */
   async requestRevision(jobId: bigint, account: Address) {
-    if (!this.walletClient) throw new Error('Wallet not connected');
+    await this.ensureWallet();
     const { request } = await this.publicClient.simulateContract({
       address: this.contracts.agenticCommerce,
       abi: AgenticCommerceABI,
@@ -604,7 +625,7 @@ export class EchoSdk {
    *  Only the job's provider, only while the Final job sits in Open (revision requested, not yet
    *  re-submitted). Pushes out the ghost deadline so a late revision can't unfairly ghost them. */
   async extendRevision(jobId: bigint, account: Address) {
-    if (!this.walletClient) throw new Error('Wallet not connected');
+    await this.ensureWallet();
     const { request } = await this.publicClient.simulateContract({
       address: this.contracts.echoHook,
       abi: EchoHookABI,
@@ -650,7 +671,7 @@ export class EchoSdk {
   }
 
   async closeMarket(marketId: bigint, account: Address) {
-    if (!this.walletClient) throw new Error('Wallet not connected');
+    await this.ensureWallet();
     const { request } = await this.publicClient.simulateContract({
       address: this.contracts.marketRegistry,
       abi: MarketRegistryABI,
@@ -666,7 +687,7 @@ export class EchoSdk {
    * passed its ghost deadline uncompleted. Permissionless on-chain (anyone may call).
    */
   async triggerGhost(marketId: bigint, participant: Address, account: Address) {
-    if (!this.walletClient) throw new Error('Wallet not connected');
+    await this.ensureWallet();
     const { request } = await this.publicClient.simulateContract({
       address: this.contracts.marketRegistry,
       abi: MarketRegistryABI,
@@ -687,7 +708,7 @@ export class EchoSdk {
    * agentId. Reads the tokenId from the ERC-721 Transfer event of the register tx.
    */
   async registerIdentity(account: Address, uri = ''): Promise<bigint> {
-    if (!this.walletClient) throw new Error('Wallet not connected');
+    await this.ensureWallet();
     const { request } = await this.publicClient.simulateContract({
       address: this.contracts.identityRegistry,
       abi: IDENTITY_ABI,
@@ -762,7 +783,7 @@ export class EchoSdk {
     },
     account: Address
   ) {
-    if (!this.walletClient) throw new Error('Wallet not connected');
+    await this.ensureWallet();
     if (args.sliceBps > MAX_SLICE_BPS) {
       throw new Error(`sliceBps ${args.sliceBps} exceeds MAX_SLICE_BPS ${MAX_SLICE_BPS}`);
     }
@@ -789,7 +810,7 @@ export class EchoSdk {
    * call reverts (anti-sybil). Typically called by that requester's account.
    */
   async confirmAR(arId: bigint, confirmingRequester: Address, account: Address) {
-    if (!this.walletClient) throw new Error('Wallet not connected');
+    await this.ensureWallet();
     const { request } = await this.publicClient.simulateContract({
       address: this.contracts.attributionRegistry,
       abi: AttributionRegistryABI,
@@ -804,7 +825,7 @@ export class EchoSdk {
    * Revoke an AR you originated (or as registry owner). Stops future payouts.
    */
   async revokeAR(arId: bigint, account: Address) {
-    if (!this.walletClient) throw new Error('Wallet not connected');
+    await this.ensureWallet();
     const { request } = await this.publicClient.simulateContract({
       address: this.contracts.attributionRegistry,
       abi: AttributionRegistryABI,
@@ -829,7 +850,7 @@ export class EchoSdk {
     introducerShareBps: number,
     account: Address
   ) {
-    if (!this.walletClient) throw new Error('Wallet not connected');
+    await this.ensureWallet();
     const { request } = await this.publicClient.simulateContract({
       address: this.contracts.marketRegistry,
       abi: MarketRegistryABI,
@@ -845,7 +866,7 @@ export class EchoSdk {
    * Required before {@link createMarket} and {@link fundAttributionPool}.
    */
   async approveUSDC(spender: Address, amount: bigint, account: Address) {
-    if (!this.walletClient) throw new Error('Wallet not connected');
+    await this.ensureWallet();
     const { request } = await this.publicClient.simulateContract({
       address: this.contracts.usdc,
       abi: ERC20_ABI,
@@ -861,7 +882,7 @@ export class EchoSdk {
    * including the Circle passkey smart account (routed as a sponsored userOp). Returns the tx hash.
    */
   async transferUsdc(to: Address, amount: bigint, account: Address) {
-    if (!this.walletClient) throw new Error('Wallet not connected');
+    await this.ensureWallet();
     const { request } = await this.publicClient.simulateContract({
       address: this.contracts.usdc,
       abi: ERC20_ABI,
@@ -922,9 +943,9 @@ export class EchoSdk {
    * signature the server verifies via `publicClient.verifyMessage`). Returns the 0x signature.
    */
   async signSiwe(message: string, account: Address): Promise<`0x${string}`> {
-    if (!this.walletClient) throw new Error('Wallet not connected');
-    const local = this.walletClient.account;
-    return this.walletClient.signMessage(
+    await this.ensureWallet();
+    const local = this.walletClient!.account;
+    return this.walletClient!.signMessage(
       local ? { account: local, message } : { account, message },
     );
   }
@@ -1006,7 +1027,7 @@ export class EchoSdk {
     },
     account: Address
   ) {
-    if (!this.walletClient) throw new Error('Wallet not connected');
+    await this.ensureWallet();
     const { request } = await this.publicClient.simulateContract({
       address: this.contracts.marketRegistry,
       abi: MarketRegistryABI,
@@ -1029,7 +1050,7 @@ export class EchoSdk {
   /** Pay the reveal fee R to unlock an applicant's submission (advances them to tier 1; the
    *  applicant's stake is now HELD behind the flag window — P6). Requester only. */
   async reveal(marketId: bigint, participant: Address, account: Address) {
-    if (!this.walletClient) throw new Error('Wallet not connected');
+    await this.ensureWallet();
     const { request } = await this.publicClient.simulateContract({
       address: this.contracts.marketRegistry, abi: MarketRegistryABI,
       functionName: 'reveal', args: [marketId, participant], account,
@@ -1040,7 +1061,7 @@ export class EchoSdk {
   /** Permissionless: once the flag window elapses unflagged, return the held reveal stake to the
    *  applicant (P6 default-resolve). */
   async settleRevealStake(marketId: bigint, participant: Address, account: Address) {
-    if (!this.walletClient) throw new Error('Wallet not connected');
+    await this.ensureWallet();
     const { request } = await this.publicClient.simulateContract({
       address: this.contracts.marketRegistry, abi: MarketRegistryABI,
       functionName: 'settleRevealStake', args: [marketId, participant], account,
@@ -1062,7 +1083,7 @@ export class EchoSdk {
     },
     account: Address
   ) {
-    if (!this.walletClient) throw new Error('Wallet not connected');
+    await this.ensureWallet();
     const { request } = await this.publicClient.simulateContract({
       address: this.contracts.marketRegistry, abi: MarketRegistryABI,
       functionName: 'createDirectJob',
@@ -1076,7 +1097,7 @@ export class EchoSdk {
   }
 
   async submitMilestone(marketId: bigint, index: bigint, deliverableHash: `0x${string}`, account: Address) {
-    if (!this.walletClient) throw new Error('Wallet not connected');
+    await this.ensureWallet();
     const { request } = await this.publicClient.simulateContract({
       address: this.contracts.marketRegistry, abi: MarketRegistryABI,
       functionName: 'submitMilestone', args: [marketId, index, deliverableHash], account,
@@ -1085,7 +1106,7 @@ export class EchoSdk {
   }
 
   async acceptMilestone(marketId: bigint, index: bigint, account: Address) {
-    if (!this.walletClient) throw new Error('Wallet not connected');
+    await this.ensureWallet();
     const { request } = await this.publicClient.simulateContract({
       address: this.contracts.marketRegistry, abi: MarketRegistryABI,
       functionName: 'acceptMilestone', args: [marketId, index], account,
@@ -1094,7 +1115,7 @@ export class EchoSdk {
   }
 
   async autoReleaseMilestone(marketId: bigint, index: bigint, account: Address) {
-    if (!this.walletClient) throw new Error('Wallet not connected');
+    await this.ensureWallet();
     const { request } = await this.publicClient.simulateContract({
       address: this.contracts.marketRegistry, abi: MarketRegistryABI,
       functionName: 'autoReleaseMilestone', args: [marketId, index], account,
@@ -1103,7 +1124,7 @@ export class EchoSdk {
   }
 
   async cancelDirectJob(marketId: bigint, account: Address) {
-    if (!this.walletClient) throw new Error('Wallet not connected');
+    await this.ensureWallet();
     const { request } = await this.publicClient.simulateContract({
       address: this.contracts.marketRegistry, abi: MarketRegistryABI,
       functionName: 'cancelDirectJob', args: [marketId], account,
@@ -1132,7 +1153,7 @@ export class EchoSdk {
     },
     account: Address
   ) {
-    if (!this.walletClient) throw new Error('Wallet not connected');
+    await this.ensureWallet();
     const { request } = await this.publicClient.simulateContract({
       address: this.contracts.marketRegistry, abi: MarketRegistryABI,
       functionName: 'createBounty',
@@ -1146,7 +1167,7 @@ export class EchoSdk {
   }
 
   async submitFinding(marketId: bigint, submitterAgentId: bigint, findingHash: `0x${string}`, account: Address) {
-    if (!this.walletClient) throw new Error('Wallet not connected');
+    await this.ensureWallet();
     const { request } = await this.publicClient.simulateContract({
       address: this.contracts.marketRegistry, abi: MarketRegistryABI,
       functionName: 'submitFinding', args: [marketId, submitterAgentId, findingHash], account,
@@ -1155,7 +1176,7 @@ export class EchoSdk {
   }
 
   async acceptFinding(marketId: bigint, index: bigint, award: bigint, account: Address) {
-    if (!this.walletClient) throw new Error('Wallet not connected');
+    await this.ensureWallet();
     const { request } = await this.publicClient.simulateContract({
       address: this.contracts.marketRegistry, abi: MarketRegistryABI,
       functionName: 'acceptFinding', args: [marketId, index, award], account,
@@ -1164,7 +1185,7 @@ export class EchoSdk {
   }
 
   async rejectFinding(marketId: bigint, index: bigint, account: Address) {
-    if (!this.walletClient) throw new Error('Wallet not connected');
+    await this.ensureWallet();
     const { request } = await this.publicClient.simulateContract({
       address: this.contracts.marketRegistry, abi: MarketRegistryABI,
       functionName: 'rejectFinding', args: [marketId, index], account,
@@ -1173,7 +1194,7 @@ export class EchoSdk {
   }
 
   async autoEscalateFinding(marketId: bigint, index: bigint, account: Address) {
-    if (!this.walletClient) throw new Error('Wallet not connected');
+    await this.ensureWallet();
     const { request } = await this.publicClient.simulateContract({
       address: this.contracts.marketRegistry, abi: MarketRegistryABI,
       functionName: 'autoEscalateFinding', args: [marketId, index], account,
@@ -1182,7 +1203,7 @@ export class EchoSdk {
   }
 
   async closeBounty(marketId: bigint, account: Address) {
-    if (!this.walletClient) throw new Error('Wallet not connected');
+    await this.ensureWallet();
     const { request } = await this.publicClient.simulateContract({
       address: this.contracts.marketRegistry, abi: MarketRegistryABI,
       functionName: 'closeBounty', args: [marketId], account,
@@ -1203,7 +1224,7 @@ export class EchoSdk {
 
   /** Submitter contests a REJECTED bounty finding. Flips it to Disputed; requester then counters. */
   async openFindingDispute(marketId: bigint, findingIndex: bigint, bond: bigint, account: Address) {
-    if (!this.walletClient) throw new Error('Wallet not connected');
+    await this.ensureWallet();
     const { request } = await this.publicClient.simulateContract({
       address: this.contracts.disputeResolver, abi: DisputeResolverABI,
       functionName: 'openFindingDispute', args: [marketId, findingIndex, bond], account,
@@ -1214,7 +1235,7 @@ export class EchoSdk {
   /** Requester flags a revealed applicant's HELD stake as bait-and-switch (opens + flags, P6).
    *  Reverts if the subject is disabled or the flag window has elapsed. */
   async openStakeDispute(marketId: bigint, participant: Address, bond: bigint, account: Address) {
-    if (!this.walletClient) throw new Error('Wallet not connected');
+    await this.ensureWallet();
     const { request } = await this.publicClient.simulateContract({
       address: this.contracts.disputeResolver, abi: DisputeResolverABI,
       functionName: 'openStakeDispute', args: [marketId, participant, bond], account,
@@ -1229,7 +1250,7 @@ export class EchoSdk {
    *  pays the WORKER. Reverts if the caller isn't the job's provider, the job isn't a Rejected Final
    *  job of this market, or it's already disputed. Approve the DisputeResolver for the bond first. */
   async openTierJobDispute(marketId: bigint, jobId: bigint, bond: bigint, account: Address) {
-    if (!this.walletClient) throw new Error('Wallet not connected');
+    await this.ensureWallet();
     const { request } = await this.publicClient.simulateContract({
       address: this.contracts.disputeResolver, abi: DisputeResolverABI,
       functionName: 'openTierJobDispute', args: [marketId, jobId, bond], account,
@@ -1239,7 +1260,7 @@ export class EchoSdk {
 
   /** The defending side posts the matching counter bond, opening the voting window. */
   async counterDispute(disputeId: bigint, account: Address) {
-    if (!this.walletClient) throw new Error('Wallet not connected');
+    await this.ensureWallet();
     const { request } = await this.publicClient.simulateContract({
       address: this.contracts.disputeResolver, abi: DisputeResolverABI,
       functionName: 'counter', args: [disputeId], account,
@@ -1249,7 +1270,7 @@ export class EchoSdk {
 
   /** Panel juror votes. `forOpener` sides with the opener (finding valid / slash sustained). */
   async voteDispute(disputeId: bigint, forOpener: boolean, account: Address) {
-    if (!this.walletClient) throw new Error('Wallet not connected');
+    await this.ensureWallet();
     const { request } = await this.publicClient.simulateContract({
       address: this.contracts.disputeResolver, abi: DisputeResolverABI,
       functionName: 'vote', args: [disputeId, forOpener], account,
@@ -1259,7 +1280,7 @@ export class EchoSdk {
 
   /** Tally + settle after the voting window. Callable by anyone. */
   async resolveDispute(disputeId: bigint, account: Address) {
-    if (!this.walletClient) throw new Error('Wallet not connected');
+    await this.ensureWallet();
     const { request } = await this.publicClient.simulateContract({
       address: this.contracts.disputeResolver, abi: DisputeResolverABI,
       functionName: 'resolve', args: [disputeId], account,
@@ -1269,7 +1290,7 @@ export class EchoSdk {
 
   /** A winning-side juror claims their flat share of the loser's bond (pull-based). */
   async claimJurorReward(disputeId: bigint, account: Address) {
-    if (!this.walletClient) throw new Error('Wallet not connected');
+    await this.ensureWallet();
     const { request } = await this.publicClient.simulateContract({
       address: this.contracts.disputeResolver, abi: DisputeResolverABI,
       functionName: 'claimJurorReward', args: [disputeId], account,
@@ -1279,7 +1300,7 @@ export class EchoSdk {
 
   /** Authorized oracle records the rung-1 advisory hint (non-binding). */
   async recordAgentHint(disputeId: bigint, hint: `0x${string}`, account: Address) {
-    if (!this.walletClient) throw new Error('Wallet not connected');
+    await this.ensureWallet();
     const { request } = await this.publicClient.simulateContract({
       address: this.contracts.disputeResolver, abi: DisputeResolverABI,
       functionName: 'recordAgentHint', args: [disputeId, hint], account,

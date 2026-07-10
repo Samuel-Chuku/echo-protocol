@@ -26,6 +26,12 @@ export function useEcho(): { sdk: EchoSdk; account?: Address; isConnected: boole
   useEffect(() => {
     let active = true;
     setWalletReady(false);
+    // Register a lazy resolver so the SDK can wire the wallet on demand at click-time if this effect
+    // hasn't finished (or the connector's provider only materializes after connect). This is what
+    // stops the spurious "Wallet not connected" when a user acts right after connecting.
+    if (connector && isConnected) {
+      sdk.setWalletResolver(() => connector.getProvider());
+    }
     (async () => {
       if (!connector || !isConnected) return;
       try {
@@ -35,7 +41,7 @@ export function useEcho(): { sdk: EchoSdk; account?: Address; isConnected: boole
           setWalletReady(true);
         }
       } catch {
-        /* connector has no provider yet — ignore until connected */
+        /* connector has no provider yet — ignore until connected; ensureWallet() will retry on click */
       }
     })();
     return () => { active = false; };

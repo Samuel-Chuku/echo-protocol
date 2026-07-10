@@ -228,7 +228,7 @@ export default function ManageMarketPage({ params }: { params: Promise<{ id: str
 
         {data?.mode === EchoMode.OpenMarket && (
           <div className="sm:col-span-2 space-y-3">
-            <ApplicantList sdk={sdk} account={account} data={data} marketId={marketId()} onChanged={load} onGhost={setGhostResult} closed={isClosed} />
+            <ApplicantList sdk={sdk} account={account} data={data} marketId={marketId()} onChanged={load} onGhost={setGhostResult} closed={isClosed} revealedAtMap={revealedAtMap} />
             {!isClosed && (
               <div className={CARD_CLASS}>
                 <h3 className="text-sm font-semibold text-white">Close market</h3>
@@ -442,7 +442,7 @@ function StatusReport({ data, closed, rows }: { data: Loaded; closed: boolean; r
 /* ──────────────────────────── Open/Reveal applicant list ──────────────────────────── */
 
 function ApplicantList({
-  sdk, account, data, marketId, onChanged, onGhost, closed,
+  sdk, account, data, marketId, onChanged, onGhost, closed, revealedAtMap,
 }: {
   sdk: ReturnType<typeof useEcho>['sdk'];
   account?: `0x${string}`;
@@ -452,6 +452,8 @@ function ApplicantList({
   onGhost: (r: { recipient: string; amount: string; paid: boolean }) => void;
   /** When the market is closed, the list is read-only: results stay, all action controls hide. */
   closed: boolean;
+  /** participant (lowercased) → unix seconds of their Revealed event. Drives the settle countdown. */
+  revealedAtMap: Map<string, number>;
 }) {
   const [advance, setAdvance] = useState<{ participant: string; fromLabel: string; toLabel: string; amount: string; paysNow: boolean; run: () => Promise<unknown> } | null>(null);
   const apps = data.apps ?? [];
@@ -547,10 +549,26 @@ function ApplicantList({
                       {next.label}
                     </Button>
                   )}
-                  {t >= 1 && data.revealFee > 0n && (
-                    <Command label="Settle stake" tone="neutral" disabled={!account}
-                      run={() => sdk.settleRevealStake(marketId, a.participant, account!)} onDone={onChanged} />
-                  )}
+                  {t >= 1 && data.revealFee > 0n && (() => {
+                    // settleRevealStake reverts (FlagWindowNotElapsed) until revealedAt + flagWindow.
+                    // Gate the button on that window and show a countdown instead of letting the tx
+                    // revert. revealedAt comes from the indexed Revealed event; flagWindow from the market.
+                    const revealedAt = revealedAtMap.get(a.participant.toLowerCase());
+                    const readyAt = revealedAt !== undefined ? revealedAt + Number(data.flagWindow) : null;
+                    const ready = readyAt !== null && now >= readyAt;
+                    if (readyAt !== null && !ready) {
+                      return (
+                        <span className="text-xs text-white/40 flex items-center gap-1" title="The reveal stake is held for the flag window before it can be settled.">
+                          <Clock className="w-3 h-3" />
+                          Settle in {duration(readyAt - now)}
+                        </span>
+                      );
+                    }
+                    return (
+                      <Command label="Settle stake" tone="neutral" disabled={!account}
+                        run={() => sdk.settleRevealStake(marketId, a.participant, account!)} onDone={onChanged} />
+                    );
+                  })()}
                   {t === 3 && (
                     <Command
                       label="Trigger ghost"
