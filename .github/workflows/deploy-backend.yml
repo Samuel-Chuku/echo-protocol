@@ -19,6 +19,12 @@ on:
       - '.github/workflows/deploy-backend.yml'
   workflow_dispatch: {} # manual "Run workflow" button for redeploys without a code change
 
+# Never let two deploys run at once — if you push twice quickly, the second waits for the first to
+# finish rather than racing it on the VPS (git pull / compose up stepping on each other).
+concurrency:
+  group: deploy-backend
+  cancel-in-progress: false # let an in-flight deploy finish; don't interrupt a live swap
+
 # Lowercase the owner once — GHCR image paths must be lowercase (Samuel-Chuku → samuel-chuku).
 env:
   REGISTRY: ghcr.io
@@ -26,14 +32,11 @@ env:
 
 jobs:
   build:
-    name: Build & push ${{ matrix.app }}
+    name: Build & push backend image
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write # push to GHCR with the auto-provisioned GITHUB_TOKEN — no PAT needed
-    strategy:
-      matrix:
-        app: [indexer, ops]
     steps:
       - uses: actions/checkout@v4
 
@@ -51,7 +54,8 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.OWNER }}/echo-${{ matrix.app }}
+          # ONE image runs both backends (indexer + ops) — the app is chosen at runtime via APP_DIR.
+          images: ${{ env.REGISTRY }}/${{ env.OWNER }}/echo-backend
           tags: |
             type=raw,value=latest
             type=sha,format=short
@@ -61,15 +65,16 @@ jobs:
         with:
           context: .
           file: ./Dockerfile
-          build-args: |
-            APP_DIR=apps/${{ matrix.app }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          # Persist the layer cache in the Actions cache so repeat builds are fast. Scoped per app so
-          # indexer and ops don't clobber each other's cache.
-          cache-from: type=gha,scope=${{ matrix.app }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.app }}
+          # Persist the layer cache in the Actions cache so repeat builds reuse the (heavy) install
+          # layer — a source-only change then rebuilds in seconds. Also read the old per-app scope so
+          # this first single-image build warms from the existing install layer instead of going cold.
+          cache-from: |
+            type=gha,scope=backend
+            type=gha,scope=indexer
+          cache-to: type=gha,mode=max,scope=backend
 
   deploy:
     name: Deploy to VPS
@@ -97,7 +102,7 @@ jobs:
             set -e
             echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
             cd ${{ secrets.VPS_APP_PATH || '~/echo-protocol' }}
-            git pull origin main
+            git pull --ff-only origin main
             docker compose pull indexer ops
             docker compose up -d indexer ops
             docker logout ghcr.io

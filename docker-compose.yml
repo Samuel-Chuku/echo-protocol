@@ -13,28 +13,30 @@
 # only inside the compose network and through Caddy.
 
 services:
+  # Both backends run from ONE image (built + pushed to GHCR by .github/workflows/deploy-backend.yml).
+  # The image carries both apps; each service picks which to run via APP_DIR. The VPS just
+  # `docker compose pull`s it — no on-box build (that was OOMing on sharp). `build:` is kept so a
+  # local `docker compose up --build` still works for development.
   indexer:
-    # CI builds + pushes this image to GHCR (see .github/workflows/deploy-backend.yml); the VPS just
-    # `docker compose pull`s it — no on-box build (that was OOMing on sharp). `build:` is kept so a
-    # local `docker compose up --build` still works for development.
-    image: ghcr.io/samuel-chuku/echo-indexer:latest
+    image: ghcr.io/samuel-chuku/echo-backend:latest
     build:
       context: .
-      args: { APP_DIR: apps/indexer }
+    environment:
+      APP_DIR: apps/indexer
     env_file: [apps/indexer/.env]
     restart: unless-stopped
     expose: ["4000"]
 
   ops:
-    image: ghcr.io/samuel-chuku/echo-ops:latest
+    image: ghcr.io/samuel-chuku/echo-backend:latest
     build:
       context: .
-      args: { APP_DIR: apps/ops }
     env_file: [apps/ops/.env]
-    # Override the local-only bind so Caddy (a sibling container) can reach it. The container
-    # is not published to the host, so 0.0.0.0 here is still private to the compose network.
-    # Also reach the indexer by its service name, not 127.0.0.1 (which is the ops container itself).
+    # APP_DIR selects the ops app from the shared image. OPS_HOST override lets Caddy (a sibling
+    # container) reach it — not published to the host, so 0.0.0.0 stays private to the compose net.
+    # INDEXER_GRAPHQL_URL reaches the indexer by service name, not 127.0.0.1 (that's ops itself).
     environment:
+      APP_DIR: apps/ops
       OPS_HOST: 0.0.0.0
       INDEXER_GRAPHQL_URL: http://indexer:4000/graphql
     restart: unless-stopped
