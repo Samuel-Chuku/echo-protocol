@@ -3,6 +3,7 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import type { Address } from 'viem';
 import { useEcho } from './sdk';
+import { getCircleSmartAccount } from './circle';
 import {
   getSessionToken,
   setSessionToken,
@@ -117,7 +118,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const domain = typeof window !== 'undefined' ? window.location.host : 'app.echoprotocol.site';
       const uri = typeof window !== 'undefined' ? window.location.origin : `https://${domain}`;
       const message = sdk.buildSiweMessage({ address: account as Address, domain, uri, nonce });
-      const signature = await sdk.signSiwe(message, account as Address);
+      // Circle passkey (smart account): sign THROUGH the viem smart-account object so the server gets
+      // a proper ERC-1271 / ERC-6492 signature it can verify on-chain. Signing via the wallet client's
+      // EIP-1193 personal_sign yields a raw passkey signature the server rejects. EOAs use the SDK path.
+      const smartAccount = getCircleSmartAccount();
+      const useCircle = smartAccount?.address?.toLowerCase() === account.toLowerCase();
+      const signature = useCircle
+        ? await smartAccount.signMessage({ message })
+        : await sdk.signSiwe(message, account as Address);
 
       // 3. exchange the signature for a session token
       const verifyRes = await fetch(`${AUTH_BASE}/auth/verify`, {

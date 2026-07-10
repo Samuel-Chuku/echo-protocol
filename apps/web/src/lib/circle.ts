@@ -24,6 +24,15 @@ export const CIRCLE_CONNECTOR_ID = 'circle-smart-account';
 /** True only when the Circle keys are present — gates whether the email/passkey path is shown. */
 export const circleConfigured = () => Boolean(CLIENT_KEY && CLIENT_URL);
 
+// The live viem Circle Smart Account from the most recent connect(). SIWE must sign THROUGH this
+// object (`smartAccount.signMessage`) — NOT through the EIP-1193 provider's personal_sign — so the
+// server gets a proper ERC-1271 / ERC-6492 signature that `verifyMessage` accepts. Signing via the
+// provider yields a raw passkey signature the server can't verify (every passkey sign-in failed with
+// "signature does not match address", deployed or not). Set on connect, cleared on disconnect.
+let activeSmartAccount: any;
+/** The connected Circle smart account, or undefined when no passkey wallet is active. */
+export function getCircleSmartAccount(): any { return activeSmartAccount; }
+
 // The email a user typed in "Continue with email" — used as the passkey username on first register.
 let pendingUsername: string | undefined;
 export function setCircleUsername(name: string) { pendingUsername = name || undefined; }
@@ -66,7 +75,7 @@ export function forgetCircleSession(): void {
 
 /** Build the Circle Smart Account EIP-1193 provider via passkey (login, else register). Dynamic-imports
  *  the Circle + viem AA SDKs so the connector module stays light and SSR-safe. */
-async function buildCircleProvider(username?: string): Promise<{ provider: any; address: `0x${string}` }> {
+async function buildCircleProvider(username?: string): Promise<{ provider: any; address: `0x${string}`; smartAccount: any }> {
   if (!circleConfigured()) throw new Error('Circle wallet not configured (set NEXT_PUBLIC_CIRCLE_* env vars).');
 
   const core: any = await import('@circle-fin/modular-wallets-core');
@@ -136,7 +145,7 @@ async function buildCircleProvider(username?: string): Promise<{ provider: any; 
   // Cache email + SCA for the "Continue as 0x… →" chip. Skips when no email (rare —
   // login-mode users may have left the field blank if reusing a passkey on a fresh browser).
   if (username) rememberCircleSession({ email: username, address });
-  return { provider, address };
+  return { provider, address, smartAccount };
 }
 
 /**
@@ -186,12 +195,14 @@ export function circleConnector() {
         const built = await buildCircleProvider(pendingUsername);
         provider = built.provider;
         address = built.address;
+        activeSmartAccount = built.smartAccount; // expose for SIWE (ERC-1271 signMessage)
         config.emitter.emit('connect', { accounts: [address], chainId: arcTestnet.id });
         return { accounts: [address] as readonly `0x${string}`[], chainId: arcTestnet.id };
       },
       async disconnect() {
         provider = undefined;
         address = undefined;
+        activeSmartAccount = undefined;
       },
       async getAccounts() {
         return address ? ([address] as readonly `0x${string}`[]) : [];
