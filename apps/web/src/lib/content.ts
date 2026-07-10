@@ -3,7 +3,6 @@
 import { useCallback } from 'react';
 import { gql, useClient } from 'urql';
 import type { Address } from 'viem';
-import { useAuth } from './auth';
 
 /**
  * Off-chain content channel — apply bodies + per-tier deliverables that the contracts deliberately
@@ -46,18 +45,18 @@ const FETCH_CONTENT = gql`
  */
 export function useContent() {
   const client = useClient();
-  const { ensureSignedIn } = useAuth();
 
   const store = useCallback(async (
     marketId: number, kind: ContentKind, key: string, body: string, author: Address,
   ): Promise<ContentRow> => {
-    // Prove control of `author` before writing — the SIWE session token then rides on the request
-    // header (see gql.ts) and the indexer enforces author == signed-in address.
-    await ensureSignedIn();
+    // No per-action sign-in prompt: ownership is proven once by the auto-SIWE flow on connect
+    // (see AuthProvider). If a session exists, its token rides on the request header (gql.ts) and
+    // the indexer enforces author == signed-in address; otherwise the legacy path applies until
+    // REQUIRE_AUTH is turned on.
     const res = await client.mutation(STORE_CONTENT, { marketId, kind, key, body, author }).toPromise();
     if (res.error) throw res.error;
     return res.data!.storeContent as ContentRow;
-  }, [client, ensureSignedIn]);
+  }, [client]);
 
   const fetch = useCallback(async (
     marketId: number, kind: ContentKind, key: string, viewer: Address,

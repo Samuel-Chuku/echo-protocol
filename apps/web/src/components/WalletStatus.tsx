@@ -91,7 +91,6 @@ export function WalletStatus() {
           }
           return (
             <div className="flex items-center gap-2">
-              <VerifyBadge />
               <CopyChip account={account!} displayName={acc.displayName} />
               <AvatarMenu account={account!} onAccount={openAccountModal} />
             </div>
@@ -100,41 +99,6 @@ export function WalletStatus() {
       </ConnectButton.Custom>
       {signInOpen && <SignInModal onClose={() => setSignInOpen(false)} />}
     </div>
-  );
-}
-
-/**
- * SIWE verification affordance. Connecting a wallet only claims an address; this proves control of
- * it. Shows a one-tap "Verify" button when unproven, and a subtle "Verified" badge once signed in.
- * Content actions also trigger sign-in lazily, so this is an optional up-front convenience.
- */
-function VerifyBadge() {
-  const { isSignedIn, status, signIn } = useAuth();
-  const [err, setErr] = useState(false);
-
-  if (isSignedIn) {
-    return (
-      <span
-        title="Wallet ownership verified (Sign-In With Ethereum)"
-        className="inline-flex items-center gap-1 rounded-full border border-teal-500/30 bg-teal-500/10 px-2.5 py-1.5 text-xs font-medium text-teal-300"
-      >
-        <ShieldCheck className="h-3.5 w-3.5" /> Verified
-      </span>
-    );
-  }
-
-  return (
-    <button
-      onClick={() => { setErr(false); signIn().catch(() => setErr(true)); }}
-      disabled={status === 'signing'}
-      title="Prove you control this wallet by signing a gas-free message"
-      className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1.5 text-xs font-medium transition disabled:opacity-60 ${
-        err ? 'border-danger/40 text-danger hover:bg-danger/10' : 'border-white/15 text-white/70 hover:text-white hover:bg-white/[0.06]'
-      }`}
-    >
-      {status === 'signing' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="h-3.5 w-3.5" />}
-      {status === 'signing' ? 'Signing…' : err ? 'Retry verify' : 'Verify'}
-    </button>
   );
 }
 
@@ -209,11 +173,12 @@ function ContinueAsChip() {
   );
 }
 
-/** Deterministic colored avatar that reveals a small menu: Profile and Account (disconnect). */
+/** Deterministic colored avatar that reveals a small menu: sign-in state, Profile, Account. */
 function AvatarMenu({ account, onAccount }: { account: `0x${string}`; onAccount?: () => void }) {
   const hue = parseInt(account.slice(2, 8), 16) % 360;
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const { isSignedIn, status, signIn } = useAuth();
 
   useEffect(() => {
     if (!open) return;
@@ -228,15 +193,37 @@ function AvatarMenu({ account, onAccount }: { account: `0x${string}`; onAccount?
     <div ref={ref} className="relative group">
       <button
         onClick={() => setOpen((v) => !v)}
-        title="Account menu"
+        title={isSignedIn ? 'Account menu · wallet verified' : 'Account menu'}
         aria-label="Account menu"
         aria-haspopup="menu"
         aria-expanded={open}
-        className="h-8 w-8 rounded-full border border-white/10 shrink-0 ring-2 ring-transparent group-hover:ring-teal-500/40 aria-expanded:ring-teal-500/40 transition"
+        className="relative h-8 w-8 rounded-full border border-white/10 shrink-0 ring-2 ring-transparent group-hover:ring-teal-500/40 aria-expanded:ring-teal-500/40 transition"
         style={{ background: `linear-gradient(135deg, hsl(${hue} 75% 55%), hsl(${(hue + 70) % 360} 75% 45%))` }}
-      />
+      >
+        {isSignedIn && (
+          <span
+            title="Wallet ownership verified"
+            className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-teal-400 ring-2 ring-[#0a2440]"
+          />
+        )}
+      </button>
       <div className={`absolute right-0 top-full pt-2 z-30 group-hover:block ${open ? 'block' : 'hidden'}`}>
-        <div className="min-w-[150px] rounded-xl border border-white/10 bg-[#0d2d4a] py-1 shadow-xl">
+        <div className="min-w-[170px] rounded-xl border border-white/10 bg-[#0d2d4a] py-1 shadow-xl">
+          {/* Sign-in state: a signed-in confirmation, or a one-tap re-sign when not proven. */}
+          {isSignedIn ? (
+            <div className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-teal-300 border-b border-white/5">
+              <ShieldCheck className="h-3.5 w-3.5" /> Wallet verified
+            </div>
+          ) : (
+            <button
+              onClick={() => { setOpen(false); void signIn(); }}
+              disabled={status === 'prompting'}
+              className="flex w-full items-center gap-1.5 px-3 py-1.5 text-left text-sm text-white/70 hover:text-white hover:bg-white/[0.04] border-b border-white/5 disabled:opacity-60"
+            >
+              {status === 'prompting' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="h-3.5 w-3.5" />}
+              {status === 'prompting' ? 'Signing in…' : 'Sign in'}
+            </button>
+          )}
           <Link href={`/u/${account}`} onClick={() => setOpen(false)} className="block px-3 py-1.5 text-sm text-white/70 hover:text-white hover:bg-white/[0.04]">Profile</Link>
           {onAccount && (
             <button onClick={() => { setOpen(false); onAccount(); }} className="block w-full px-3 py-1.5 text-left text-sm text-white/70 hover:text-white hover:bg-white/[0.04]">

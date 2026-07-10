@@ -893,7 +893,7 @@ export class EchoSdk {
       uri,
       nonce,
       chainId = arcTestnet.id,
-      statement = 'Sign in to Echo Protocol. This request will not trigger a transaction or cost gas.',
+      statement = 'Sign in to Echo Protocol. This message proves you control this wallet. No transaction. No gas. No funds move.',
       issuedAt = new Date().toISOString(),
     } = params;
     // Field order + spacing follow EIP-4361 exactly — the server's ABNF parser rejects deviations.

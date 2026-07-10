@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useAccount } from 'wagmi';
 import { EchoSdk } from '@echo/sdk';
 import type { Address } from 'viem';
@@ -14,18 +14,26 @@ import type { Address } from 'viem';
  *
  * `account` is the connected address you pass to every write method.
  */
-export function useEcho(): { sdk: EchoSdk; account?: Address; isConnected: boolean } {
+export function useEcho(): { sdk: EchoSdk; account?: Address; isConnected: boolean; walletReady: boolean } {
   const { address, isConnected, connector } = useAccount();
 
   const sdk = useMemo(() => new EchoSdk(), []);
+  // `walletReady` flips true only once the SDK's walletClient is actually wired to the connector's
+  // provider. Auth's auto-sign-in waits on this so it never calls signMessage before the wallet can
+  // sign (which would throw "Wallet not connected" right after connect).
+  const [walletReady, setWalletReady] = useState(false);
 
   useEffect(() => {
     let active = true;
+    setWalletReady(false);
     (async () => {
       if (!connector || !isConnected) return;
       try {
         const provider = await connector.getProvider();
-        if (active && provider) sdk.connectWallet(provider);
+        if (active && provider) {
+          sdk.connectWallet(provider);
+          setWalletReady(true);
+        }
       } catch {
         /* connector has no provider yet — ignore until connected */
       }
@@ -33,5 +41,5 @@ export function useEcho(): { sdk: EchoSdk; account?: Address; isConnected: boole
     return () => { active = false; };
   }, [connector, isConnected, sdk]);
 
-  return { sdk, account: address as Address | undefined, isConnected };
+  return { sdk, account: address as Address | undefined, isConnected, walletReady };
 }
