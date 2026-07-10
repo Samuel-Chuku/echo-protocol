@@ -25,8 +25,10 @@ COPY packages/contracts/package.json packages/contracts/
 COPY apps/web/package.json          apps/web/
 COPY apps/indexer/package.json      apps/indexer/
 COPY apps/ops/package.json          apps/ops/
-# --prod=false: tsx is a devDependency and IS the runtime (it resolves the TS workspace deps),
-# so we must install dev deps even though the image runs in production.
+# --prod: only runtime deps land in the image. `tsx` (the runtime — it resolves the TS workspace
+# deps on the fly) is a PROD dep of both apps, so this keeps it while dropping the heavy build/test
+# tooling (vitest→vite, drizzle-kit, typescript, @types) that never runs in production. That roughly
+# halves the image — smaller pulls + far less disk pressure on the VPS.
 #
 # The BuildKit cache mount persists pnpm's content-addressable store ACROSS builds. Without it, any
 # lockfile change re-downloads every package from scratch (~1000 pkgs, minutes on a VPS); with it,
@@ -37,7 +39,7 @@ COPY apps/ops/package.json          apps/ops/
 # and it's gentler on a flaky network (fewer simultaneous sockets → fewer EPIPE/timeout retries).
 # The cost is a slower install, but a slow install that finishes beats a fast one the kernel kills.
 RUN --mount=type=cache,target=/pnpm-store \
-    pnpm install --frozen-lockfile --prod=false --store-dir=/pnpm-store \
+    pnpm install --frozen-lockfile --prod --store-dir=/pnpm-store \
     --network-concurrency=4 --child-concurrency=1 \
     --filter "@echo/indexer..." --filter "@echo/ops..."
 
