@@ -871,6 +871,59 @@ export class EchoSdk {
     return this.send(request);
   }
 
+  // ── Sign-In With Ethereum (EIP-4361) ────────────────────
+
+  /**
+   * Build the canonical EIP-4361 message string for `address` to sign. Kept dependency-free (no
+   * `siwe` in the browser bundle) — the server parses + validates this same format. `nonce` comes
+   * from the server (`POST /auth/nonce`); `domain`/`uri` bind the signature to this origin.
+   */
+  buildSiweMessage(params: {
+    address: Address;
+    domain: string;
+    uri: string;
+    nonce: string;
+    chainId?: number;
+    statement?: string;
+    issuedAt?: string;
+  }): string {
+    const {
+      address,
+      domain,
+      uri,
+      nonce,
+      chainId = arcTestnet.id,
+      statement = 'Sign in to Echo Protocol. This request will not trigger a transaction or cost gas.',
+      issuedAt = new Date().toISOString(),
+    } = params;
+    // Field order + spacing follow EIP-4361 exactly — the server's ABNF parser rejects deviations.
+    return [
+      `${domain} wants you to sign in with your Ethereum account:`,
+      address,
+      '',
+      statement,
+      '',
+      `URI: ${uri}`,
+      'Version: 1',
+      `Chain ID: ${chainId}`,
+      `Nonce: ${nonce}`,
+      `Issued At: ${issuedAt}`,
+    ].join('\n');
+  }
+
+  /**
+   * Sign a SIWE message with the connected wallet. Routes through `signMessage`, which works for
+   * both an injected EOA (`personal_sign`) and the Circle passkey smart account (ERC-1271 / ERC-6492
+   * signature the server verifies via `publicClient.verifyMessage`). Returns the 0x signature.
+   */
+  async signSiwe(message: string, account: Address): Promise<`0x${string}`> {
+    if (!this.walletClient) throw new Error('Wallet not connected');
+    const local = this.walletClient.account;
+    return this.walletClient.signMessage(
+      local ? { account: local, message } : { account, message },
+    );
+  }
+
   /**
    * Per-action approve: if `account`'s allowance to `spender` is below `amount`, approve **exactly**
    * `amount` and wait for the approve to mine; otherwise do nothing. Returns the approve tx hash (or

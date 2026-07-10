@@ -83,6 +83,15 @@ export async function migrate(): Promise<void> {
       created_at INTEGER NOT NULL DEFAULT 0
     );
     CREATE INDEX IF NOT EXISTS contents_market_kind ON contents(market_id, kind);
+    CREATE TABLE IF NOT EXISTS auth_nonces (
+      nonce TEXT PRIMARY KEY, created_at INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS user_sessions (
+      token TEXT PRIMARY KEY, address TEXT NOT NULL, ip TEXT NOT NULL,
+      issued_at INTEGER NOT NULL, expires_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS user_sessions_address ON user_sessions(address);
+    CREATE INDEX IF NOT EXISTS user_sessions_expires ON user_sessions(expires_at);
   `);
 
   // Additive column migrations for DBs created before a column existed. Postgres supports IF NOT

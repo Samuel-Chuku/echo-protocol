@@ -7,6 +7,7 @@ import { RainbowKitProvider } from '@rainbow-me/rainbowkit';
 import { Provider as UrqlProvider } from 'urql';
 import { config } from './wagmi';
 import { AgentProvider } from './agent';
+import { AuthProvider } from './auth';
 import { TxProvider } from './tx';
 import { FlagsProvider } from './flags';
 import { gqlClient } from './gql';
@@ -22,9 +23,11 @@ export function Providers({ children, initialState }: { children: React.ReactNod
         <RainbowKitProvider>
           <UrqlProvider value={gqlClient}>
             <AgentProvider>
-              <TxProvider>
-                <FlagsProvider>{children}</FlagsProvider>
-              </TxProvider>
+              <AuthProvider>
+                <TxProvider>
+                  <FlagsProvider>{children}</FlagsProvider>
+                </TxProvider>
+              </AuthProvider>
             </AgentProvider>
           </UrqlProvider>
         </RainbowKitProvider>

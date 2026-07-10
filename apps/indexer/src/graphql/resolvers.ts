@@ -4,6 +4,7 @@ import { AgenticCommerceABI, CONTRACTS } from '@echo/sdk';
 import { db } from '../db/client.js';
 import { markets, applications, findings, milestones, disputes, events, cursor, reputation, contents } from '../db/schema.js';
 import { publicClient } from '../chain.js';
+import { config } from '../config.js';
 
 const C = CONTRACTS.arcTestnet;
 
@@ -102,8 +103,20 @@ export const resolvers = {
     content: async (
       _: unknown,
       a: { marketId: number; kind: string; key: string; viewer: string },
+      ctx: { address: string | null },
     ) => {
       if (!a.viewer) throw new Error('viewer required');
+
+      // SIWE authz: a read is gated to specific roles below, all keyed off `viewer`. So the caller
+      // must have proven control of `viewer` — otherwise anyone could read another party's body by
+      // claiming their address. requireAuth on → session mandatory; off → proven session must still
+      // match viewer, but an unauthenticated caller falls back to the legacy role gate.
+      const proven = ctx.address?.toLowerCase() ?? null;
+      if (config.requireAuth && !proven) throw new Error('sign-in required (SIWE session missing)');
+      if (proven && proven !== a.viewer.toLowerCase()) {
+        throw new Error('viewer must match the signed-in address');
+      }
+
       const viewer = a.viewer.toLowerCase();
       const key = a.key.toLowerCase();
       const id = `${a.marketId}-${a.kind}-${key}`;
@@ -162,9 +175,20 @@ export const resolvers = {
     storeContent: async (
       _: unknown,
       a: { marketId: number; kind: string; key: string; body: string; author: string },
+      ctx: { address: string | null },
     ) => {
       if (!a.author) throw new Error('author required');
       if (!['apply', 'deliver', 'reject'].includes(a.kind)) throw new Error('Unknown content kind');
+
+      // SIWE authz: the write is attributed to `author`, so the caller must have *proven* control of
+      // that address. When requireAuth is on, a session is mandatory. When off (legacy rollout), an
+      // authenticated caller is still held to author==provenAddress, but an unauthenticated caller
+      // falls back to the old on-chain role gate below. See config.requireAuth.
+      const proven = ctx.address?.toLowerCase() ?? null;
+      if (config.requireAuth && !proven) throw new Error('sign-in required (SIWE session missing)');
+      if (proven && proven !== a.author.toLowerCase()) {
+        throw new Error('author must match the signed-in address');
+      }
 
       const author = a.author.toLowerCase();
       const key = a.key.toLowerCase();

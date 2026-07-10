@@ -138,6 +138,30 @@ export const contents = pgTable('contents', {
   createdAt: integer('created_at').notNull().default(0),
 });
 
+/**
+ * One-time SIWE nonces. A client asks for a nonce, signs a SIWE message containing it, and the
+ * verify step consumes it (deletes on use) so a captured signature can't be replayed. Rows expire
+ * after a few minutes; a sweeper drops stale ones.
+ */
+export const authNonces = pgTable('auth_nonces', {
+  nonce: text('nonce').primaryKey(), // random 17-char alphanumeric (siwe generateNonce)
+  createdAt: integer('created_at').notNull(), // unix seconds
+});
+
+/**
+ * Server-side sessions minted after a valid SIWE signature. The token is the bearer credential; the
+ * address is the *proven* controller (not client-claimed). Content-channel writes/reads verify the
+ * caller against this row instead of trusting a claimed address. Bound to the issuing IP so a leaked
+ * token can't be replayed from another host.
+ */
+export const userSessions = pgTable('user_sessions', {
+  token: text('token').primaryKey(), // 256-bit random hex
+  address: text('address').notNull(), // lowercased, proven via SIWE
+  ip: text('ip').notNull(), // client IP the token was issued to
+  issuedAt: integer('issued_at').notNull(), // unix seconds
+  expiresAt: integer('expires_at').notNull(), // unix seconds
+});
+
 /** Disputes (DisputeResolver). subject: 0 BountyFinding, 1 ModeAStake. status: 0 Open, 1 Resolved. */
 export const disputes = pgTable('disputes', {
   id: integer('id').primaryKey(), // disputeId

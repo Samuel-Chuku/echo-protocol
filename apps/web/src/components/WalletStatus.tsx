@@ -6,8 +6,9 @@ import { ConnectButton } from '@rainbow-me/rainbowkit';
 import { useAccount, useBlockNumber, useSwitchChain } from 'wagmi';
 import { arcTestnet } from '@echo/sdk';
 import { useConnect } from 'wagmi';
-import { Loader2, X } from 'lucide-react';
+import { Loader2, X, ShieldCheck } from 'lucide-react';
 import { useEcho } from '@/lib/sdk';
+import { useAuth } from '@/lib/auth';
 import { usdcShort, short } from '@/lib/format';
 import { CIRCLE_CONNECTOR_ID, forgetCircleSession, readCircleSession, setCircleMode, setCircleUsername } from '@/lib/circle';
 import { Bell } from './Bell';
@@ -90,6 +91,7 @@ export function WalletStatus() {
           }
           return (
             <div className="flex items-center gap-2">
+              <VerifyBadge />
               <CopyChip account={account!} displayName={acc.displayName} />
               <AvatarMenu account={account!} onAccount={openAccountModal} />
             </div>
@@ -98,6 +100,41 @@ export function WalletStatus() {
       </ConnectButton.Custom>
       {signInOpen && <SignInModal onClose={() => setSignInOpen(false)} />}
     </div>
+  );
+}
+
+/**
+ * SIWE verification affordance. Connecting a wallet only claims an address; this proves control of
+ * it. Shows a one-tap "Verify" button when unproven, and a subtle "Verified" badge once signed in.
+ * Content actions also trigger sign-in lazily, so this is an optional up-front convenience.
+ */
+function VerifyBadge() {
+  const { isSignedIn, status, signIn } = useAuth();
+  const [err, setErr] = useState(false);
+
+  if (isSignedIn) {
+    return (
+      <span
+        title="Wallet ownership verified (Sign-In With Ethereum)"
+        className="inline-flex items-center gap-1 rounded-full border border-teal-500/30 bg-teal-500/10 px-2.5 py-1.5 text-xs font-medium text-teal-300"
+      >
+        <ShieldCheck className="h-3.5 w-3.5" /> Verified
+      </span>
+    );
+  }
+
+  return (
+    <button
+      onClick={() => { setErr(false); signIn().catch(() => setErr(true)); }}
+      disabled={status === 'signing'}
+      title="Prove you control this wallet by signing a gas-free message"
+      className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1.5 text-xs font-medium transition disabled:opacity-60 ${
+        err ? 'border-danger/40 text-danger hover:bg-danger/10' : 'border-white/15 text-white/70 hover:text-white hover:bg-white/[0.06]'
+      }`}
+    >
+      {status === 'signing' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldCheck className="h-3.5 w-3.5" />}
+      {status === 'signing' ? 'Signing…' : err ? 'Retry verify' : 'Verify'}
+    </button>
   );
 }
 
