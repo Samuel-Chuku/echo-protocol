@@ -2,6 +2,7 @@ import {
   createPublicClient,
   createWalletClient,
   custom,
+  getAddress,
   http,
   parseEventLogs,
   type Address,
@@ -897,9 +898,13 @@ export class EchoSdk {
       issuedAt = new Date().toISOString(),
     } = params;
     // Field order + spacing follow EIP-4361 exactly — the server's ABNF parser rejects deviations.
+    // The address line MUST be EIP-55 checksummed: siwe's parser throws `invalid EIP-55 address`
+    // (surfacing as "malformed SIWE message") on a lowercase address. Injected EOAs hand back a
+    // checksummed address, but the Circle passkey connector emits its smart-account address
+    // lowercased — so normalize here to make both wallet kinds parse. Idempotent for EOAs.
     return [
       `${domain} wants you to sign in with your Ethereum account:`,
-      address,
+      getAddress(address),
       '',
       statement,
       '',
