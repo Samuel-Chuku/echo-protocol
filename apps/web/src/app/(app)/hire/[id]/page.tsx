@@ -596,6 +596,13 @@ function ApplicantList({
                 )}
               </div>
 
+              {/* Reveal payoff: once you've revealed an applicant (tier ≥ 1), read the application body
+                  you paid the reveal fee to unlock. The content channel gates this to the requester
+                  after reveal — the whole point of the reveal step. */}
+              {isRequester && t >= 1 && (
+                <ContentView marketId={Number(marketId)} kind="apply" contentKey={a.participant.toLowerCase()} viewer={account!} />
+              )}
+
               {/* Requester-only tier-job evaluation: accept & pay, Final reject, request revision, read
                   deliverables. Hidden once closed — those writes revert on a settled market. */}
               {isRequester && !closed && tierJobIds.length > 0 && (

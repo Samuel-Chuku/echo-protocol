@@ -190,6 +190,9 @@ function OpenApply({ sdk, account, agentId, marketId, closed }: { sdk: ReturnTyp
   const [applyOpen, setApplyOpen] = useState(false);
   const [identityOpen, setIdentityOpen] = useState(false);
   const [stake, setStake] = useState<bigint | null>(null);
+  const [myBody, setMyBody] = useState<string | null>(null);
+  const [tierJobs, setTierJobs] = useState<TierJob[]>([]);
+  const { store: storeContent, fetch: fetchContent } = useContent();
   const need = !account;
 
   // Stake is per-market and set by the requester at creation (0 = none). Read the real value so the
@@ -217,6 +220,39 @@ function OpenApply({ sdk, account, agentId, marketId, closed }: { sdk: ReturnTyp
   const applied = !!app && Number(app.appliedAt) > 0;
   const hasStake = stake !== null && stake > 0n;
   const stakeText = stake !== null && stake > 0n ? `${usdc(stake)} USDC` : null;
+  const tierJobIds: bigint[] = (app?.tierJobIds ?? []) as bigint[];
+  const tierJobIdsKey = tierJobIds.map((j) => j.toString()).join(',');
+
+  // Pull the applicant's own stored application body so "Load my application" shows the actual
+  // submission text (not just its hash). The content channel gates 'apply' reads to the participant
+  // themselves (always) and the requester after reveal.
+  useEffect(() => {
+    if (!applied || !account) { setMyBody(null); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const row = await fetchContent(Number(marketId), 'apply', account.toLowerCase(), account);
+        if (!cancelled) setMyBody(row?.body ?? null);
+      } catch { if (!cancelled) setMyBody(null); }
+    })();
+    return () => { cancelled = true; };
+  }, [applied, account, marketId, fetchContent]);
+
+  // Once the requester reveals + grades, each advancement spawns an Arc tier job with this applicant
+  // as the provider. Load those jobs so the worker gets their per-tier deliverable UI (TierJobCard) —
+  // without this the applicant is advanced but has nowhere to act.
+  const loadTierJobs = useCallback(async () => {
+    if (!account || tierJobIds.length === 0) { setTierJobs([]); return; }
+    const jobs = await Promise.all(tierJobIds.map(async (jobId) => {
+      const [arcJob, ctx] = await Promise.all([
+        sdk.getArcJob(jobId).catch(() => null) as Promise<TierJob['arcJob']>,
+        sdk.getJobContext(jobId).catch(() => null) as Promise<TierJob['ctx']>,
+      ]);
+      return { jobId, arcJob, ctx };
+    }));
+    setTierJobs(jobs);
+  }, [sdk, account, tierJobIdsKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { loadTierJobs(); }, [loadTierJobs]);
 
   return (
     <Section title="Apply" desc="Submit your application. The requester reveals, grades, and advances applicants through tiers.">
@@ -224,9 +260,14 @@ function OpenApply({ sdk, account, agentId, marketId, closed }: { sdk: ReturnTyp
         {applied ? (
           <div className="rounded-xl border border-success/20 bg-success/[0.06] px-4 py-3 text-sm">
             <span className="inline-flex items-center gap-1.5 font-semibold text-success">
-              <CheckCircle2 className="w-4 h-4" /> Stake paid
+              <CheckCircle2 className="w-4 h-4" /> Application submitted
             </span>
-            <span className="text-white/60"> held until you are revealed, refunded in full if you withdraw first.</span>
+            {hasStake ? (
+              <span className="text-white/60"> Your {stakeText} stake is <b className="text-white/80">held</b> (not spent) — refunded in full if you withdraw before being revealed, forfeited only if you&apos;re revealed and then fail to deliver.</span>
+            ) : (
+              <span className="text-white/60"> No stake was required for this market.</span>
+            )}
+            <span className="block text-xs text-white/40 mt-1">Payouts land as the requester accepts each tier — track every on-chain movement on the <Link href="/activity" className="underline hover:text-white">Activity</Link> page.</span>
           </div>
         ) : stake === null ? (
           <div className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 text-sm text-white/50">
@@ -254,7 +295,13 @@ function OpenApply({ sdk, account, agentId, marketId, closed }: { sdk: ReturnTyp
               ['submission hash', short(app.submissionHash)],
               ['tier status', TIER_STATUS_NAMES[Number(app.tierReached)] ?? `Tier ${app.tierReached}`],
             ]} />
-            <Button variant="secondary" busy={appLoading} onClick={loadApp}>Load my application</Button>
+            <div className="mt-2 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2">
+              <div className="text-[10px] uppercase tracking-wide text-white/40 mb-1">Your submission</div>
+              {myBody !== null
+                ? <p className="text-sm text-white/70 whitespace-pre-wrap">{myBody}</p>
+                : <p className="text-xs text-white/40 italic">Body isn&apos;t stored for this application (applied before the content channel, or from another device). Only its hash is on-chain.</p>}
+            </div>
+            <Button variant="secondary" busy={appLoading} onClick={() => { loadApp(); }}>Load my application</Button>
           </Card>
         ) : (
           <Card title="Apply to this market" hint="Mints a participation receipt; pulls the stake if the market requires one.">
@@ -274,6 +321,21 @@ function OpenApply({ sdk, account, agentId, marketId, closed }: { sdk: ReturnTyp
           </Card>
         )}
 
+        {/* #9/#12: once revealed + graded, each tier is an Arc job with this applicant as provider.
+            Show what stage they're at and surface the deliverable UI for any open tier job — without
+            this, an advanced applicant sees "Final" with nothing to do. */}
+        {applied && account && (
+          <WorkerTierProgress
+            tierReached={Number(app.tierReached)}
+            revealFeePending={Number(app.tierReached) === 0}
+            jobs={tierJobs}
+            sdk={sdk}
+            account={account}
+            marketId={marketId}
+            onChanged={() => { loadApp(); loadTierJobs(); }}
+          />
+        )}
+
         {applyOpen && (
           <TxModal
             title="Apply to this market"
@@ -284,7 +346,14 @@ function OpenApply({ sdk, account, agentId, marketId, closed }: { sdk: ReturnTyp
             run={async () => {
               const stake = await sdk.marketStakeRequired(marketId).catch(() => 0n);
               if (stake > 0n) await sdk.ensureUsdcAllowance(C.marketRegistry, stake, account!);
-              return sdk.applyToMarket(marketId, BigInt(agentId || '0'), scope(submission), account!);
+              const hash = await sdk.applyToMarket(marketId, BigInt(agentId || '0'), scope(submission), account!);
+              // Store the application body off-chain (only its hash goes on-chain) so the applicant can
+              // reload it and the requester can read it after paying the reveal fee. Keyed by the
+              // participant's own address; best-effort so a content-channel hiccup doesn't fail the apply.
+              try {
+                await storeContent(Number(marketId), 'apply', account!.toLowerCase(), submission.trim(), account!);
+              } catch { /* body storage is best-effort; the on-chain apply already succeeded */ }
+              return hash;
             }}
             onClose={() => setApplyOpen(false)}
             onDone={() => loadApp()}
@@ -293,6 +362,57 @@ function OpenApply({ sdk, account, agentId, marketId, closed }: { sdk: ReturnTyp
         {identityOpen && <RegisterIdentityModal onClose={() => setIdentityOpen(false)} onRegistered={() => { setIdentityOpen(false); setApplyOpen(true); }} />}
       </div>
     </Section>
+  );
+}
+
+/**
+ * #9/#12 — the applicant's view of where they stand and what to do next. Reveal/grade/advance are all
+ * requester-driven, so between actions the worker is genuinely just waiting; the confusion was that the
+ * UI said nothing. This makes the wait explicit and surfaces the deliverable UI the moment a tier job
+ * opens for them.
+ */
+function WorkerTierProgress({ tierReached, revealFeePending, jobs, sdk, account, marketId, onChanged }: {
+  tierReached: number; revealFeePending: boolean; jobs: TierJob[];
+  sdk: ReturnType<typeof useEcho>['sdk']; account: `0x${string}`; marketId: bigint; onChanged: () => void;
+}) {
+  const stageLabel = TIER_STATUS_NAMES[tierReached] ?? `Tier ${tierReached}`;
+  // Is any tier job currently waiting on THIS worker to submit (Arc status Open === 0, provider = me)?
+  const awaitingMe = jobs.some((j) => (j.arcJob?.status ?? -1) === 0 && j.arcJob?.provider.toLowerCase() === account.toLowerCase());
+
+  return (
+    <Card title="Your progress">
+      <div className="flex items-center gap-2 text-sm">
+        <span className="text-white/50">Current stage:</span>
+        <Badge tone={tierReached === 3 ? 'success' : 'neutral'}>{stageLabel}</Badge>
+      </div>
+
+      {/* What's happening / what to do — the requester drives reveal + grading, so most stages are a wait. */}
+      {revealFeePending ? (
+        <p className="text-xs text-white/50 mt-2">
+          You&apos;ve applied. The requester pays a reveal fee to unlock your submission, then grades and
+          advances applicants tier by tier. <b className="text-white/70">Nothing is required from you right now</b> —
+          you&apos;ll get a deliverable to submit here if you&apos;re advanced to a paid tier.
+        </p>
+      ) : awaitingMe ? (
+        <p className="text-xs text-teal-300 mt-2">
+          You&apos;ve been advanced — <b>submit your deliverable</b> for the open tier job below to get paid.
+        </p>
+      ) : (
+        <p className="text-xs text-white/50 mt-2">
+          You&apos;ve been revealed/advanced. When the requester opens the next tier, a deliverable box appears
+          below. If a job shows <b className="text-white/70">Submitted</b>, you&apos;re waiting on the requester to
+          accept and release payment.
+        </p>
+      )}
+
+      {jobs.length > 0 && (
+        <div className="mt-3 space-y-3">
+          {jobs.map((job) => (
+            <TierJobCard key={job.jobId.toString()} sdk={sdk} account={account} marketId={marketId} job={job} onChanged={onChanged} />
+          ))}
+        </div>
+      )}
+    </Card>
   );
 }
 
