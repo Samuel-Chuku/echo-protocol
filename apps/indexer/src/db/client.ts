@@ -83,6 +83,12 @@ export async function migrate(): Promise<void> {
       created_at INTEGER NOT NULL DEFAULT 0
     );
     CREATE INDEX IF NOT EXISTS contents_market_kind ON contents(market_id, kind);
+    CREATE TABLE IF NOT EXISTS attachments (
+      id TEXT PRIMARY KEY, market_id INTEGER NOT NULL, kind TEXT NOT NULL, key TEXT NOT NULL,
+      author TEXT NOT NULL, filename TEXT NOT NULL, mime TEXT NOT NULL, size INTEGER NOT NULL,
+      data TEXT NOT NULL, hash TEXT NOT NULL, created_at INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS attachments_slot ON attachments(market_id, kind, key);
     CREATE TABLE IF NOT EXISTS auth_nonces (
       nonce TEXT PRIMARY KEY, created_at INTEGER NOT NULL
     );

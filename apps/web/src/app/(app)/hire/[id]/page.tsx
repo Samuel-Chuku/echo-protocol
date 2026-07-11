@@ -10,6 +10,7 @@ import { useContent } from '@/lib/content';
 import { useFlag } from '@/lib/flags';
 import { Section, Card, Field, TextArea, KV, Badge, Button, EmptyState, CARD_CLASS } from '@/components/ui';
 import { Command } from '@/components/Command';
+import { Attachments } from '@/components/Attachments';
 import { TxModal } from '@/components/TxModal';
 import { TierAdvanceModal } from '@/components/TierAdvanceModal';
 import { GhostPenaltyModal } from '@/components/GhostPenaltyModal';
@@ -600,7 +601,10 @@ function ApplicantList({
                   you paid the reveal fee to unlock. The content channel gates this to the requester
                   after reveal — the whole point of the reveal step. */}
               {isRequester && t >= 1 && (
-                <ContentView marketId={Number(marketId)} kind="apply" contentKey={a.participant.toLowerCase()} viewer={account!} />
+                <>
+                  <ContentView marketId={Number(marketId)} kind="apply" contentKey={a.participant.toLowerCase()} viewer={account!} />
+                  <Attachments marketId={Number(marketId)} kind="apply" contentKey={a.participant.toLowerCase()} account={account!} label="Application files" />
+                </>
               )}
 
               {/* Requester-only tier-job evaluation: accept & pay, Final reject, request revision, read
@@ -720,6 +724,7 @@ function ApplicantTierJobs({ sdk, account, marketId, tierJobIds, onDone }: {
           {j.status === 2 && (
             <>
               <ContentView marketId={Number(marketId)} kind="deliver" contentKey={j.jobId.toString()} viewer={account} />
+              <Attachments marketId={Number(marketId)} kind="deliver" contentKey={j.jobId.toString()} account={account} label="Deliverable files" />
               {/* Reject is a FINAL-tier-only escape hatch from the ghost penalty (tier 3 = Final).
                   Lower tiers have no ghost timer, so Accept is the only action there. */}
               {j.tier === 3 ? (

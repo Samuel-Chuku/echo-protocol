@@ -22,12 +22,20 @@ export const typeDefs = /* GraphQL */ `
     UX, not privacy. Replace with E2E encryption before mainnet (see memory: echo-content-channel-gap).
     """
     content(marketId: Int!, kind: String!, key: String!, viewer: String!): Content
+    "File attachments for {kind,key}, gated identically to content (same viewer rules). METADATA ONLY (data is null); fetch bytes via attachmentData. Empty list when none."
+    attachments(marketId: Int!, kind: String!, key: String!, viewer: String!): [Attachment!]!
+    "One attachment's bytes (base64 data) by id — gated against the row's own slot. Used on download and by the agent."
+    attachmentData(id: String!, viewer: String!): Attachment
     health: Health!
   }
 
   type Mutation {
     "Store off-chain content. Caller passes the claimed author address; the indexer enforces author-rules against on-chain state (apply → must equal the key; deliver → must equal the Arc job's provider) but does NOT verify the caller actually controls that address. Demo-grade."
     storeContent(marketId: Int!, kind: String!, key: String!, body: String!, author: String!): Content!
+    "Upload one file attachment (base64 data) for {kind,key}. Author-gated like storeContent; raw size capped (docs-only). Appends a new file."
+    storeAttachment(marketId: Int!, kind: String!, key: String!, filename: String!, mime: String!, data: String!, author: String!): Attachment!
+    "Delete an attachment by id. Only the original uploader (author) may delete."
+    deleteAttachment(id: String!, author: String!): Boolean!
   }
 
   type Content {
@@ -37,6 +45,21 @@ export const typeDefs = /* GraphQL */ `
     key: String!
     author: String!
     body: String!
+    hash: String!
+    createdAt: Int!
+  }
+
+  type Attachment {
+    id: String!
+    marketId: Int!
+    kind: String!
+    key: String!
+    author: String!
+    filename: String!
+    mime: String!
+    size: Int!
+    "Base64 file bytes. Null in the attachments list (metadata-only); populated by attachmentData."
+    data: String
     hash: String!
     createdAt: Int!
   }

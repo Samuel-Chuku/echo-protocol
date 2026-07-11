@@ -11,6 +11,7 @@ import { useContent } from '@/lib/content';
 import { ACTIVITY_QUERY, type ActivityRow } from '@/lib/activity';
 import { Section, Card, Field, KV, Badge, Button, CARD_CLASS, TierTrack, type TierStep } from '@/components/ui';
 import { Command } from '@/components/Command';
+import { Attachments } from '@/components/Attachments';
 import { Receipt } from '@/components/Receipt';
 import { TxModal } from '@/components/TxModal';
 import { RegisterIdentityModal } from '@/components/RegisterIdentityModal';
@@ -301,11 +302,19 @@ function OpenApply({ sdk, account, agentId, marketId, closed }: { sdk: ReturnTyp
                 ? <p className="text-sm text-white/70 whitespace-pre-wrap">{myBody}</p>
                 : <p className="text-xs text-white/40 italic">Body isn&apos;t stored for this application (applied before the content channel, or from another device). Only its hash is on-chain.</p>}
             </div>
+            {account && (
+              <Attachments marketId={Number(marketId)} kind="apply" contentKey={account.toLowerCase()} account={account}
+                canEdit={!closed} label="Your files" />
+            )}
             <Button variant="secondary" busy={appLoading} onClick={() => { loadApp(); }}>Load my application</Button>
           </Card>
         ) : (
           <Card title="Apply to this market" hint="Mints a participation receipt; pulls the stake if the market requires one.">
             <Field label="submission text → hash" value={submission} onChange={(e) => setSubmission(e.target.value)} />
+            {account && (
+              <Attachments marketId={Number(marketId)} kind="apply" contentKey={account.toLowerCase()} account={account}
+                canEdit={!closed} label="Attach files to your application (optional)" />
+            )}
             {closed && <p className="text-xs text-warning">This market is no longer active.</p>}
             {!account && <p className="text-xs text-warning">Connect a wallet to apply.</p>}
             <div className="flex flex-wrap gap-2">
@@ -548,6 +557,8 @@ function TierJobCard({ sdk, account, marketId, job, onChanged }: {
             className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm font-mono"
           />
           {err && <p className="text-xs text-red-600">{err}</p>}
+          <Attachments marketId={Number(marketId)} kind="deliver" contentKey={job.jobId.toString()} account={account}
+            canEdit label="Deliverable files (optional) — attach before you submit" />
           <Command label="Submit deliverable" disabled={!deliverable.trim()}
             onDone={() => { setDeliverable(''); onChanged(); }}
             run={async () => {
@@ -573,6 +584,9 @@ function TierJobCard({ sdk, account, marketId, job, onChanged }: {
           <div className="text-[10px] uppercase tracking-wide text-gray-500 mb-1">Your deliverable (saved off-chain)</div>
           <p className="text-sm text-gray-700 whitespace-pre-wrap">{savedBody}</p>
         </div>
+      )}
+      {(status === 2 || status === 3) && isProvider && (
+        <Attachments marketId={Number(marketId)} kind="deliver" contentKey={job.jobId.toString()} account={account} label="Submitted files" />
       )}
 
       {status === 3 && (

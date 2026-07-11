@@ -139,6 +139,28 @@ export const contents = pgTable('contents', {
 });
 
 /**
+ * File attachments for the content channel — the file counterpart to `contents`. Applicants/workers
+ * can attach documents (PDF/text/code/small images) alongside the text body. Bytes are base64 in
+ * Postgres (docs-only, ~5MB cap enforced in the resolver); reads go through the SAME viewer gate as
+ * `content` (apply → participant + requester-after-reveal; deliver → job provider/evaluator), so an
+ * attachment is never more visible than the body it accompanies. Swap the `data` column for an object
+ * store later without changing the gate. Many attachments per (marketId, kind, key) — id is a uuid.
+ */
+export const attachments = pgTable('attachments', {
+  id: text('id').primaryKey(), // `${marketId}-${kind}-${key}-${createdAt}-${n}` (unique per upload)
+  marketId: integer('market_id').notNull(),
+  kind: text('kind').notNull(), // 'apply' | 'deliver' | 'reject' — same namespace as contents
+  key: text('key').notNull(), // participant addr (apply) or arc jobId (deliver/reject), lowercased
+  author: text('author').notNull(), // wallet that uploaded (lowercased, gated like storeContent)
+  filename: text('filename').notNull(),
+  mime: text('mime').notNull(),
+  size: integer('size').notNull(), // raw byte length (pre-base64), for display + cap checks
+  data: text('data').notNull(), // base64 of the file bytes
+  hash: text('hash').notNull(), // keccak256 of the raw bytes — integrity + on-chain matching
+  createdAt: integer('created_at').notNull().default(0),
+});
+
+/**
  * One-time SIWE nonces. A client asks for a nonce, signs a SIWE message containing it, and the
  * verify step consumes it (deletes on use) so a captured signature can't be replayed. Rows expire
  * after a few minutes; a sweeper drops stale ones.

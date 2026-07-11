@@ -2,7 +2,7 @@ import { and, desc, eq, inArray, or, sql } from 'drizzle-orm';
 import { keccak256, toBytes, type Address } from 'viem';
 import { AgenticCommerceABI, CONTRACTS } from '@echo/sdk';
 import { db } from '../db/client.js';
-import { markets, applications, findings, milestones, disputes, events, cursor, reputation, contents } from '../db/schema.js';
+import { markets, applications, findings, milestones, disputes, events, cursor, reputation, contents, attachments } from '../db/schema.js';
 import { publicClient } from '../chain.js';
 import { config } from '../config.js';
 
@@ -30,6 +30,70 @@ const stateOf = (name: string, marketId: number | null, activeMarketIds: Set<num
 };
 
 const marketOut = (m: any) => ({ ...m, tiers: m.tiers ? JSON.parse(m.tiers) : null });
+
+// ── Shared content-channel gates (used by both text `contents` and file `attachments`) ──
+// Keeping these in one place means an attachment is gated identically to the body it rides with —
+// they can never drift apart. Both throw on violation; callers proceed only if they return.
+
+/** READ gate: may `viewer` read {kind,key} content for this market? Enforces SIWE match + role rules
+ *  (apply → participant always, requester only after reveal; deliver/reject → job provider|evaluator). */
+async function assertCanReadContent(
+  marketId: number, kind: string, key: string, viewer: string, proven: string | null,
+): Promise<void> {
+  if (!viewer) throw new Error('viewer required');
+  if (config.requireAuth && !proven) throw new Error('sign-in required (SIWE session missing)');
+  if (proven && proven !== viewer.toLowerCase()) throw new Error('viewer must match the signed-in address');
+
+  const v = viewer.toLowerCase();
+  const k = key.toLowerCase();
+  if (kind === 'apply') {
+    const [m] = await db.select().from(markets).where(eq(markets.id, marketId)).limit(1);
+    if (!m) throw new Error('Market not found');
+    const isParticipant = v === k;
+    const isRequester = v === m.requester.toLowerCase();
+    if (!isParticipant && !isRequester) throw new Error('Forbidden');
+    if (isRequester) {
+      const [app] = await db.select().from(applications)
+        .where(and(eq(applications.marketId, marketId), eq(sql`lower(${applications.participant})`, k)))
+        .limit(1);
+      if (!app || app.tierReached < 1) throw new Error('Reveal required');
+    }
+  } else if (kind === 'deliver' || kind === 'reject') {
+    const job = await publicClient.readContract({
+      address: C.agenticCommerce, abi: AgenticCommerceABI,
+      functionName: 'getJob', args: [BigInt(key)],
+    }) as { provider: Address; evaluator: Address };
+    if (![job.provider.toLowerCase(), job.evaluator.toLowerCase()].includes(v)) throw new Error('Forbidden');
+  } else {
+    throw new Error('Unknown content kind');
+  }
+}
+
+/** WRITE gate: may `author` write {kind,key} for this market? apply → author == participant;
+ *  deliver → author == job provider; reject → author == job evaluator. */
+async function assertCanWriteContent(
+  kind: string, key: string, author: string,
+): Promise<void> {
+  const k = key.toLowerCase();
+  if (kind === 'apply') {
+    if (author !== k) throw new Error('apply content: author must equal the participant address');
+  } else if (kind === 'deliver' || kind === 'reject') {
+    const job = await publicClient.readContract({
+      address: C.agenticCommerce, abi: AgenticCommerceABI,
+      functionName: 'getJob', args: [BigInt(key)],
+    }) as { provider: Address; evaluator: Address };
+    if (kind === 'reject') {
+      if (job.evaluator.toLowerCase() !== author) throw new Error('reject content: author must equal the tier-job evaluator (requester)');
+    } else if (job.provider.toLowerCase() !== author) {
+      throw new Error('deliver content: author must equal the tier-job provider');
+    }
+  } else {
+    throw new Error('Unknown content kind');
+  }
+}
+
+// Attachment guardrails: docs-only, base64 in Postgres. Cap the raw size so the DB can't bloat.
+const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024; // 5MB raw
 
 export const resolvers = {
   Query: {
@@ -105,55 +169,47 @@ export const resolvers = {
       a: { marketId: number; kind: string; key: string; viewer: string },
       ctx: { address: string | null },
     ) => {
-      if (!a.viewer) throw new Error('viewer required');
-
-      // SIWE authz: a read is gated to specific roles below, all keyed off `viewer`. So the caller
-      // must have proven control of `viewer` — otherwise anyone could read another party's body by
-      // claiming their address. requireAuth on → session mandatory; off → proven session must still
-      // match viewer, but an unauthenticated caller falls back to the legacy role gate.
-      const proven = ctx.address?.toLowerCase() ?? null;
-      if (config.requireAuth && !proven) throw new Error('sign-in required (SIWE session missing)');
-      if (proven && proven !== a.viewer.toLowerCase()) {
-        throw new Error('viewer must match the signed-in address');
-      }
-
-      const viewer = a.viewer.toLowerCase();
-      const key = a.key.toLowerCase();
-      const id = `${a.marketId}-${a.kind}-${key}`;
+      await assertCanReadContent(a.marketId, a.kind, a.key, a.viewer, ctx.address?.toLowerCase() ?? null);
+      const id = `${a.marketId}-${a.kind}-${a.key.toLowerCase()}`;
       const [row] = await db.select().from(contents).where(eq(contents.id, id)).limit(1);
-      if (!row) return null;
+      return row ?? null;
+    },
 
-      // Role gating against on-chain / indexed state. Apply: participant always; requester only
-      // after a `Revealed` event lifts the application's tierReached to ≥ 1. Deliver: keyed by
-      // Arc jobId — provider or evaluator only (looked up live from AgenticCommerce).
-      if (a.kind === 'apply') {
-        const [m] = await db.select().from(markets).where(eq(markets.id, a.marketId)).limit(1);
-        if (!m) throw new Error('Market not found');
-        const isParticipant = viewer === key;
-        const isRequester = viewer === m.requester.toLowerCase();
-        if (!isParticipant && !isRequester) throw new Error('Forbidden');
-        if (isRequester) {
-          // `key` is lowercased above, but applications.id is built from the checksummed
-          // participant address in the Applied reducer — match on lower(participant) so the
-          // reveal gate doesn't false-negative on address casing.
-          const [app] = await db.select().from(applications)
-            .where(and(eq(applications.marketId, a.marketId), eq(sql`lower(${applications.participant})`, key)))
-            .limit(1);
-          if (!app || app.tierReached < 1) throw new Error('Reveal required');
-        }
-      } else if (a.kind === 'deliver' || a.kind === 'reject') {
-        // Both are keyed by Arc jobId and visible to the two parties on the job: the provider
-        // (worker) and the evaluator (requester). A reject reason is written by the requester so
-        // the worker learns *why* — so the worker especially must be able to read it.
-        const job = await publicClient.readContract({
-          address: C.agenticCommerce, abi: AgenticCommerceABI,
-          functionName: 'getJob', args: [BigInt(a.key)],
-        }) as { provider: Address; evaluator: Address };
-        const allowed = [job.provider.toLowerCase(), job.evaluator.toLowerCase()];
-        if (!allowed.includes(viewer)) throw new Error('Forbidden');
-      } else {
-        throw new Error('Unknown content kind');
-      }
+    // File attachments for {kind,key}, gated identically to `content` (same viewer rules). METADATA
+    // ONLY — the heavy base64 `data` is null here so listing a slot with several big files stays
+    // cheap; fetch one file's bytes on demand via `attachmentData`. Empty list when none.
+    attachments: async (
+      _: unknown,
+      a: { marketId: number; kind: string; key: string; viewer: string },
+      ctx: { address: string | null },
+    ) => {
+      await assertCanReadContent(a.marketId, a.kind, a.key, a.viewer, ctx.address?.toLowerCase() ?? null);
+      const rows = await db.select({
+        id: attachments.id, marketId: attachments.marketId, kind: attachments.kind, key: attachments.key,
+        author: attachments.author, filename: attachments.filename, mime: attachments.mime,
+        size: attachments.size, hash: attachments.hash, createdAt: attachments.createdAt,
+      }).from(attachments)
+        .where(and(
+          eq(attachments.marketId, a.marketId),
+          eq(attachments.kind, a.kind),
+          eq(attachments.key, a.key.toLowerCase()),
+        ))
+        .orderBy(attachments.createdAt);
+      // `data` is intentionally absent (fetched per-file below); null keeps the GraphQL field happy.
+      return rows.map((r) => ({ ...r, data: null }));
+    },
+
+    // Fetch ONE attachment's bytes (base64 `data`) by id — used on download click and by the agent.
+    // Re-runs the same read gate against the row's own {marketId,kind,key} slot so a leaked id can't
+    // bypass the reveal/role rules.
+    attachmentData: async (
+      _: unknown,
+      a: { id: string; viewer: string },
+      ctx: { address: string | null },
+    ) => {
+      const [row] = await db.select().from(attachments).where(eq(attachments.id, a.id)).limit(1);
+      if (!row) return null;
+      await assertCanReadContent(row.marketId, row.kind, row.key, a.viewer, ctx.address?.toLowerCase() ?? null);
       return row;
     },
 
@@ -196,25 +252,8 @@ export const resolvers = {
       const hash = keccak256(toBytes(a.body));
       const createdAt = Math.floor(Date.now() / 1000);
 
-      // Authorship gate against on-chain state. Apply: author must equal the participant address
-      // (which the UI uses as `key`). Deliver: author must equal the Arc job's provider (worker).
-      // Reject: author must equal the job's evaluator (the requester — the only party who can call
-      // reject on chain). Demo simplification: we don't cryptographically prove the caller IS author.
-      if (a.kind === 'apply') {
-        if (author !== key) throw new Error('apply content: author must equal the participant address');
-      } else {
-        const job = await publicClient.readContract({
-          address: C.agenticCommerce, abi: AgenticCommerceABI,
-          functionName: 'getJob', args: [BigInt(a.key)],
-        }) as { provider: Address; evaluator: Address };
-        if (a.kind === 'reject') {
-          if (job.evaluator.toLowerCase() !== author) {
-            throw new Error('reject content: author must equal the tier-job evaluator (requester)');
-          }
-        } else if (job.provider.toLowerCase() !== author) {
-          throw new Error('deliver content: author must equal the tier-job provider');
-        }
-      }
+      // Authorship gate against on-chain state (shared with storeAttachment).
+      await assertCanWriteContent(a.kind, a.key, author);
 
       // Upsert — the worker may rewrite the body before submitting on chain; once an Arc job is
       // Submitted the deliverable hash is locked, but the off-chain body is editable until then
@@ -228,6 +267,67 @@ export const resolvers = {
         set: { body: a.body, hash, author, createdAt },
       });
       return row;
+    },
+
+    // Upload one file attachment for {kind,key}. Author-gated identically to storeContent. `data` is
+    // base64 of the file bytes; we cap the raw size (docs-only) so the DB can't bloat. Each call adds
+    // a new row (append, not upsert) so a submission can carry several files.
+    storeAttachment: async (
+      _: unknown,
+      a: { marketId: number; kind: string; key: string; filename: string; mime: string; data: string; author: string },
+      ctx: { address: string | null },
+    ) => {
+      if (!a.author) throw new Error('author required');
+      if (!['apply', 'deliver', 'reject'].includes(a.kind)) throw new Error('Unknown content kind');
+      if (!a.data) throw new Error('empty file');
+
+      const proven = ctx.address?.toLowerCase() ?? null;
+      if (config.requireAuth && !proven) throw new Error('sign-in required (SIWE session missing)');
+      if (proven && proven !== a.author.toLowerCase()) throw new Error('author must match the signed-in address');
+
+      const author = a.author.toLowerCase();
+      const key = a.key.toLowerCase();
+      await assertCanWriteContent(a.kind, a.key, author);
+
+      const bytes = Buffer.from(a.data, 'base64');
+      if (bytes.length === 0) throw new Error('empty or invalid base64 file');
+      if (bytes.length > MAX_ATTACHMENT_BYTES) {
+        throw new Error(`file too large: ${bytes.length} bytes (max ${MAX_ATTACHMENT_BYTES})`);
+      }
+
+      const createdAt = Math.floor(Date.now() / 1000);
+      // Unique id per upload — count existing rows for this slot so re-uploads don't collide.
+      const existing = await db.select({ c: sql<number>`count(*)` }).from(attachments)
+        .where(and(eq(attachments.marketId, a.marketId), eq(attachments.kind, a.kind), eq(attachments.key, key)));
+      const n = Number(existing[0]?.c ?? 0);
+      const row = {
+        id: `${a.marketId}-${a.kind}-${key}-${createdAt}-${n}`,
+        marketId: a.marketId, kind: a.kind, key, author,
+        filename: a.filename || 'file', mime: a.mime || 'application/octet-stream',
+        size: bytes.length, data: a.data, hash: keccak256(bytes), createdAt,
+      };
+      await db.insert(attachments).values(row);
+      return row;
+    },
+
+    // Remove an attachment. Only the original uploader (author) may delete, and only while they still
+    // pass the write gate (e.g. before an Arc job locks). Returns true on delete.
+    deleteAttachment: async (
+      _: unknown,
+      a: { id: string; author: string },
+      ctx: { address: string | null },
+    ) => {
+      const proven = ctx.address?.toLowerCase() ?? null;
+      if (config.requireAuth && !proven) throw new Error('sign-in required (SIWE session missing)');
+      if (proven && proven !== a.author.toLowerCase()) throw new Error('author must match the signed-in address');
+
+      const author = a.author.toLowerCase();
+      const [row] = await db.select().from(attachments).where(eq(attachments.id, a.id)).limit(1);
+      if (!row) return false;
+      if (row.author.toLowerCase() !== author) throw new Error('only the uploader can delete this file');
+      await assertCanWriteContent(row.kind, row.key, author);
+      await db.delete(attachments).where(eq(attachments.id, a.id));
+      return true;
     },
   },
 };
