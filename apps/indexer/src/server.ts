@@ -6,6 +6,7 @@ import { typeDefs } from './graphql/schema.js';
 import { resolvers } from './graphql/resolvers.js';
 import { config } from './config.js';
 import { mountAuthRoutes, bearer } from './auth/routes.js';
+import { mountAgentRoutes } from './agent/routes.js';
 import { resolveSession } from './auth/session.js';
 
 /** GraphQL request context — carries the SIWE-proven address (or null) resolved from the bearer token. */
@@ -28,8 +29,9 @@ export async function startServer(): Promise<void> {
   // REST auth surface (SIWE nonce/verify/session/logout). The browser calls these cross-origin
   // (web origin → api.), so CORS must be applied here just like on /graphql.
   app.use(cors());
-  app.use(express.json());
+  app.use(express.json({ limit: '12mb' })); // headroom for base64 file attachments on the content channel
   mountAuthRoutes(app);
+  mountAgentRoutes(app);
 
   app.use(
     '/graphql',

@@ -20,7 +20,7 @@ export type ContentRow = {
   author: string; body: string; hash: string; createdAt: number;
 };
 
-export type ContentKind = 'apply' | 'deliver' | 'reject';
+export type ContentKind = 'apply' | 'deliver' | 'reject' | 'preview';
 
 export type AttachmentRow = {
   id: string; marketId: number; kind: string; key: string;

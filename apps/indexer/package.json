@@ -7,12 +7,14 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "tsx src/index.ts",
+    "circle-check": "tsx src/agent/circle-check.ts",
     "lint": "eslint src/**/*.ts",
     "test": "vitest run",
     "db:push": "drizzle-kit push"
   },
   "dependencies": {
     "@apollo/server": "^4.0.0",
+    "@circle-fin/developer-controlled-wallets": "^9.2.0",
     "@echo/sdk": "workspace:*",
     "@echo/types": "workspace:*",
     "cors": "^2.8.5",

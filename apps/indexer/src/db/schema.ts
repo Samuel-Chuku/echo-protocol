@@ -161,6 +161,46 @@ export const attachments = pgTable('attachments', {
 });
 
 /**
+ * Autonomous-agent config per market (#4). A market is "agent-run" iff it has a row here. The agent
+ * operates the requester's Circle DCW (`walletId`) to reveal/advance on-chain. Criteria are natural
+ * language the LLM evaluates. Caps bound autonomous spend (app-level; Circle native policy is
+ * mainnet/CLI-only). `enabled` is a kill-switch per market.
+ */
+export const agentMarkets = pgTable('agent_markets', {
+  marketId: integer('market_id').primaryKey(),
+  walletId: text('wallet_id').notNull(),      // Circle DCW id acting as the market's requester
+  walletAddress: text('wallet_address').notNull(),
+  revealCriteria: text('reveal_criteria').notNull(),     // NL: what makes a preview worth revealing
+  advanceGuardrails: text('advance_guardrails').notNull(), // NL: stringent bar for auto-advance to Shortlist
+  maxReveals: integer('max_reveals').notNull().default(10),
+  maxAdvances: integer('max_advances').notNull().default(5),
+  revealThreshold: integer('reveal_threshold').notNull().default(60), // score 0-100 cutoff to reveal
+  enabled: integer('enabled').notNull().default(1), // 1=on, 0=paused
+  createdAt: integer('created_at').notNull().default(0),
+});
+
+/**
+ * The agent's per-applicant decision ledger (#4). Doubles as the idempotency record (a terminal stage
+ * means "already processed") and the UI feed. stage: 'screened' (read preview, did NOT reveal),
+ * 'revealed' (paid to reveal), 'advanced' (auto-advanced to Shortlist), 'ranked' (revealed but
+ * guardrails not met → deferred to human with a rank + reason).
+ */
+export const agentDecisions = pgTable('agent_decisions', {
+  id: text('id').primaryKey(), // `${marketId}-${participant.toLowerCase()}`
+  marketId: integer('market_id').notNull(),
+  participant: text('participant').notNull(), // lowercased
+  stage: text('stage').notNull(),
+  revealScore: integer('reveal_score'),
+  revealReason: text('reveal_reason'),
+  advanceMet: integer('advance_met'), // 1/0/null
+  rank: integer('rank'),
+  reason: text('reason'),
+  txHash: text('tx_hash'),
+  createdAt: integer('created_at').notNull().default(0),
+  updatedAt: integer('updated_at').notNull().default(0),
+});
+
+/**
  * One-time SIWE nonces. A client asks for a nonce, signs a SIWE message containing it, and the
  * verify step consumes it (deletes on use) so a captured signature can't be replayed. Rows expire
  * after a few minutes; a sweeper drops stale ones.

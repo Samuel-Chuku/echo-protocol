@@ -40,6 +40,10 @@ const marketOut = (m: any) => ({ ...m, tiers: m.tiers ? JSON.parse(m.tiers) : nu
 async function assertCanReadContent(
   marketId: number, kind: string, key: string, viewer: string, proven: string | null,
 ): Promise<void> {
+  // Preview is PUBLIC by design (the applicant's opt-in teaser) — the AI agent screens it for free
+  // and anyone browsing can read it. No viewer/SIWE/role checks. See the preview-screen design (#4).
+  if (kind === 'preview') return;
+
   if (!viewer) throw new Error('viewer required');
   if (config.requireAuth && !proven) throw new Error('sign-in required (SIWE session missing)');
   if (proven && proven !== viewer.toLowerCase()) throw new Error('viewer must match the signed-in address');
@@ -75,8 +79,9 @@ async function assertCanWriteContent(
   kind: string, key: string, author: string,
 ): Promise<void> {
   const k = key.toLowerCase();
-  if (kind === 'apply') {
-    if (author !== k) throw new Error('apply content: author must equal the participant address');
+  if (kind === 'apply' || kind === 'preview') {
+    // Preview is written by the applicant, keyed by their own address — same rule as apply.
+    if (author !== k) throw new Error(`${kind} content: author must equal the participant address`);
   } else if (kind === 'deliver' || kind === 'reject') {
     const job = await publicClient.readContract({
       address: C.agenticCommerce, abi: AgenticCommerceABI,
@@ -234,7 +239,7 @@ export const resolvers = {
       ctx: { address: string | null },
     ) => {
       if (!a.author) throw new Error('author required');
-      if (!['apply', 'deliver', 'reject'].includes(a.kind)) throw new Error('Unknown content kind');
+      if (!['apply', 'deliver', 'reject', 'preview'].includes(a.kind)) throw new Error('Unknown content kind');
 
       // SIWE authz: the write is attributed to `author`, so the caller must have *proven* control of
       // that address. When requireAuth is on, a session is mandatory. When off (legacy rollout), an

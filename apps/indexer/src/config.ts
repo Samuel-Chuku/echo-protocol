@@ -23,4 +23,22 @@ export const config = {
   // works (legacy client-claimed-address path). true = a valid SIWE session is REQUIRED for every
   // content write/read. Flip to true once the frontend sign-in flow is live for all wallets.
   requireAuth: (process.env.REQUIRE_AUTH || 'false').toLowerCase() === 'true',
+
+  // ── Autonomous AI agent (#4) ──────────────────────────────────────────────
+  // All off by default; the agent loop only runs when agentEnabled AND the Circle + OpenRouter keys
+  // are present. Circle DCW signs on-chain (ARC-TESTNET); OpenRouter scores previews/guardrails with
+  // whatever model you set in OPENROUTER_MODEL.
+  agentEnabled: (process.env.AGENT_ENABLED || 'false').toLowerCase() === 'true',
+  // Dry-run: screen + evaluate with the LLM and RECORD decisions, but skip all on-chain actions (no
+  // Circle calls, no reveal/advance tx). Lets you test the brain + loop + decision UI locally with only
+  // an OpenRouter key + a market with applicants — no Circle keys or funded wallet needed.
+  agentDryRun: (process.env.AGENT_DRY_RUN || 'false').toLowerCase() === 'true',
+  agentPollIntervalMs: Number(process.env.AGENT_POLL_INTERVAL_MS || '15000'),
+  circleApiKey: (process.env.CIRCLE_API_KEY || '').trim(),
+  circleEntitySecret: (process.env.CIRCLE_ENTITY_SECRET || '').trim(),
+  circleWalletSetId: (process.env.CIRCLE_WALLET_SET_ID || '').trim(), // reuse one wallet set for all DCWs
+  // LLM via OpenRouter (OpenAI-compatible). Pick any model slug OpenRouter supports.
+  openrouterApiKey: (process.env.OPENROUTER_API_KEY || '').trim(),
+  openrouterModel: (process.env.OPENROUTER_MODEL || 'anthropic/claude-3.5-sonnet').trim(),
+  openrouterBaseUrl: (process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1').trim(),
 };

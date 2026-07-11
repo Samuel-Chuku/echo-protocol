@@ -14,6 +14,7 @@ import { IdentityBanner } from '@/components/IdentityBanner';
 import { RegisterIdentityModal } from '@/components/RegisterIdentityModal';
 import { TxModal } from '@/components/TxModal';
 import { toUnits, usdc, scope, modeName, modeBadgeTone, MODE_BLURBS, recommendedEscrow, minEscrow } from '@/lib/format';
+import { provisionAgentWallet, createAgentMarket } from '@/lib/agentApi';
 
 const C = CONTRACTS.arcTestnet;
 const TYPE_ACCENT = ['border-teal-500/30 hover:border-teal-500/50', 'border-success/30 hover:border-success/50', 'border-warning/30 hover:border-warning/50'];
@@ -210,6 +211,20 @@ function OpenWizard({ sdk, account, agentId, feeBps, onCreated }: WizardProps) {
   const [requiredProofs, setProofs] = useState('0');
   const [deployOpen, setDeployOpen] = useState(false);
 
+  // AI agent (#4): opt in to let an autonomous agent (its own Circle wallet) screen previews, reveal,
+  // and advance to shortlist per the criteria below. The market is created FROM the agent's wallet.
+  const [agentMode, setAgentMode] = useState(false);
+  const [agentWallet, setAgentWallet] = useState<{ walletId: string; address: string } | null>(null);
+  const [provisioning, setProvisioning] = useState(false);
+  const [revealCriteria, setRevealCriteria] = useState('');
+  const [advanceGuardrails, setAdvanceGuardrails] = useState('');
+  const [agentMaxReveals, setAgentMaxReveals] = useState('10');
+  const [agentMaxAdvances, setAgentMaxAdvances] = useState('5');
+  const [agentThreshold, setAgentThreshold] = useState('60');
+  const [agentBusy, setAgentBusy] = useState(false);
+  const [agentErr, setAgentErr] = useState<string | null>(null);
+  const [agentResult, setAgentResult] = useState<{ marketId: number; txHash: string } | null>(null);
+
   const tierUnits = tiers.map((t) => toUnits(t || '0')) as [bigint, bigint, bigint, bigint];
   const nApplicants = BigInt(Math.max(0, Math.floor(Number(maxApplicants || '0'))));
   const recommended = recommendedEscrow(tierUnits, nApplicants);
@@ -233,6 +248,14 @@ function OpenWizard({ sdk, account, agentId, feeBps, onCreated }: WizardProps) {
           <p className="text-xs text-white/50">A <b className="text-white/70">reveal market</b> takes many hidden applications, then you unlock, grade, and advance the best ones round by round — paying more at each round.</p>
           <Field label="subject" value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="What workers see in browse" />
           <TextArea label="description" value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="Scope / terms" rows={4} />
+          <label className="flex items-start gap-2 rounded-lg border border-teal-500/20 bg-teal-500/[0.04] p-3 cursor-pointer">
+            <input type="checkbox" checked={agentMode} onChange={(e) => setAgentMode(e.target.checked)} className="mt-0.5 accent-teal-500" />
+            <span className="text-xs text-white/70">
+              <b className="text-teal-300">🤖 Run with an AI agent.</b> An autonomous agent (its own Circle wallet) screens
+              applicants&apos; public previews, reveals the promising ones for you, and auto-advances those clearly meeting
+              your guardrails — the rest it ranks for your review. You set the criteria + spend caps next.
+            </span>
+          </label>
           <Button onClick={() => setStep(1)} disabled={!subject}>Next: payout ladder</Button>
         </div>
       )}
@@ -309,6 +332,41 @@ function OpenWizard({ sdk, account, agentId, feeBps, onCreated }: WizardProps) {
           <Field label="required proofs (0 = none)" value={requiredProofs} onChange={(e) => setProofs(e.target.value)}
             tip="Minimum ERC-8004 validation proofs an applicant's identity must carry to apply. 0 = anyone registered can apply." />
 
+          {/* AI agent setup — only when agent mode is on. Provision the DCW, fund it, set criteria + caps. */}
+          {agentMode && (
+            <div className="rounded-lg border border-teal-500/25 bg-teal-500/[0.05] p-3 space-y-3">
+              <p className="text-sm font-semibold text-teal-300">🤖 AI agent setup</p>
+              {!agentWallet ? (
+                <div className="space-y-1.5">
+                  <p className="text-xs text-white/50">Provision the agent&apos;s Circle wallet — it becomes this market&apos;s owner and pays reveal gas from its balance.</p>
+                  <Button variant="secondary" busy={provisioning} onClick={async () => {
+                    setProvisioning(true); setAgentErr(null);
+                    try { setAgentWallet(await provisionAgentWallet()); }
+                    catch (e) { setAgentErr(e instanceof Error ? e.message : 'provision failed'); }
+                    finally { setProvisioning(false); }
+                  }}>Provision agent wallet</Button>
+                </div>
+              ) : (
+                <div className="rounded-md border border-white/10 bg-white/[0.03] p-2 text-xs">
+                  <span className="text-white/50">Agent wallet: </span>
+                  <span className="font-mono text-white break-all">{agentWallet.address}</span>
+                  <p className="mt-1 text-warning">Fund this address with USDC (escrow ${totalEscrow} + a little for gas) before creating the market.</p>
+                </div>
+              )}
+              <TextArea label="reveal criteria — what makes a preview worth revealing" value={revealCriteria}
+                onChange={(e) => setRevealCriteria(e.target.value)} rows={2}
+                placeholder="e.g. Applicant clearly has video-editing experience and mentions relevant tools/portfolio." />
+              <TextArea label="advancement guardrails — the STRINGENT bar to auto-advance to shortlist" value={advanceGuardrails}
+                onChange={(e) => setAdvanceGuardrails(e.target.value)} rows={2}
+                placeholder="e.g. Only advance if the full submission shows a concrete plan AND a relevant sample. If unsure, do not advance." />
+              <div className="grid grid-cols-3 gap-1">
+                <Field label="max reveals" value={agentMaxReveals} onChange={(e) => setAgentMaxReveals(e.target.value)} tip="Cap on how many applicants the agent may reveal (bounds spend)." />
+                <Field label="max advances" value={agentMaxAdvances} onChange={(e) => setAgentMaxAdvances(e.target.value)} tip="Cap on how many the agent may auto-advance to shortlist." />
+                <Field label="reveal score ≥" value={agentThreshold} onChange={(e) => setAgentThreshold(e.target.value)} tip="Minimum 0-100 preview score to reveal." />
+              </div>
+            </div>
+          )}
+
           <div className="flex gap-2">
             <Button variant="secondary" onClick={() => setStep(1)}>Back</Button>
             <Button onClick={() => setStep(3)}>Next: review</Button>
@@ -332,11 +390,53 @@ function OpenWizard({ sdk, account, agentId, feeBps, onCreated }: WizardProps) {
           {belowMin && (
             <p className="text-xs text-danger">Escrow ${totalEscrow} is below the contract minimum ${usdc(minRequired)} — raise it on the previous step before deploying.</p>
           )}
+          {agentMode && (
+            <div className="rounded-lg border border-teal-500/20 bg-teal-500/[0.05] p-3 text-xs text-white/60 space-y-0.5">
+              <p className="text-teal-300 font-semibold">🤖 Agent-run market</p>
+              <p>The agent&apos;s wallet ({agentWallet ? `${agentWallet.address.slice(0, 10)}…` : 'not provisioned'}) creates + owns this market. Fund it first.</p>
+            </div>
+          )}
+          {agentErr && <p className="text-xs text-danger break-all">{agentErr}</p>}
+          {agentResult && <p className="text-xs text-success">Agent market #{agentResult.marketId} created. The agent will start screening applicants.</p>}
           <div className="flex gap-2 items-center">
             <Button variant="secondary" onClick={() => setStep(2)}>Back</Button>
-            {belowMin
-              ? <Button disabled>Approve &amp; deploy</Button>
-              : <IdentityGate agentId={agentId} onOk={() => setDeployOpen(true)} />}
+            {belowMin ? (
+              <Button disabled>Deploy</Button>
+            ) : agentMode ? (
+              <Button
+                busy={agentBusy}
+                disabled={!agentWallet || !revealCriteria.trim() || !advanceGuardrails.trim() || !!agentResult}
+                onClick={async () => {
+                  setAgentBusy(true); setAgentErr(null);
+                  try {
+                    const res = await createAgentMarket({
+                      walletId: agentWallet!.walletId,
+                      walletAddress: agentWallet!.address,
+                      market: {
+                        subject, description: desc,
+                        tierAmounts: tiers.map((t) => toUnits(t).toString()) as [string, string, string, string],
+                        escrowTotal: toUnits(totalEscrow).toString(),
+                        maxApplicants: Number(maxApplicants),
+                        ghostDeadline: toSeconds(ghostAmount, ghostUnit),
+                        requiredProofs: Number(requiredProofs),
+                        stakeRequired: toUnits(stake).toString(),
+                        flagWindow: toSeconds(flagAmount, flagUnit),
+                      },
+                      agent: {
+                        revealCriteria, advanceGuardrails,
+                        maxReveals: Number(agentMaxReveals), maxAdvances: Number(agentMaxAdvances),
+                        revealThreshold: Number(agentThreshold),
+                      },
+                    });
+                    setAgentResult(res); onCreated?.();
+                  } catch (e) {
+                    setAgentErr(e instanceof Error ? e.message : 'create failed');
+                  } finally { setAgentBusy(false); }
+                }}
+              >Create agent market</Button>
+            ) : (
+              <IdentityGate agentId={agentId} onOk={() => setDeployOpen(true)} />
+            )}
           </div>
         </div>
       )}

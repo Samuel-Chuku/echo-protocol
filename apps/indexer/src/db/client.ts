@@ -89,6 +89,19 @@ export async function migrate(): Promise<void> {
       data TEXT NOT NULL, hash TEXT NOT NULL, created_at INTEGER NOT NULL DEFAULT 0
     );
     CREATE INDEX IF NOT EXISTS attachments_slot ON attachments(market_id, kind, key);
+    CREATE TABLE IF NOT EXISTS agent_markets (
+      market_id INTEGER PRIMARY KEY, wallet_id TEXT NOT NULL, wallet_address TEXT NOT NULL,
+      reveal_criteria TEXT NOT NULL, advance_guardrails TEXT NOT NULL,
+      max_reveals INTEGER NOT NULL DEFAULT 10, max_advances INTEGER NOT NULL DEFAULT 5,
+      reveal_threshold INTEGER NOT NULL DEFAULT 60, enabled INTEGER NOT NULL DEFAULT 1,
+      created_at INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE TABLE IF NOT EXISTS agent_decisions (
+      id TEXT PRIMARY KEY, market_id INTEGER NOT NULL, participant TEXT NOT NULL, stage TEXT NOT NULL,
+      reveal_score INTEGER, reveal_reason TEXT, advance_met INTEGER, rank INTEGER, reason TEXT,
+      tx_hash TEXT, created_at INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS agent_decisions_market ON agent_decisions(market_id);
     CREATE TABLE IF NOT EXISTS auth_nonces (
       nonce TEXT PRIMARY KEY, created_at INTEGER NOT NULL
     );
