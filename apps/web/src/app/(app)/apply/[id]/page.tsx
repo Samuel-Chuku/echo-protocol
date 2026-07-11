@@ -9,7 +9,7 @@ import { useEcho } from '@/lib/sdk';
 import { useAgent } from '@/lib/agent';
 import { useContent } from '@/lib/content';
 import { ACTIVITY_QUERY, type ActivityRow } from '@/lib/activity';
-import { Section, Card, Field, KV, Badge, Button, CARD_CLASS, TierTrack, type TierStep } from '@/components/ui';
+import { Section, Card, Field, TextArea, KV, Badge, Button, CARD_CLASS, TierTrack, Countdown, useNow, type TierStep } from '@/components/ui';
 import { Command } from '@/components/Command';
 import { Attachments } from '@/components/Attachments';
 import { Receipt } from '@/components/Receipt';
@@ -17,6 +17,7 @@ import { TxModal } from '@/components/TxModal';
 import { RegisterIdentityModal } from '@/components/RegisterIdentityModal';
 import { IdentityBanner } from '@/components/IdentityBanner';
 import { usdc, scope, short, modeName, modeBadgeTone, isZeroAddr, txLink, toUnits, MILESTONE_STATUS } from '@/lib/format';
+import { getAgentMarket } from '@/lib/agentApi';
 
 const TIER_DISPUTES_QUERY = gql`
   query TierDisputes {
@@ -95,6 +96,12 @@ export default function JobDetailPage({ params }: { params: Promise<{ id: string
   const { sdk, account } = useEcho();
   const { agentId } = useAgent();
   const [ghostDeadline, setGhostDeadline] = useState<bigint | null>(null);
+  const [agentRun, setAgentRun] = useState(false);
+
+  // Is this an AI-agent-run market? If so, applicants MUST provide a public preview (the screener reads it).
+  useEffect(() => {
+    getAgentMarket(Number(id)).then((a) => setAgentRun(a.agentRun)).catch(() => {});
+  }, [id]);
 
   // Stable variables identity — an inline literal makes urql setState during render (setstate-in-render).
   const marketVars = useMemo(() => ({ id: Number(id) }), [id]);
@@ -166,7 +173,7 @@ export default function JobDetailPage({ params }: { params: Promise<{ id: string
             </Section>
           )}
 
-          {m.mode === EchoMode.OpenMarket && <OpenApply sdk={sdk} account={account} agentId={agentId} marketId={BigInt(id)} closed={m.status !== 'active'} />}
+          {m.mode === EchoMode.OpenMarket && <OpenApply sdk={sdk} account={account} agentId={agentId} marketId={BigInt(id)} closed={m.status !== 'active'} agentRun={agentRun} />}
           {m.mode === EchoMode.DirectJob && <DirectDeliver sdk={sdk} account={account} marketId={BigInt(id)} worker={m.worker} />}
           {m.mode === EchoMode.Bounty && <BountyDeliver sdk={sdk} account={account} agentId={agentId} marketId={BigInt(id)} closed={m.status !== 'active'} />}
         </>
@@ -184,8 +191,9 @@ type TierJob = {
   ctx: { tier: number; tierAmount: bigint; ghostDeadline: bigint } | null;
 };
 
-function OpenApply({ sdk, account, agentId, marketId, closed }: { sdk: ReturnType<typeof useEcho>['sdk']; account?: `0x${string}`; agentId: string; marketId: bigint; closed: boolean }) {
+function OpenApply({ sdk, account, agentId, marketId, closed, agentRun }: { sdk: ReturnType<typeof useEcho>['sdk']; account?: `0x${string}`; agentId: string; marketId: bigint; closed: boolean; agentRun?: boolean }) {
   const [submission, setSubmission] = useState('');
+  const [preview, setPreview] = useState('');
   const [app, setApp] = useState<any>(null);
   const [appLoading, setAppLoading] = useState(false);
   const [applyOpen, setApplyOpen] = useState(false);
@@ -311,16 +319,26 @@ function OpenApply({ sdk, account, agentId, marketId, closed }: { sdk: ReturnTyp
         ) : (
           <Card title="Apply to this market" hint="Mints a participation receipt; pulls the stake if the market requires one.">
             <Field label="submission text → hash" value={submission} onChange={(e) => setSubmission(e.target.value)} />
+            {/* Public preview: the applicant's opt-in teaser. Optional normally; REQUIRED on agent-run
+                markets, where the AI screener reads it (free) to decide who to pay to reveal (#4). */}
+            <TextArea
+              label={agentRun ? 'public preview — required (the AI screener reads this to decide whether to reveal you)' : 'public preview (optional pitch, visible to everyone)'}
+              value={preview}
+              onChange={(e) => setPreview(e.target.value)}
+              placeholder="A short public pitch: what you'd deliver and why you're a fit. Your full submission stays private until revealed."
+              rows={3}
+            />
             {account && (
               <Attachments marketId={Number(marketId)} kind="apply" contentKey={account.toLowerCase()} account={account}
                 canEdit={!closed} label="Attach files to your application (optional)" />
             )}
             {closed && <p className="text-xs text-warning">This market is no longer active.</p>}
             {!account && <p className="text-xs text-warning">Connect a wallet to apply.</p>}
+            {agentRun && !preview.trim() && <p className="text-xs text-warning">This market is screened by an AI agent — a public preview is required to apply.</p>}
             <div className="flex flex-wrap gap-2">
               <Button
                 onClick={() => (agentId ? setApplyOpen(true) : setIdentityOpen(true))}
-                disabled={need || closed}
+                disabled={need || closed || (agentRun && !preview.trim())}
               >
                 {hasStake ? `Apply, pay ${stakeText} stake` : 'Apply'}
               </Button>
@@ -357,10 +375,14 @@ function OpenApply({ sdk, account, agentId, marketId, closed }: { sdk: ReturnTyp
               if (stake > 0n) await sdk.ensureUsdcAllowance(C.marketRegistry, stake, account!);
               const hash = await sdk.applyToMarket(marketId, BigInt(agentId || '0'), scope(submission), account!);
               // Store the application body off-chain (only its hash goes on-chain) so the applicant can
-              // reload it and the requester can read it after paying the reveal fee. Keyed by the
-              // participant's own address; best-effort so a content-channel hiccup doesn't fail the apply.
+              // reload it and the requester can read it after paying the reveal fee. Also store the
+              // public preview (if given) so the AI screener can read it. Keyed by the participant's own
+              // address; best-effort so a content-channel hiccup doesn't fail the apply.
               try {
                 await storeContent(Number(marketId), 'apply', account!.toLowerCase(), submission.trim(), account!);
+                if (preview.trim()) {
+                  await storeContent(Number(marketId), 'preview', account!.toLowerCase(), preview.trim(), account!);
+                }
               } catch { /* body storage is best-effort; the on-chain apply already succeeded */ }
               return hash;
             }}
@@ -388,12 +410,31 @@ function WorkerTierProgress({ tierReached, revealFeePending, jobs, sdk, account,
   // Is any tier job currently waiting on THIS worker to submit (Arc status Open === 0, provider = me)?
   const awaitingMe = jobs.some((j) => (j.arcJob?.status ?? -1) === 0 && j.arcJob?.provider.toLowerCase() === account.toLowerCase());
 
+  // Live ghost-deadline headline: once at Final, the ghost clock is running. Fetch the same value the
+  // tier card uses (sdk.ghostDeadline of the Final job) so the two never disagree.
+  const finalJob = jobs.find((j) => (j.ctx?.tier ?? -1) === 3);
+  const [ghostAt, setGhostAt] = useState<number>(0);
+  const now = useNow(1000);
+  useEffect(() => {
+    if (!finalJob) { setGhostAt(0); return; }
+    let cancelled = false;
+    sdk.ghostDeadline(finalJob.jobId).then((d) => { if (!cancelled) setGhostAt(Number(d)); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [sdk, finalJob?.jobId]); // eslint-disable-line react-hooks/exhaustive-deps
+
   return (
     <Card title="Your progress">
       <div className="flex items-center gap-2 text-sm">
         <span className="text-white/50">Current stage:</span>
         <Badge tone={tierReached === 3 ? 'success' : 'neutral'}>{stageLabel}</Badge>
       </div>
+
+      {ghostAt > 0 && (
+        <div className={`mt-2 flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs ${now >= ghostAt ? 'border-danger/30 bg-danger/[0.06] text-danger' : 'border-warning/30 bg-warning/[0.06] text-warning'}`}>
+          <Countdown targetTs={ghostAt} prefix="Ghost deadline in" passedText="Ghost deadline passed — the requester can trigger the penalty" />
+          <span className="text-white/30 hidden sm:inline">· {new Date(ghostAt * 1000).toLocaleString()}</span>
+        </div>
+      )}
 
       {/* What's happening / what to do — the requester drives reveal + grading, so most stages are a wait. */}
       {revealFeePending ? (
@@ -429,6 +470,7 @@ function TierJobCard({ sdk, account, marketId, job, onChanged }: {
   sdk: ReturnType<typeof useEcho>['sdk']; account: `0x${string}`; marketId: bigint;
   job: TierJob; onChanged: () => void;
 }) {
+  const now = useNow(1000);
   const [deliverable, setDeliverable] = useState('');
   const [savedBody, setSavedBody] = useState<string | null>(null);
   const [rejectBody, setRejectBody] = useState<string | null>(null);
@@ -518,14 +560,24 @@ function TierJobCard({ sdk, account, marketId, job, onChanged }: {
           {JOB_STATUS[status] ?? `status ${status}`}
         </span>
         {/* For the Final job the real clock is EchoHook's ghost deadline (which revision + extensions
-            push out); the Arc job's own expiredAt can drift from it, so prefer ghostDeadline here. */}
-        {tier === 3 && ghostDeadline > 0n ? (
-          <span className="text-xs text-gray-500">ghosts at {new Date(Number(ghostDeadline) * 1000).toLocaleString()}</span>
-        ) : expiredAt > 0n ? (
-          <span className="text-xs text-gray-500">
-            {tier === 3 ? 'ghosts at' : 'expires at'} {new Date(Number(expiredAt) * 1000).toLocaleString()}
-          </span>
-        ) : null}
+            push out); the Arc job's own expiredAt can drift from it, so prefer ghostDeadline here.
+            Live countdown beside the absolute time so the worker sees the pressure tick down. */}
+        {(() => {
+          const isFinal = tier === 3 && ghostDeadline > 0n;
+          const targetTs = isFinal ? Number(ghostDeadline) : expiredAt > 0n ? Number(expiredAt) : 0;
+          if (targetTs === 0) return null;
+          const past = now >= targetTs;
+          return (
+            <span className={`text-xs flex items-center gap-1.5 flex-wrap ${past ? 'text-danger' : 'text-warning'}`}>
+              <Countdown
+                targetTs={targetTs}
+                prefix={isFinal ? 'ghosts in' : 'expires in'}
+                passedText={isFinal ? 'ghost deadline passed' : 'expired'}
+              />
+              <span className="text-white/30">· {new Date(targetTs * 1000).toLocaleString()}</span>
+            </span>
+          );
+        })()}
       </div>
 
       {inRevision && (

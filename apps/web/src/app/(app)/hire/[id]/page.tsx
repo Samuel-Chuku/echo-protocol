@@ -8,9 +8,10 @@ import { EchoMode, CONTRACTS } from '@echo/sdk';
 import { useEcho } from '@/lib/sdk';
 import { useContent } from '@/lib/content';
 import { useFlag } from '@/lib/flags';
-import { Section, Card, Field, TextArea, KV, Badge, Button, EmptyState, CARD_CLASS } from '@/components/ui';
+import { Section, Card, Field, TextArea, KV, Badge, Button, EmptyState, CARD_CLASS, useNow } from '@/components/ui';
 import { Command } from '@/components/Command';
 import { Attachments } from '@/components/Attachments';
+import { AgentDecisions } from '@/components/AgentDecisions';
 import { TxModal } from '@/components/TxModal';
 import { TierAdvanceModal } from '@/components/TierAdvanceModal';
 import { GhostPenaltyModal } from '@/components/GhostPenaltyModal';
@@ -229,6 +230,7 @@ export default function ManageMarketPage({ params }: { params: Promise<{ id: str
 
         {data?.mode === EchoMode.OpenMarket && (
           <div className="sm:col-span-2 space-y-3">
+            <AgentDecisions marketId={Number(id)} />
             <ApplicantList sdk={sdk} account={account} data={data} marketId={marketId()} onChanged={load} onGhost={setGhostResult} closed={isClosed} revealedAtMap={revealedAtMap} />
             {!isClosed && (
               <div className={CARD_CLASS}>
@@ -276,7 +278,7 @@ export default function ManageMarketPage({ params }: { params: Promise<{ id: str
 const TIMELINE_PREVIEW = 10;
 
 function MarketTimeline({ rows, fetching, onRefresh }: { rows: ActivityRow[]; fetching: boolean; onRefresh: () => void }) {
-  const now = Math.floor(Date.now() / 1000);
+  const now = useNow(1000);
   const [order, setOrder] = useState<'desc' | 'asc'>('desc');
   const [expanded, setExpanded] = useState(false);
   const sorted = useMemo(() => (order === 'desc' ? [...rows].reverse() : rows), [rows, order]);
@@ -363,7 +365,7 @@ function TimelineCard({ row, now }: { row: ActivityRow; now: number }) {
  * "what's pending and from whom" line derived from applicant tiers / job mode.
  */
 function StatusReport({ data, closed, rows }: { data: Loaded; closed: boolean; rows: ActivityRow[] }) {
-  const now = Math.floor(Date.now() / 1000);
+  const now = useNow(1000);
   const mode = data.mode;
   const apps = data.apps ?? [];
 
@@ -460,7 +462,7 @@ function ApplicantList({
   const apps = data.apps ?? [];
   const tierAmounts: bigint[] = data.market?.tierAmounts ?? [];
   const ghostAmount = tierAmounts[3] !== undefined ? usdc(tierAmounts[3]) : '0';
-  const now = Math.floor(Date.now() / 1000);
+  const now = useNow(1000);
   // Tier-job accept/reject/revision + deliverable reads are the evaluator's tools — requester-only.
   const isRequester =
     !!account && !!data.market?.requester && account.toLowerCase() === data.market.requester.toLowerCase();

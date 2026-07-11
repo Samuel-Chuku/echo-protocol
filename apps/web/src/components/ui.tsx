@@ -1,6 +1,8 @@
 'use client';
 
 import {
+  useEffect,
+  useState,
   type ReactNode,
   type InputHTMLAttributes,
   type TextareaHTMLAttributes,
@@ -8,7 +10,7 @@ import {
   type ButtonHTMLAttributes,
 } from 'react';
 import Link from 'next/link';
-import { Loader2, Github, Twitter, HelpCircle } from 'lucide-react';
+import { Loader2, Github, Twitter, HelpCircle, Clock } from 'lucide-react';
 
 /** Shared card surface classes — dark surface, subtle border, teal top-line on hover (no heavy shadows). */
 export const CARD_CLASS =
@@ -19,6 +21,51 @@ export const CARD_CLASS =
 export const INPUT_CLASS =
   'mt-1 w-full px-3 py-2 text-sm rounded-lg bg-white/[0.05] border border-white/10 text-white ' +
   'placeholder:text-white/30 focus:outline-none focus:border-teal-500/40 transition-colors';
+
+/**
+ * Ticking "now" in unix seconds — updates every `intervalMs` so countdowns re-render live. Cleared on
+ * unmount. Default 1s; pass 60000 for coarse (minute-granularity) timers to avoid needless renders.
+ */
+export function useNow(intervalMs = 1000): number {
+  const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
+  useEffect(() => {
+    const id = setInterval(() => setNow(Math.floor(Date.now() / 1000)), intervalMs);
+    return () => clearInterval(id);
+  }, [intervalMs]);
+  return now;
+}
+
+/** Format a positive seconds remaining as a compact "Xd Yh Zm Ss" (drops leading zero units). */
+function fmtRemaining(secs: number): string {
+  const d = Math.floor(secs / 86400);
+  const h = Math.floor((secs % 86400) / 3600);
+  const m = Math.floor((secs % 3600) / 60);
+  const s = secs % 60;
+  const parts: string[] = [];
+  if (d > 0) parts.push(`${d}d`);
+  if (h > 0 || d > 0) parts.push(`${h}h`);
+  if (m > 0 || h > 0 || d > 0) parts.push(`${m}m`);
+  // Only show seconds when under an hour, so long countdowns don't churn every tick visually.
+  if (d === 0 && h === 0) parts.push(`${s}s`);
+  return parts.join(' ') || '0s';
+}
+
+/**
+ * Live countdown to a unix-seconds `targetTs`. Ticks via useNow; renders `prefix` + remaining, or
+ * `passedText` once elapsed. `tone` colors the text (warning as the deadline nears is left to callers).
+ */
+export function Countdown({
+  targetTs, prefix, passedText = 'passed', className = '',
+}: { targetTs: number; prefix?: string; passedText?: string; className?: string }) {
+  const now = useNow(1000);
+  const remaining = targetTs - now;
+  return (
+    <span className={`inline-flex items-center gap-1 ${className}`}>
+      <Clock className="w-3 h-3 shrink-0" />
+      {remaining > 0 ? `${prefix ? `${prefix} ` : ''}${fmtRemaining(remaining)}` : passedText}
+    </span>
+  );
+}
 
 /** A titled panel grouping one role's command cards. */
 export function Section({ title, desc, children }: { title: string; desc?: string; children: ReactNode }) {
