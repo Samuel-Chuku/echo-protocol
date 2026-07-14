@@ -127,4 +127,24 @@ export function execApproveUsdc(walletId: string, spender: string, amount: strin
   return execAbi(walletId, C.usdc, 'approve(address,uint256)', [spender, amount]);
 }
 
+/**
+ * Withdraw USDC from the DCW to `destination` (the requester defunding their agent wallet). Uses
+ * Circle's native token transfer (createTransaction) with token identified by chain+address, amount in
+ * DECIMAL units (e.g. "12.5"). Returns the Circle transaction id; poll with waitForTx.
+ */
+export async function withdrawUsdc(walletId: string, destination: string, amountDecimal: string): Promise<string> {
+  const client = await getClient();
+  const res = await client.createTransaction({
+    walletId,
+    tokenAddress: C.usdc,
+    blockchain: BLOCKCHAIN,
+    destinationAddress: destination,
+    amounts: [amountDecimal],
+    fee: MEDIUM_FEE,
+  });
+  const id = res.data?.id;
+  if (!id) throw new Error('Circle createTransaction (withdraw) returned no id');
+  return id;
+}
+
 export const agentContracts = C;

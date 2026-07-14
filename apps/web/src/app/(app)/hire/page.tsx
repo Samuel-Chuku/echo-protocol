@@ -14,7 +14,8 @@ import { IdentityBanner } from '@/components/IdentityBanner';
 import { RegisterIdentityModal } from '@/components/RegisterIdentityModal';
 import { TxModal } from '@/components/TxModal';
 import { toUnits, usdc, scope, modeName, modeBadgeTone, MODE_BLURBS, recommendedEscrow, minEscrow } from '@/lib/format';
-import { provisionAgentWallet, createAgentMarket } from '@/lib/agentApi';
+import { createAgentMarket } from '@/lib/agentApi';
+import { AgentWallet } from '@/components/AgentWallet';
 
 const C = CONTRACTS.arcTestnet;
 const TYPE_ACCENT = ['border-teal-500/30 hover:border-teal-500/50', 'border-success/30 hover:border-success/50', 'border-warning/30 hover:border-warning/50'];
@@ -211,11 +212,11 @@ function OpenWizard({ sdk, account, agentId, feeBps, onCreated }: WizardProps) {
   const [requiredProofs, setProofs] = useState('0');
   const [deployOpen, setDeployOpen] = useState(false);
 
-  // AI agent (#4): opt in to let an autonomous agent (its own Circle wallet) screen previews, reveal,
-  // and advance to shortlist per the criteria below. The market is created FROM the agent's wallet.
+  // AI agent (#4): opt in to let an autonomous agent (the requester's standing Circle wallet) screen
+  // previews, reveal, and advance to shortlist per the criteria below. The market draws escrow from the
+  // agent wallet's pre-funded balance — the requester tops it up via the Agent wallet panel.
   const [agentMode, setAgentMode] = useState(false);
-  const [agentWallet, setAgentWallet] = useState<{ walletId: string; address: string } | null>(null);
-  const [provisioning, setProvisioning] = useState(false);
+  const [agentBalance, setAgentBalance] = useState<string>('0');
   const [revealCriteria, setRevealCriteria] = useState('');
   const [advanceGuardrails, setAdvanceGuardrails] = useState('');
   const [agentMaxReveals, setAgentMaxReveals] = useState('10');
@@ -233,6 +234,7 @@ function OpenWizard({ sdk, account, agentId, feeBps, onCreated }: WizardProps) {
   const totalEscrow = escrowTouched ? (escrow || '0') : usdc(recommended);
   const escrowUnits = toUnits(totalEscrow);
   const belowMin = escrowUnits < minRequired;
+  const agentUnderfunded = agentMode && Number(agentBalance) < Number(totalEscrow || '0');
 
   const tierSteps: TierStep[] = tiers.map((t, i) => ({ label: ['Reveal', 'Shortlist', 'Final', 'Ghost'][i], amount: t }));
   const tierTotal = usdc(tiers.reduce((sum, t) => sum + toUnits(t || '0'), 0n));
@@ -332,26 +334,15 @@ function OpenWizard({ sdk, account, agentId, feeBps, onCreated }: WizardProps) {
           <Field label="required proofs (0 = none)" value={requiredProofs} onChange={(e) => setProofs(e.target.value)}
             tip="Minimum ERC-8004 validation proofs an applicant's identity must carry to apply. 0 = anyone registered can apply." />
 
-          {/* AI agent setup — only when agent mode is on. Provision the DCW, fund it, set criteria + caps. */}
+          {/* AI agent setup — only when agent mode is on. The Agent wallet panel (deposit/withdraw) is
+              its own component; here we just gather criteria + caps. The market draws escrow from the
+              agent wallet's standing balance, so no per-market provisioning/funding step. */}
           {agentMode && (
             <div className="rounded-lg border border-teal-500/25 bg-teal-500/[0.05] p-3 space-y-3">
               <p className="text-sm font-semibold text-teal-300">🤖 AI agent setup</p>
-              {!agentWallet ? (
-                <div className="space-y-1.5">
-                  <p className="text-xs text-white/50">Provision the agent&apos;s Circle wallet — it becomes this market&apos;s owner and pays reveal gas from its balance.</p>
-                  <Button variant="secondary" busy={provisioning} onClick={async () => {
-                    setProvisioning(true); setAgentErr(null);
-                    try { setAgentWallet(await provisionAgentWallet()); }
-                    catch (e) { setAgentErr(e instanceof Error ? e.message : 'provision failed'); }
-                    finally { setProvisioning(false); }
-                  }}>Provision agent wallet</Button>
-                </div>
-              ) : (
-                <div className="rounded-md border border-white/10 bg-white/[0.03] p-2 text-xs">
-                  <span className="text-white/50">Agent wallet: </span>
-                  <span className="font-mono text-white break-all">{agentWallet.address}</span>
-                  <p className="mt-1 text-warning">Fund this address with USDC (escrow ${totalEscrow} + a little for gas) before creating the market.</p>
-                </div>
+              <AgentWallet onBalance={setAgentBalance} />
+              {agentUnderfunded && (
+                <p className="text-xs text-warning">Agent balance ${agentBalance} is below the ${totalEscrow} escrow — deposit more above before creating.</p>
               )}
               <TextArea label="reveal criteria — what makes a preview worth revealing" value={revealCriteria}
                 onChange={(e) => setRevealCriteria(e.target.value)} rows={2}
@@ -393,8 +384,11 @@ function OpenWizard({ sdk, account, agentId, feeBps, onCreated }: WizardProps) {
           {agentMode && (
             <div className="rounded-lg border border-teal-500/20 bg-teal-500/[0.05] p-3 text-xs text-white/60 space-y-0.5">
               <p className="text-teal-300 font-semibold">🤖 Agent-run market</p>
-              <p>The agent&apos;s wallet ({agentWallet ? `${agentWallet.address.slice(0, 10)}…` : 'not provisioned'}) creates + owns this market. Fund it first.</p>
+              <p>Your agent wallet creates + owns this market and draws the ${totalEscrow} escrow from its ${agentBalance} balance. It then autonomously screens, reveals, and advances applicants.</p>
             </div>
+          )}
+          {agentUnderfunded && (
+            <p className="text-xs text-warning">Agent balance ${agentBalance} is below the ${totalEscrow} escrow — deposit more in the previous step.</p>
           )}
           {agentErr && <p className="text-xs text-danger break-all">{agentErr}</p>}
           {agentResult && <p className="text-xs text-success">Agent market #{agentResult.marketId} created. The agent will start screening applicants.</p>}
@@ -405,13 +399,11 @@ function OpenWizard({ sdk, account, agentId, feeBps, onCreated }: WizardProps) {
             ) : agentMode ? (
               <Button
                 busy={agentBusy}
-                disabled={!agentWallet || !revealCriteria.trim() || !advanceGuardrails.trim() || !!agentResult}
+                disabled={agentUnderfunded || !revealCriteria.trim() || !advanceGuardrails.trim() || !!agentResult}
                 onClick={async () => {
                   setAgentBusy(true); setAgentErr(null);
                   try {
                     const res = await createAgentMarket({
-                      walletId: agentWallet!.walletId,
-                      walletAddress: agentWallet!.address,
                       market: {
                         subject, description: desc,
                         tierAmounts: tiers.map((t) => toUnits(t).toString()) as [string, string, string, string],

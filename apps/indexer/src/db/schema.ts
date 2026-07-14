@@ -161,6 +161,19 @@ export const attachments = pgTable('attachments', {
 });
 
 /**
+ * Persistent agent wallet per requester (#4). One Circle DCW, provisioned once and reused across all of
+ * that requester's agent markets. The requester DEPOSITS USDC into it (their wallet → DCW) and can
+ * WITHDRAW the remaining balance (DCW → their wallet) any time. Creating an agent market draws escrow
+ * from this standing balance — no per-market funding hop. Keyed by the requester's lowercased address.
+ */
+export const agentWallets = pgTable('agent_wallets', {
+  owner: text('owner').primaryKey(), // requester address, lowercased
+  walletId: text('wallet_id').notNull(),
+  walletAddress: text('wallet_address').notNull(),
+  createdAt: integer('created_at').notNull().default(0),
+});
+
+/**
  * Autonomous-agent config per market (#4). A market is "agent-run" iff it has a row here. The agent
  * operates the requester's Circle DCW (`walletId`) to reveal/advance on-chain. Criteria are natural
  * language the LLM evaluates. Caps bound autonomous spend (app-level; Circle native policy is

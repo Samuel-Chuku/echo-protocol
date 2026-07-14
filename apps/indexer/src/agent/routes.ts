@@ -2,14 +2,14 @@ import { type Express, type Request, type Response } from 'express';
 import { encodeFunctionData, keccak256, parseEventLogs, toBytes } from 'viem';
 import { buildMetadata } from '@echo/sdk';
 import { db } from '../db/client.js';
-import { agentMarkets, agentDecisions } from '../db/schema.js';
+import { agentMarkets, agentDecisions, agentWallets } from '../db/schema.js';
 import { eq } from 'drizzle-orm';
 import { config } from '../config.js';
 import { publicClient } from '../chain.js';
 import { MarketRegistryABI } from '../abis.js';
 import { resolveSession } from '../auth/session.js';
 import { bearer } from '../auth/routes.js';
-import { provisionAgentWallet, execApproveUsdc, execCallData, waitForTx, agentContracts } from './circle.js';
+import { provisionAgentWallet, walletUsdcBalance, withdrawUsdc, execApproveUsdc, execCallData, waitForTx, agentContracts } from './circle.js';
 
 const wrap = (fn: (req: Request, res: Response) => Promise<unknown>) => (req: Request, res: Response) => {
   fn(req, res).catch((e) => res.status(400).json({ error: (e as Error).message ?? 'agent error' }));
@@ -28,12 +28,25 @@ async function requireAddr(req: Request, res: Response): Promise<string | null> 
   return session.address.toLowerCase();
 }
 
+/** Get the requester's persistent agent wallet, provisioning one on first use. Keyed by owner addr. */
+async function getOrCreateWallet(owner: string): Promise<{ walletId: string; walletAddress: string }> {
+  const [existing] = await db.select().from(agentWallets).where(eq(agentWallets.owner, owner)).limit(1);
+  if (existing) return { walletId: existing.walletId, walletAddress: existing.walletAddress };
+  const { walletId, address } = await provisionAgentWallet(owner);
+  await db.insert(agentWallets).values({ owner, walletId, walletAddress: address, createdAt: Math.floor(Date.now() / 1000) })
+    .onConflictDoNothing();
+  // Re-read in case of a race (another request created it first).
+  const [row] = await db.select().from(agentWallets).where(eq(agentWallets.owner, owner)).limit(1);
+  return { walletId: row!.walletId, walletAddress: row!.walletAddress };
+}
+
 /**
  * Agent REST surface (#4), mounted under /agent:
  *   GET  /agent/market/:id  → { agentRun, walletAddress? }   is this market agent-run? (public — drives apply UI)
  *   GET  /agent/decisions?marketId= → [decisions]            the agent's per-applicant feed (public read)
- *   POST /agent/provision   → { walletId, address }          provision a Circle DCW for the requester (session)
- *   POST /agent/markets     → { marketId, txHash }           create an agent-run market from the DCW (session)
+ *   POST /agent/wallet      → { walletId, walletAddress, balance }  get-or-create the requester's persistent agent wallet + balance (session)
+ *   POST /agent/withdraw    → { txHash }                     withdraw USDC from the agent wallet to the owner (session)
+ *   POST /agent/markets     → { marketId, txHash }           create an agent-run market drawing from the standing balance (session)
  */
 export function mountAgentRoutes(app: Express): void {
   app.get('/agent/market/:id', wrap(async (req, res) => {
@@ -48,27 +61,54 @@ export function mountAgentRoutes(app: Express): void {
     res.json({ decisions: rows });
   }));
 
-  app.post('/agent/provision', wrap(async (req, res) => {
-    if (!(await requireAddr(req, res))) return;
+  // Get-or-create the requester's persistent agent wallet + its live USDC balance. This is the
+  // standing "agent account" they deposit into and withdraw from; markets draw from its balance.
+  app.post('/agent/wallet', wrap(async (req, res) => {
+    const owner = await requireAddr(req, res);
+    if (!owner) return;
     if (!config.agentEnabled) throw new Error('agent is disabled on this server');
-    const addr = await requireAddr(req, res); // reuse (already checked)
-    const { walletId, address } = await provisionAgentWallet(addr ?? undefined);
-    res.json({ walletId, address });
+    const { walletId, walletAddress } = await getOrCreateWallet(owner);
+    const balance = await walletUsdcBalance(walletId).catch(() => '0');
+    res.json({ walletId, walletAddress, balance });
+  }));
+
+  // Withdraw USDC from the agent wallet back to the owner's address (defund). Amount in decimal USDC.
+  app.post('/agent/withdraw', wrap(async (req, res) => {
+    const owner = await requireAddr(req, res);
+    if (!owner) return;
+    if (!config.agentEnabled) throw new Error('agent is disabled on this server');
+    const amount = String(req.body?.amount ?? '').trim();
+    if (!amount || Number(amount) <= 0) throw new Error('positive amount required');
+    const [wallet] = await db.select().from(agentWallets).where(eq(agentWallets.owner, owner)).limit(1);
+    if (!wallet) throw new Error('no agent wallet to withdraw from');
+    // Always send back to the OWNER (the signed-in requester) — never a client-supplied destination.
+    const txHash = await waitForTx(await withdrawUsdc(wallet.walletId, owner, amount));
+    res.json({ txHash });
   }));
 
   app.post('/agent/markets', wrap(async (req, res) => {
-    if (!(await requireAddr(req, res))) return;
+    const owner = await requireAddr(req, res);
+    if (!owner) return;
     if (!config.agentEnabled) throw new Error('agent is disabled on this server');
     const b = req.body ?? {};
-    const walletId = String(b.walletId ?? '');
     const mk = b.market ?? {};
     const ag = b.agent ?? {};
-    if (!walletId) throw new Error('walletId required (provision a DCW first)');
+
+    // The market is created from the requester's PERSISTENT agent wallet (funded via deposit already),
+    // not a per-request walletId. Draws escrow from its standing balance — no per-market funding hop.
+    const { walletId, walletAddress } = await getOrCreateWallet(owner);
 
     // Tier amounts + escrow are base-unit (6dp) strings from the client.
     const tierAmounts = (mk.tierAmounts as string[]).map((t) => BigInt(t)) as [bigint, bigint, bigint, bigint];
     const escrowTotal = BigInt(mk.escrowTotal);
     const registry = agentContracts.marketRegistry;
+
+    // Pre-flight: the agent wallet must already hold enough USDC (deposited beforehand) to fund escrow.
+    const balHuman = await walletUsdcBalance(walletId).catch(() => '0');
+    const balUnits = BigInt(Math.floor(Number(balHuman) * 1e6));
+    if (balUnits < escrowTotal) {
+      throw new Error(`agent wallet balance ${balHuman} USDC is below the ${(Number(escrowTotal) / 1e6).toFixed(2)} USDC escrow — deposit more first`);
+    }
 
     // 1. approve USDC so the registry can pull escrow when the market is created.
     await waitForTx(await execApproveUsdc(walletId, registry, escrowTotal.toString()));
@@ -103,7 +143,6 @@ export function mountAgentRoutes(app: Express): void {
     if (!marketId) throw new Error('could not resolve marketId from MarketCreated event');
 
     // 4. Register the market as agent-run.
-    const walletAddress = String(b.walletAddress ?? '');
     await db.insert(agentMarkets).values({
       marketId,
       walletId,

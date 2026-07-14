@@ -42,13 +42,17 @@ export async function getAgentDecisions(marketId: number): Promise<AgentDecision
   return (await res.json()).decisions ?? [];
 }
 
-/** Provision a Circle DCW for the signed-in requester. Returns the address to fund. */
-export function provisionAgentWallet(): Promise<{ walletId: string; address: string }> {
-  return authed('/agent/provision', {});
+/** Get-or-create the signed-in requester's persistent agent wallet + its live USDC balance. */
+export function getAgentWallet(): Promise<{ walletId: string; walletAddress: string; balance: string }> {
+  return authed('/agent/wallet', {});
+}
+
+/** Withdraw USDC from the agent wallet back to the owner. Amount in decimal USDC (e.g. "12.5"). */
+export function withdrawAgent(amount: string): Promise<{ txHash: string }> {
+  return authed('/agent/withdraw', { amount });
 }
 
 export type CreateAgentMarketInput = {
-  walletId: string; walletAddress: string;
   market: {
     subject: string; description: string;
     tierAmounts: [string, string, string, string]; // base units

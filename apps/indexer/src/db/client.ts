@@ -89,6 +89,10 @@ export async function migrate(): Promise<void> {
       data TEXT NOT NULL, hash TEXT NOT NULL, created_at INTEGER NOT NULL DEFAULT 0
     );
     CREATE INDEX IF NOT EXISTS attachments_slot ON attachments(market_id, kind, key);
+    CREATE TABLE IF NOT EXISTS agent_wallets (
+      owner TEXT PRIMARY KEY, wallet_id TEXT NOT NULL, wallet_address TEXT NOT NULL,
+      created_at INTEGER NOT NULL DEFAULT 0
+    );
     CREATE TABLE IF NOT EXISTS agent_markets (
       market_id INTEGER PRIMARY KEY, wallet_id TEXT NOT NULL, wallet_address TEXT NOT NULL,
       reveal_criteria TEXT NOT NULL, advance_guardrails TEXT NOT NULL,
