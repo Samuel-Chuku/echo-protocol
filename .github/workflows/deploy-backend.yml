@@ -103,10 +103,16 @@ jobs:
             echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
             cd ${{ secrets.VPS_APP_PATH || '~/echo-protocol' }}
             git pull --ff-only origin main
+            # Reclaim disk BEFORE the pull — the incoming image and the still-running old one must
+            # briefly coexist, and this small VPS fills mid-extract otherwise ("no space left on
+            # device"). -a removes unused images (not just dangling); the running containers' image is
+            # kept, so this is safe. NEVER --volumes (Caddy's TLS certs live in a named volume).
+            docker image prune -af || true
+            docker builder prune -af || true
             docker compose pull indexer ops
             docker compose up -d indexer ops
             docker logout ghcr.io
-            docker image prune -f
+            docker image prune -af || true
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GHCR_USER: ${{ github.actor }}
