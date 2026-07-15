@@ -8,6 +8,7 @@ import { arcTestnet } from '@echo/sdk';
 import { useConnect } from 'wagmi';
 import { Loader2, X, ShieldCheck } from 'lucide-react';
 import { useEcho } from '@/lib/sdk';
+import { onBalanceBump, offBalanceBump } from '@/lib/balances';
 import { useAuth } from '@/lib/auth';
 import { usdcShort, short } from '@/lib/format';
 import { CIRCLE_CONNECTOR_ID, forgetCircleSession, readCircleSession, setCircleMode, setCircleUsername } from '@/lib/circle';
@@ -28,7 +29,8 @@ export function WalletStatus() {
   const [bal, setBal] = useState<bigint>();
   const [signInOpen, setSignInOpen] = useState(false);
 
-  // Keep the nav balance live: refetch on every new block and on a 10s floor.
+  // Keep the nav balance live: refetch on every new block, a 5s floor, and instantly after any app
+  // transaction (bumpBalances subscription — same bus the agent-wallet panel uses).
   const { data: blockNumber } = useBlockNumber({ watch: true });
   const refresh = useCallback(() => {
     if (!account) { setBal(undefined); return; }
@@ -37,8 +39,9 @@ export function WalletStatus() {
 
   useEffect(() => { refresh(); }, [refresh, blockNumber]);
   useEffect(() => {
-    const t = setInterval(refresh, 10_000);
-    return () => clearInterval(t);
+    const t = setInterval(refresh, 5_000);
+    onBalanceBump(refresh);
+    return () => { clearInterval(t); offBalanceBump(refresh); };
   }, [refresh]);
 
   // Auto-prompt a switch to Arc when connected on an unsupported chain. Circle is single-chain, skip it.

@@ -5,6 +5,7 @@ import { Loader2, ExternalLink, Check, X } from 'lucide-react';
 import { isTxHash, txLink } from '@/lib/format';
 import { formatTxError } from '@/lib/errors';
 import { useTx } from '@/lib/tx';
+import { bumpBalances } from '@/lib/balances';
 
 type Tone = 'primary' | 'neutral' | 'danger';
 const TONES: Record<Tone, string> = {
@@ -49,6 +50,7 @@ export function Command({
       const r = await run();
       const msg = successText ? await successText(r) : isTxHash(r) ? (r as string) : 'done';
       setResult({ ok: true, raw: r, msg });
+      bumpBalances(); // refresh all mounted USDC balances the moment the action lands
       onDone?.(r);
     } catch (e: unknown) {
       const err = e as { shortMessage?: string; details?: string; message?: string };

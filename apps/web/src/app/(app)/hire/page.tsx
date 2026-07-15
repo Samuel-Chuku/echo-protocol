@@ -335,25 +335,61 @@ function OpenWizard({ sdk, account, agentId, feeBps, onCreated }: WizardProps) {
             tip="Minimum ERC-8004 validation proofs an applicant's identity must carry to apply. 0 = anyone registered can apply." />
 
           {/* AI agent setup — only when agent mode is on. The Agent wallet panel (deposit/withdraw) is
-              its own component; here we just gather criteria + caps. The market draws escrow from the
-              agent wallet's standing balance, so no per-market provisioning/funding step. */}
+              its own always-live component; here we gather criteria + caps, structured as the agent's
+              actual pipeline: Screen → Reveal → Advance-or-rank. Escrow draws from the standing balance. */}
           {agentMode && (
-            <div className="rounded-lg border border-teal-500/25 bg-teal-500/[0.05] p-3 space-y-3">
-              <p className="text-sm font-semibold text-teal-300">🤖 AI agent setup</p>
+            <div className="space-y-3">
               <AgentWallet onBalance={setAgentBalance} />
               {agentUnderfunded && (
-                <p className="text-xs text-warning">Agent balance ${agentBalance} is below the ${totalEscrow} escrow — deposit more above before creating.</p>
+                <p className="rounded-md border border-warning/25 bg-warning/[0.07] px-3 py-2 text-xs text-warning">
+                  Agent balance ${agentBalance} is below the ${totalEscrow} escrow — deposit above before creating.
+                </p>
               )}
-              <TextArea label="reveal criteria — what makes a preview worth revealing" value={revealCriteria}
-                onChange={(e) => setRevealCriteria(e.target.value)} rows={2}
-                placeholder="e.g. Applicant clearly has video-editing experience and mentions relevant tools/portfolio." />
-              <TextArea label="advancement guardrails — the STRINGENT bar to auto-advance to shortlist" value={advanceGuardrails}
-                onChange={(e) => setAdvanceGuardrails(e.target.value)} rows={2}
-                placeholder="e.g. Only advance if the full submission shows a concrete plan AND a relevant sample. If unsure, do not advance." />
-              <div className="grid grid-cols-3 gap-1">
-                <Field label="max reveals" value={agentMaxReveals} onChange={(e) => setAgentMaxReveals(e.target.value)} tip="Cap on how many applicants the agent may reveal (bounds spend)." />
-                <Field label="max advances" value={agentMaxAdvances} onChange={(e) => setAgentMaxAdvances(e.target.value)} tip="Cap on how many the agent may auto-advance to shortlist." />
-                <Field label="reveal score ≥" value={agentThreshold} onChange={(e) => setAgentThreshold(e.target.value)} tip="Minimum 0-100 preview score to reveal." />
+
+              <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4 space-y-4">
+                <p className="text-xs text-white/40">Your agent works this pipeline on every applicant — you write the rules for each gate:</p>
+
+                {/* Gate 1 — screen + reveal */}
+                <div className="relative pl-8">
+                  <span className="absolute left-0 top-0 flex h-6 w-6 items-center justify-center rounded-full bg-teal-500/15 text-[11px] font-bold text-teal-300">1</span>
+                  <span className="absolute left-3 top-7 bottom-[-1rem] w-px bg-white/[0.08]" />
+                  <p className="text-sm font-semibold text-white">Screen previews → reveal the promising</p>
+                  <p className="text-[11px] text-white/40 mb-2">Reads each applicant&apos;s free public preview and pays to reveal only those matching:</p>
+                  <TextArea label="" value={revealCriteria} onChange={(e) => setRevealCriteria(e.target.value)} rows={2}
+                    placeholder="e.g. Clearly has video-editing experience; mentions relevant tools or a portfolio." />
+                  <div className="mt-1.5 flex flex-wrap items-center gap-3 text-[11px] text-white/40">
+                    <label className="inline-flex items-center gap-1.5">reveal at score ≥
+                      <input value={agentThreshold} onChange={(e) => setAgentThreshold(e.target.value)} inputMode="numeric"
+                        className="w-14 rounded border border-white/10 bg-white/[0.05] px-1.5 py-0.5 text-center font-mono text-white focus:border-teal-500/40 focus:outline-none" />
+                      /100
+                    </label>
+                    <label className="inline-flex items-center gap-1.5">reveal at most
+                      <input value={agentMaxReveals} onChange={(e) => setAgentMaxReveals(e.target.value)} inputMode="numeric"
+                        className="w-14 rounded border border-white/10 bg-white/[0.05] px-1.5 py-0.5 text-center font-mono text-white focus:border-teal-500/40 focus:outline-none" />
+                      applicants
+                    </label>
+                  </div>
+                </div>
+
+                {/* Gate 2 — guardrails */}
+                <div className="relative pl-8">
+                  <span className="absolute left-0 top-0 flex h-6 w-6 items-center justify-center rounded-full bg-teal-500/15 text-[11px] font-bold text-teal-300">2</span>
+                  <p className="text-sm font-semibold text-white">Advance to shortlist — only past your guardrails</p>
+                  <p className="text-[11px] text-white/40 mb-2">
+                    Reads the full revealed submission. Advances <b className="text-white/60">only if it clearly meets ALL of this</b>;
+                    anything borderline is ranked with a reason and left for you:
+                  </p>
+                  <TextArea label="" value={advanceGuardrails} onChange={(e) => setAdvanceGuardrails(e.target.value)} rows={2}
+                    placeholder="e.g. Only advance if there's a concrete plan AND a relevant work sample. If unsure, do not advance." />
+                  <div className="mt-1.5 flex flex-wrap items-center gap-3 text-[11px] text-white/40">
+                    <label className="inline-flex items-center gap-1.5">advance at most
+                      <input value={agentMaxAdvances} onChange={(e) => setAgentMaxAdvances(e.target.value)} inputMode="numeric"
+                        className="w-14 rounded border border-white/10 bg-white/[0.05] px-1.5 py-0.5 text-center font-mono text-white focus:border-teal-500/40 focus:outline-none" />
+                      applicants
+                    </label>
+                    <span className="text-white/30">· everyone else gets ranked for your review — the agent never pays a tier payout</span>
+                  </div>
+                </div>
               </div>
             </div>
           )}

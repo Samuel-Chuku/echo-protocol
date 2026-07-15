@@ -4,6 +4,7 @@ import { createContext, useCallback, useContext, useRef, useState, type ReactNod
 import { Loader2, CheckCircle2, XCircle, ExternalLink, Copy, Check, Wallet } from 'lucide-react';
 import { isTxHash, txLink, short } from './format';
 import { formatTxError } from './errors';
+import { bumpBalances } from './balances';
 
 /**
  * Global transaction status. Every Echo write (approve / create / apply / join / deliver / dispute …)
@@ -42,6 +43,7 @@ export function TxProvider({ children }: { children: ReactNode }) {
       const r = await fn();
       const hash = isTxHash(r) ? (r as string) : undefined;
       setState({ ...meta, kind, status: 'success', hash });
+      bumpBalances(); // every completed tx refreshes all mounted USDC balances immediately
       // Approvals are a means to an end — clear them quickly so the next step is unobstructed. Real
       // actions stay so the user can grab the tx link.
       if (kind === 'approval') timer.current = setTimeout(() => setState(null), 1400);

@@ -9,7 +9,7 @@ import { publicClient } from '../chain.js';
 import { MarketRegistryABI } from '../abis.js';
 import { resolveSession } from '../auth/session.js';
 import { bearer } from '../auth/routes.js';
-import { provisionAgentWallet, walletUsdcBalance, withdrawUsdc, execApproveUsdc, execCallData, waitForTx, agentContracts } from './circle.js';
+import { provisionAgentWallet, withdrawUsdc, execApproveUsdc, execCallData, waitForTx, agentContracts } from './circle.js';
 
 const wrap = (fn: (req: Request, res: Response) => Promise<unknown>) => (req: Request, res: Response) => {
   fn(req, res).catch((e) => res.status(400).json({ error: (e as Error).message ?? 'agent error' }));
@@ -68,8 +68,14 @@ export function mountAgentRoutes(app: Express): void {
     if (!owner) return;
     if (!config.agentEnabled) throw new Error('agent is disabled on this server');
     const { walletId, walletAddress } = await getOrCreateWallet(owner);
-    const balance = await walletUsdcBalance(walletId).catch(() => '0');
-    res.json({ walletId, walletAddress, balance });
+    // Balance read on-chain (Circle's balance API lags fresh deposits). Clients poll on-chain too.
+    const bal = await publicClient.readContract({
+      address: agentContracts.usdc,
+      abi: [{ type: 'function', name: 'balanceOf', stateMutability: 'view', inputs: [{ name: 'a', type: 'address' }], outputs: [{ type: 'uint256' }] }] as const,
+      functionName: 'balanceOf',
+      args: [walletAddress as `0x${string}`],
+    }).catch(() => 0n) as bigint;
+    res.json({ walletId, walletAddress, balance: (Number(bal) / 1e6).toString() });
   }));
 
   // Withdraw USDC from the agent wallet back to the owner's address (defund). Amount in decimal USDC.
@@ -104,10 +110,16 @@ export function mountAgentRoutes(app: Express): void {
     const registry = agentContracts.marketRegistry;
 
     // Pre-flight: the agent wallet must already hold enough USDC (deposited beforehand) to fund escrow.
-    const balHuman = await walletUsdcBalance(walletId).catch(() => '0');
-    const balUnits = BigInt(Math.floor(Number(balHuman) * 1e6));
+    // Read the balance ON-CHAIN — Circle's monitored-token balance API lags fresh funding and can
+    // false-negative right after a deposit.
+    const balUnits = await publicClient.readContract({
+      address: agentContracts.usdc,
+      abi: [{ type: 'function', name: 'balanceOf', stateMutability: 'view', inputs: [{ name: 'a', type: 'address' }], outputs: [{ type: 'uint256' }] }] as const,
+      functionName: 'balanceOf',
+      args: [walletAddress as `0x${string}`],
+    }) as bigint;
     if (balUnits < escrowTotal) {
-      throw new Error(`agent wallet balance ${balHuman} USDC is below the ${(Number(escrowTotal) / 1e6).toFixed(2)} USDC escrow — deposit more first`);
+      throw new Error(`agent wallet balance ${(Number(balUnits) / 1e6).toFixed(2)} USDC is below the ${(Number(escrowTotal) / 1e6).toFixed(2)} USDC escrow — deposit more first`);
     }
 
     // 1. approve USDC so the registry can pull escrow when the market is created.

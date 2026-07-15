@@ -6,6 +6,7 @@ import { Nav } from '@/components/Nav';
 import { AppFooter } from '@/components/AppFooter';
 import { MaintenanceBanner } from '@/components/MaintenanceBanner';
 import { SignInPrompt } from '@/components/SignInPrompt';
+import { Onboarding } from '@/components/Onboarding';
 
 // Chrome for the app surface (everything except the marketing page at /site): wallet Providers,
 // maintenance banner, nav, and the constrained <main>. The <html>/<body>/font shell lives in the
@@ -21,6 +22,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       <main className="max-w-6xl mx-auto px-5 sm:px-6 py-8 overflow-x-hidden min-h-[70vh]">{children}</main>
       <AppFooter />
       <SignInPrompt />
+      <Onboarding />
     </Providers>
   );
 }

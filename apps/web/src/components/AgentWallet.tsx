@@ -1,117 +1,164 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { Bot, ArrowDownToLine, ArrowUpFromLine, RefreshCw, Copy, Check } from 'lucide-react';
+import { Bot, ArrowDownToLine, ArrowUpFromLine, Copy, Check, Loader2 } from 'lucide-react';
 import { useEcho } from '@/lib/sdk';
 import { getAgentWallet, withdrawAgent } from '@/lib/agentApi';
-import { toUnits, usdc } from '@/lib/format';
-import { CARD_CLASS, Field, Button } from '@/components/ui';
+import { useUsdcBalance, bumpBalances } from '@/lib/balances';
+import { toUnits, usdc, short } from '@/lib/format';
+import { Button } from '@/components/ui';
 
 /**
- * Persistent agent-wallet account (#4). Shows the standing USDC balance of the requester's Circle DCW
- * with deposit (their wallet → DCW) and withdraw (DCW → their wallet) controls. Agent markets draw
- * escrow from this balance, so there's no per-market funding step. `onBalance` bubbles the live balance
- * up so the create-market wizard can validate escrow against it.
+ * The requester's standing agent account (#4): one persistent Circle DCW, always ready — deposit
+ * USDC in, withdraw out, any time. Agent markets draw escrow straight from this balance.
+ *
+ * Balances are read ON-CHAIN (USDC.balanceOf via useUsdcBalance) — never Circle's monitored-token
+ * API, which lags funding and caused the "deposited but shows $0" bug. Live: 5s poll + instant
+ * refresh after every app transaction (bumpBalances).
  */
 export function AgentWallet({ onBalance }: { onBalance?: (balanceHuman: string) => void }) {
   const { sdk, account } = useEcho();
-  const [wallet, setWallet] = useState<{ walletAddress: string; balance: string } | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [err, setErr] = useState<string | null>(null);
+  const [wallet, setWallet] = useState<{ walletAddress: string } | null>(null);
+  const [loadErr, setLoadErr] = useState<string | null>(null);
+  const [actionErr, setActionErr] = useState<string | null>(null);
   const [busy, setBusy] = useState<'deposit' | 'withdraw' | null>(null);
   const [depositAmt, setDepositAmt] = useState('');
   const [withdrawAmt, setWithdrawAmt] = useState('');
   const [copied, setCopied] = useState(false);
 
-  const refresh = useCallback(async () => {
-    setLoading(true); setErr(null);
-    try {
-      const w = await getAgentWallet();
-      setWallet({ walletAddress: w.walletAddress, balance: w.balance });
-      onBalance?.(w.balance);
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : 'failed to load agent wallet');
-    } finally { setLoading(false); }
-  }, [onBalance]);
+  // Live on-chain balances: the agent wallet's (the number that matters) and the user's own (for
+  // deposit context). Both poll every 5s and refresh instantly after any tx.
+  const { balance: agentBal, refresh: refreshAgent } = useUsdcBalance(wallet?.walletAddress ?? null);
+  const { balance: myBal } = useUsdcBalance(account ?? null);
 
-  useEffect(() => { refresh(); }, [refresh]);
+  // Resolve (or lazily create) the persistent wallet once per signed-in session.
+  useEffect(() => {
+    let active = true;
+    setLoadErr(null);
+    getAgentWallet()
+      .then((w) => { if (active) setWallet({ walletAddress: w.walletAddress }); })
+      .catch((e) => { if (active) setLoadErr(e instanceof Error ? e.message : 'failed to load agent wallet'); });
+    return () => { active = false; };
+  }, [account]);
 
-  async function deposit() {
+  // Bubble the live balance up (the wizard validates escrow against it).
+  useEffect(() => {
+    if (agentBal !== null) onBalance?.(usdc(agentBal));
+  }, [agentBal, onBalance]);
+
+  const deposit = useCallback(async () => {
     if (!wallet || !account || !depositAmt.trim()) return;
-    setBusy('deposit'); setErr(null);
+    setBusy('deposit'); setActionErr(null);
     try {
-      // The connected wallet signs a plain USDC transfer to the agent wallet address.
       await sdk.transferUsdc(wallet.walletAddress as `0x${string}`, toUnits(depositAmt), account);
       setDepositAmt('');
-      // Circle balance lags the on-chain transfer a little; refresh after a short beat.
-      setTimeout(refresh, 4000);
+      bumpBalances(); // on-chain read → reflects immediately, no Circle lag
     } catch (e) {
-      setErr(e instanceof Error ? e.message : 'deposit failed');
+      setActionErr(e instanceof Error ? e.message : 'deposit failed');
     } finally { setBusy(null); }
-  }
+  }, [wallet, account, depositAmt, sdk]);
 
-  async function withdraw() {
+  const withdraw = useCallback(async () => {
     if (!withdrawAmt.trim()) return;
-    setBusy('withdraw'); setErr(null);
+    setBusy('withdraw'); setActionErr(null);
     try {
       await withdrawAgent(withdrawAmt);
       setWithdrawAmt('');
-      setTimeout(refresh, 4000);
+      bumpBalances();
+      setTimeout(refreshAgent, 4000); // Circle-submitted tx can land a beat later — re-read once more
     } catch (e) {
-      setErr(e instanceof Error ? e.message : 'withdraw failed');
+      setActionErr(e instanceof Error ? e.message : 'withdraw failed');
     } finally { setBusy(null); }
+  }, [withdrawAmt, refreshAgent]);
+
+  if (loadErr) {
+    return (
+      <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 text-xs text-white/50">
+        <span className="inline-flex items-center gap-1.5 text-white/70 font-medium"><Bot className="w-4 h-4" /> Agent wallet</span>
+        <p className="mt-1 text-danger break-all">{loadErr}</p>
+      </div>
+    );
   }
 
-  const bal = wallet ? Number(wallet.balance) : 0;
-
   return (
-    <div className={CARD_CLASS}>
-      <div className="flex items-center justify-between">
-        <h3 className="flex items-center gap-1.5 text-sm font-semibold text-white">
-          <Bot className="w-4 h-4 text-teal-400" /> Agent wallet
-        </h3>
-        <button onClick={refresh} className="text-white/40 hover:text-white" title="Refresh balance">
-          <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-        </button>
+    <div className="relative overflow-hidden rounded-xl border border-teal-500/25 bg-gradient-to-br from-teal-500/[0.10] via-white/[0.02] to-transparent p-4">
+      {/* header */}
+      <div className="flex items-center gap-2">
+        <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-teal-500/15 text-teal-300"><Bot className="w-4.5 h-4.5" /></span>
+        <div className="min-w-0">
+          <p className="text-sm font-semibold text-white leading-tight">Agent wallet</p>
+          <p className="text-[11px] text-white/40 leading-tight">Always on — deposit or withdraw any time. Agent markets draw from this balance.</p>
+        </div>
+        <span className="ml-auto inline-flex items-center gap-1 rounded-full border border-success/30 bg-success/10 px-2 py-0.5 text-[10px] font-medium text-success">
+          <span className="h-1.5 w-1.5 rounded-full bg-success animate-pulse" /> live
+        </span>
       </div>
-      <p className="text-xs text-white/40 mt-0.5">
-        Your standing balance for AI-agent markets. Deposit USDC here, then create agent markets that draw escrow from it.
-      </p>
 
-      {err && <p className="mt-2 text-xs text-danger break-all">{err}</p>}
+      {/* balance */}
+      <div className="mt-4 flex flex-wrap items-end gap-x-6 gap-y-2">
+        <div>
+          <p className="text-[10px] uppercase tracking-wider text-white/40">Agent balance</p>
+          {agentBal === null && wallet ? (
+            <Loader2 className="mt-1 w-5 h-5 animate-spin text-white/30" />
+          ) : (
+            <p className="text-3xl font-bold font-mono text-white leading-none mt-1">
+              ${agentBal !== null ? usdc(agentBal) : '0'}<span className="ml-1.5 text-xs font-sans font-normal text-white/40">USDC</span>
+            </p>
+          )}
+        </div>
+        <div>
+          <p className="text-[10px] uppercase tracking-wider text-white/40">Your wallet</p>
+          <p className="text-sm font-mono text-white/60 mt-1">${myBal !== null ? usdc(myBal) : '—'} USDC</p>
+        </div>
+        {wallet && (
+          <button
+            onClick={() => { navigator.clipboard?.writeText(wallet.walletAddress); setCopied(true); setTimeout(() => setCopied(false), 1200); }}
+            className="ml-auto inline-flex items-center gap-1 rounded-md border border-white/10 bg-white/[0.04] px-2 py-1 text-[11px] font-mono text-white/50 hover:text-white hover:border-white/25 transition"
+            title={wallet.walletAddress}
+          >
+            {short(wallet.walletAddress)} {copied ? <Check className="w-3 h-3 text-success" /> : <Copy className="w-3 h-3" />}
+          </button>
+        )}
+      </div>
 
-      {wallet && (
-        <>
-          <div className="mt-3 flex items-baseline gap-2">
-            <span className="text-2xl font-bold text-white font-mono">${usdc(BigInt(Math.floor(bal * 1e6)))}</span>
-            <span className="text-xs text-white/40">USDC available</span>
+      {/* deposit / withdraw */}
+      <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-medium text-white/70 inline-flex items-center gap-1"><ArrowDownToLine className="w-3.5 h-3.5 text-teal-400" /> Deposit</span>
+            {myBal !== null && myBal > 0n && (
+              <button onClick={() => setDepositAmt(usdc(myBal))} className="text-[10px] text-teal-400 hover:underline">max ${usdc(myBal)}</button>
+            )}
           </div>
-          <div className="mt-1 flex items-center gap-1.5 text-[11px] text-white/40">
-            <span className="font-mono break-all">{wallet.walletAddress}</span>
-            <button
-              onClick={() => { navigator.clipboard?.writeText(wallet.walletAddress); setCopied(true); setTimeout(() => setCopied(false), 1200); }}
-              className="shrink-0 hover:text-white" title="Copy address"
-            >
-              {copied ? <Check className="w-3 h-3 text-success" /> : <Copy className="w-3 h-3" />}
-            </button>
+          <div className="mt-2 flex gap-1.5">
+            <input
+              value={depositAmt} onChange={(e) => setDepositAmt(e.target.value)} inputMode="decimal" placeholder="0.00"
+              className="w-full min-w-0 rounded-md border border-white/10 bg-white/[0.05] px-2.5 py-1.5 text-sm font-mono text-white placeholder:text-white/25 focus:border-teal-500/40 focus:outline-none"
+            />
+            <Button variant="secondary" className="!min-h-0 !py-1.5 !px-3 shrink-0" busy={busy === 'deposit'} disabled={!account || !wallet || !depositAmt.trim()} onClick={deposit}>Add</Button>
           </div>
+          <p className="mt-1.5 text-[10px] text-white/35">From your connected wallet into the agent&apos;s.</p>
+        </div>
 
-          <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Field label="deposit USDC (from your wallet)" value={depositAmt} onChange={(e) => setDepositAmt(e.target.value)} inputMode="decimal" placeholder="0.00" />
-              <Button variant="secondary" busy={busy === 'deposit'} disabled={!account || !depositAmt.trim()} onClick={deposit}>
-                <ArrowDownToLine className="w-3.5 h-3.5" /> Deposit
-              </Button>
-            </div>
-            <div className="space-y-1.5">
-              <Field label="withdraw USDC (to your wallet)" value={withdrawAmt} onChange={(e) => setWithdrawAmt(e.target.value)} inputMode="decimal" placeholder="0.00" />
-              <Button variant="secondary" busy={busy === 'withdraw'} disabled={bal <= 0 || !withdrawAmt.trim()} onClick={withdraw}>
-                <ArrowUpFromLine className="w-3.5 h-3.5" /> Withdraw
-              </Button>
-            </div>
+        <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-medium text-white/70 inline-flex items-center gap-1"><ArrowUpFromLine className="w-3.5 h-3.5 text-teal-400" /> Withdraw</span>
+            {agentBal !== null && agentBal > 0n && (
+              <button onClick={() => setWithdrawAmt(usdc(agentBal))} className="text-[10px] text-teal-400 hover:underline">max ${usdc(agentBal)}</button>
+            )}
           </div>
-        </>
-      )}
+          <div className="mt-2 flex gap-1.5">
+            <input
+              value={withdrawAmt} onChange={(e) => setWithdrawAmt(e.target.value)} inputMode="decimal" placeholder="0.00"
+              className="w-full min-w-0 rounded-md border border-white/10 bg-white/[0.05] px-2.5 py-1.5 text-sm font-mono text-white placeholder:text-white/25 focus:border-teal-500/40 focus:outline-none"
+            />
+            <Button variant="secondary" className="!min-h-0 !py-1.5 !px-3 shrink-0" busy={busy === 'withdraw'} disabled={!wallet || agentBal === null || agentBal <= 0n || !withdrawAmt.trim()} onClick={withdraw}>Send</Button>
+          </div>
+          <p className="mt-1.5 text-[10px] text-white/35">Back to your connected wallet, any time.</p>
+        </div>
+      </div>
+
+      {actionErr && <p className="mt-2 text-xs text-danger break-all">{actionErr}</p>}
     </div>
   );
 }
