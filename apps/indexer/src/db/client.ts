@@ -91,7 +91,7 @@ export async function migrate(): Promise<void> {
     CREATE INDEX IF NOT EXISTS attachments_slot ON attachments(market_id, kind, key);
     CREATE TABLE IF NOT EXISTS agent_wallets (
       owner TEXT PRIMARY KEY, wallet_id TEXT NOT NULL, wallet_address TEXT NOT NULL,
-      created_at INTEGER NOT NULL DEFAULT 0
+      agent_id TEXT, created_at INTEGER NOT NULL DEFAULT 0
     );
     CREATE TABLE IF NOT EXISTS agent_markets (
       market_id INTEGER PRIMARY KEY, wallet_id TEXT NOT NULL, wallet_address TEXT NOT NULL,
@@ -120,6 +120,7 @@ export async function migrate(): Promise<void> {
   // Additive column migrations for DBs created before a column existed. Postgres supports IF NOT
   // EXISTS on ADD COLUMN, so no guard needed; new rows backfill, old rows get NULL until re-index.
   await client.unsafe(`ALTER TABLE markets ADD COLUMN IF NOT EXISTS ghost_deadline INTEGER`);
+  await client.unsafe(`ALTER TABLE agent_wallets ADD COLUMN IF NOT EXISTS agent_id TEXT`);
 }
 
 export { schema };

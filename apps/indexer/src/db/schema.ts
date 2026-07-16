@@ -170,6 +170,9 @@ export const agentWallets = pgTable('agent_wallets', {
   owner: text('owner').primaryKey(), // requester address, lowercased
   walletId: text('wallet_id').notNull(),
   walletAddress: text('wallet_address').notNull(),
+  // The DCW's OWN ERC-8004 agentId, registered lazily before its first market — the market registry
+  // requires the creator to own the requesterAgentId it claims (NotAgentOwner otherwise).
+  agentId: text('agent_id'),
   createdAt: integer('created_at').notNull().default(0),
 });
 

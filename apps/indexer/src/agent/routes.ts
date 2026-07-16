@@ -1,6 +1,6 @@
 import { type Express, type Request, type Response } from 'express';
 import { encodeFunctionData, keccak256, parseEventLogs, toBytes } from 'viem';
-import { buildMetadata } from '@echo/sdk';
+import { buildMetadata, IDENTITY_ABI } from '@echo/sdk';
 import { db } from '../db/client.js';
 import { agentMarkets, agentDecisions, agentWallets } from '../db/schema.js';
 import { eq } from 'drizzle-orm';
@@ -9,7 +9,7 @@ import { publicClient } from '../chain.js';
 import { MarketRegistryABI } from '../abis.js';
 import { resolveSession } from '../auth/session.js';
 import { bearer } from '../auth/routes.js';
-import { provisionAgentWallet, withdrawUsdc, execApproveUsdc, execCallData, waitForTx, agentContracts } from './circle.js';
+import { provisionAgentWallet, withdrawUsdc, execApproveUsdc, execRegisterIdentity, execCallData, waitForTx, agentContracts } from './circle.js';
 
 const wrap = (fn: (req: Request, res: Response) => Promise<unknown>) => (req: Request, res: Response) => {
   fn(req, res).catch((e) => res.status(400).json({ error: (e as Error).message ?? 'agent error' }));
@@ -38,6 +38,27 @@ async function getOrCreateWallet(owner: string): Promise<{ walletId: string; wal
   // Re-read in case of a race (another request created it first).
   const [row] = await db.select().from(agentWallets).where(eq(agentWallets.owner, owner)).limit(1);
   return { walletId: row!.walletId, walletAddress: row!.walletAddress };
+}
+
+/**
+ * Ensure the DCW owns an ERC-8004 identity and return its agentId. The market registry's _create
+ * requires isAuthorizedOrOwner(msg.sender, requesterAgentId) — a fresh DCW with agentId 0 reverts
+ * NotAgentOwner (this surfaced as Circle ESTIMATION_ERROR). Registers once, reads the minted tokenId
+ * from the register tx's ERC-721 Transfer event, persists it on agent_wallets.
+ */
+async function ensureAgentIdentity(owner: string, walletId: string, walletAddress: string): Promise<bigint> {
+  const [row] = await db.select().from(agentWallets).where(eq(agentWallets.owner, owner)).limit(1);
+  if (row?.agentId) return BigInt(row.agentId);
+
+  const txHash = await waitForTx(await execRegisterIdentity(walletId));
+  const receipt = await publicClient.getTransactionReceipt({ hash: txHash });
+  const transfers = parseEventLogs({ abi: IDENTITY_ABI, eventName: 'Transfer', logs: receipt.logs });
+  const minted = transfers.find((l) => (l.args as { to?: string }).to?.toLowerCase() === walletAddress.toLowerCase());
+  const agentId = (minted?.args as { tokenId?: bigint })?.tokenId;
+  if (agentId === undefined) throw new Error('identity registered but could not read agentId from the Transfer event');
+
+  await db.update(agentWallets).set({ agentId: agentId.toString() }).where(eq(agentWallets.owner, owner));
+  return agentId;
 }
 
 /**
@@ -125,26 +146,48 @@ export function mountAgentRoutes(app: Express): void {
     // 1. approve USDC so the registry can pull escrow when the market is created.
     await waitForTx(await execApproveUsdc(walletId, registry, escrowTotal.toString()));
 
-    // 2. createMarketWithMode via raw calldata (nested ModeConfig struct → encode with viem).
+    // 2. The DCW must own the ERC-8004 identity it claims as requesterAgentId (else NotAgentOwner).
+    //    Registers once on first market; cached on agent_wallets thereafter.
+    const agentIdentity = await ensureAgentIdentity(owner, walletId, walletAddress);
+
+    // 3. createMarketWithMode via raw calldata (nested ModeConfig struct → encode with viem).
+    const createArgs = [
+      buildMetadata({ subject: mk.subject ?? '', description: mk.description ?? '' }),
+      keccak256(toBytes(mk.subject || 'agent-market')),
+      tierAmounts,
+      BigInt(mk.minPRep ?? 0),
+      BigInt(mk.maxApplicants ?? 0),
+      BigInt(mk.ghostDeadline ?? 0),
+      escrowTotal,
+      agentIdentity,
+      {
+        mode: 0, // OpenMarket
+        requiredProofs: BigInt(mk.requiredProofs ?? 0),
+        stakeRequired: BigInt(mk.stakeRequired ?? 0),
+        flagWindow: BigInt(mk.flagWindow ?? 0),
+      },
+    ] as const;
+
+    // Pre-flight: simulate the exact call as the DCW so a would-be revert surfaces as a DECODED
+    // reason ("NotAgentOwner", "InsufficientEscrow…") instead of Circle's opaque ESTIMATION_ERROR.
+    try {
+      await publicClient.simulateContract({
+        address: registry,
+        abi: MarketRegistryABI,
+        functionName: 'createMarketWithMode',
+        args: createArgs as unknown as never,
+        account: walletAddress as `0x${string}`,
+      });
+    } catch (e) {
+      const msg = (e as { shortMessage?: string; message?: string }).shortMessage
+        ?? (e as Error).message ?? 'simulation failed';
+      throw new Error(`market creation would revert: ${msg}`);
+    }
+
     const calldata = encodeFunctionData({
       abi: MarketRegistryABI,
       functionName: 'createMarketWithMode',
-      args: [
-        buildMetadata({ subject: mk.subject ?? '', description: mk.description ?? '' }),
-        keccak256(toBytes(mk.subject || 'agent-market')),
-        tierAmounts,
-        BigInt(mk.minPRep ?? 0),
-        BigInt(mk.maxApplicants ?? 0),
-        BigInt(mk.ghostDeadline ?? 0),
-        escrowTotal,
-        BigInt(mk.requesterAgentId ?? 0),
-        {
-          mode: 0, // OpenMarket
-          requiredProofs: BigInt(mk.requiredProofs ?? 0),
-          stakeRequired: BigInt(mk.stakeRequired ?? 0),
-          flagWindow: BigInt(mk.flagWindow ?? 0),
-        },
-      ],
+      args: createArgs as unknown as never,
     });
     const txHash = await waitForTx(await execCallData(walletId, registry, calldata));
 

@@ -127,6 +127,12 @@ export function execApproveUsdc(walletId: string, spender: string, amount: strin
   return execAbi(walletId, C.usdc, 'approve(address,uint256)', [spender, amount]);
 }
 
+/** register('') on the ERC-8004 IdentityRegistry — mints the DCW its own agent identity. The market
+ *  registry requires the creator to own the requesterAgentId it claims (NotAgentOwner otherwise). */
+export function execRegisterIdentity(walletId: string): Promise<string> {
+  return execAbi(walletId, C.identityRegistry, 'register(string)', ['']);
+}
+
 /**
  * Withdraw USDC from the DCW to `destination` (the requester defunding their agent wallet). Uses
  * Circle's native token transfer (createTransaction) with token identified by chain+address, amount in
