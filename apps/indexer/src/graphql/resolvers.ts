@@ -2,7 +2,7 @@ import { and, desc, eq, inArray, or, sql } from 'drizzle-orm';
 import { keccak256, toBytes, type Address } from 'viem';
 import { AgenticCommerceABI, CONTRACTS } from '@echo/sdk';
 import { db } from '../db/client.js';
-import { markets, applications, findings, milestones, disputes, events, cursor, reputation, contents, attachments } from '../db/schema.js';
+import { markets, applications, findings, milestones, disputes, events, cursor, reputation, contents, attachments, agentWallets } from '../db/schema.js';
 import { publicClient } from '../chain.js';
 import { config } from '../config.js';
 
@@ -100,6 +100,19 @@ async function assertCanWriteContent(
 // Attachment guardrails: docs-only, base64 in Postgres. Cap the raw size so the DB can't bloat.
 const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024; // 5MB raw
 
+/**
+ * A user's on-chain identity is their wallet PLUS their agent wallet (the Circle DCW that creates
+ * agent-run markets as its own `requester`). Every "my stuff" query must match the whole family, or
+ * agent markets silently vanish from My markets / activity / profiles.
+ */
+async function addressFamily(addr: string): Promise<string[]> {
+  const owner = addr.toLowerCase();
+  const family = [owner];
+  const [w] = await db.select().from(agentWallets).where(eq(agentWallets.owner, owner)).limit(1);
+  if (w) family.push(w.walletAddress.toLowerCase());
+  return family;
+}
+
 export const resolvers = {
   Query: {
     markets: async (_: unknown, a: { mode?: number; status?: string; requester?: string; openOnly?: boolean; limit?: number }) => {
@@ -109,8 +122,12 @@ export const resolvers = {
       if (a.openOnly) conds.push(eq(markets.status, 'active'));
       // Address columns aren't normalised on insert (events stay as viem returns them, which is
       // EIP-55 checksum), so compare case-insensitively here — otherwise My Markets misses every
-      // row when the wallet returns a different case than the indexer stored.
-      if (a.requester) conds.push(sql`LOWER(${markets.requester}) = ${a.requester.toLowerCase()}`);
+      // row when the wallet returns a different case than the indexer stored. Matches the caller's
+      // whole address family so agent-run markets (requester = their DCW) appear too.
+      if (a.requester) {
+        const family = await addressFamily(a.requester);
+        conds.push(sql`LOWER(${markets.requester}) = ANY(${family})`);
+      }
       const rows = await db.select().from(markets)
         .where(conds.length ? and(...conds) : undefined)
         .orderBy(desc(markets.id)).limit(a.limit ?? 100);
@@ -131,12 +148,15 @@ export const resolvers = {
 
     activity: async (_: unknown, a: { address: string; status?: string; limit?: number }) => {
       const addr = a.address.toLowerCase();
-      // events where the wallet is the actor OR owns the market (requester-side). Case-insensitive
-      // requester match — markets.requester is stored in whatever case viem returned (checksum).
+      // events where the wallet is the actor OR owns the market (requester-side), across the whole
+      // address family (wallet + agent DCW) so agent-market activity shows under its human owner.
+      // Case-insensitive requester match — markets.requester is stored as viem returned it (checksum).
+      const family = await addressFamily(addr);
       const mine = await db.select({ id: markets.id }).from(markets)
-        .where(sql`LOWER(${markets.requester}) = ${addr}`);
+        .where(sql`LOWER(${markets.requester}) = ANY(${family})`);
       const ids = mine.map((r) => r.id);
-      const ownership = ids.length ? or(eq(events.actor, addr), inArray(events.marketId, ids)) : eq(events.actor, addr);
+      const actorMatch = family.length > 1 ? inArray(events.actor, family) : eq(events.actor, addr);
+      const ownership = ids.length ? or(actorMatch, inArray(events.marketId, ids)) : actorMatch;
       const rows = await db.select().from(events).where(ownership)
         .orderBy(desc(events.blockNumber), desc(events.logIndex)).limit(a.limit ?? 100);
       // Which of the referenced markets are still open? Anything closed/cancelled resolves its

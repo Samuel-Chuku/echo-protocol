@@ -73,9 +73,13 @@ async function indexRange(fromBlock: bigint, toBlock: bigint): Promise<void> {
   if (logs.length) console.log(`[ingest] blocks ${fromBlock}-${toBlock}: ${logs.length} events`);
 }
 
+/** Smallest getLogs span we'll shrink to before treating a range failure as a real outage. */
+const MIN_BATCH = 50n;
+
 /** Backfill from the cursor to head, then poll head forever. */
 export async function runIngestLoop(): Promise<void> {
   let from = (await getCursor()) + 1n;
+  let batch = config.batchSize; // adaptive: halves on RPC failures, grows back on success
   console.log(`[ingest] starting from block ${from}`);
   for (;;) {
     try {
@@ -92,10 +96,25 @@ export async function runIngestLoop(): Promise<void> {
       }
       const head = await publicClient.getBlockNumber();
       while (from <= head) {
-        const to = from + config.batchSize - 1n > head ? head : from + config.batchSize - 1n;
-        await indexRange(from, to);
-        await setCursor(to);
-        from = to + 1n;
+        const to = from + batch - 1n > head ? head : from + batch - 1n;
+        try {
+          await indexRange(from, to);
+          await setCursor(to);
+          from = to + 1n;
+          // Healthy batch → grow back toward the configured size (we may have shrunk below).
+          if (batch < config.batchSize) batch = batch * 2n > config.batchSize ? config.batchSize : batch * 2n;
+        } catch (e) {
+          // A failing range must NEVER freeze the cursor by retrying the same span forever (that
+          // stalled ingest ~160k blocks behind in prod). Halve the batch and retry immediately —
+          // RPC getLogs caps / rate limits almost always pass at a smaller span. Only when even the
+          // minimum span fails do we surface the error and back off.
+          if (batch > MIN_BATCH) {
+            batch = batch / 2n < MIN_BATCH ? MIN_BATCH : batch / 2n;
+            console.warn(`[ingest] range ${from}-${to} failed (${(e as Error).message.slice(0, 120)}) — retrying at batch=${batch}`);
+            continue;
+          }
+          throw e;
+        }
       }
     } catch (e) {
       console.error('[ingest] error:', (e as Error).message);

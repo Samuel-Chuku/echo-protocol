@@ -2,10 +2,12 @@
 
 import { useEffect, useState, type ReactNode } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { Briefcase, Lock, Plus, Trash2 } from 'lucide-react';
 import { useQuery, gql } from 'urql';
 import { useAccount } from 'wagmi';
-import { EchoMode, buildMetadata, CONTRACTS } from '@echo/sdk';
+import { parseEventLogs } from 'viem';
+import { EchoMode, buildMetadata, CONTRACTS, MarketRegistryABI } from '@echo/sdk';
 import { useEcho } from '@/lib/sdk';
 import { useAgent } from '@/lib/agent';
 import { useFlag } from '@/lib/flags';
@@ -97,6 +99,21 @@ function feeOn(amountHuman: string, feeBps?: bigint) {
   if (feeBps === undefined) return '...';
   const amt = Number(amountHuman || '0');
   return (amt * Number(feeBps) / 10000).toFixed(2);
+}
+
+/**
+ * After a create tx lands, take the requester STRAIGHT to their new market's manage page — no
+ * hunting through "My markets". Resolves the marketId from the receipt's MarketCreated event;
+ * silently stays put if anything fails (the market still appears in the list below).
+ */
+async function goToCreatedMarket(sdk: ReturnType<typeof useEcho>['sdk'], router: ReturnType<typeof useRouter>, hash: unknown): Promise<void> {
+  try {
+    if (typeof hash !== 'string' || !hash.startsWith('0x')) return;
+    const receipt = await sdk.publicClient.waitForTransactionReceipt({ hash: hash as `0x${string}` });
+    const logs = parseEventLogs({ abi: MarketRegistryABI, eventName: 'MarketCreated', logs: receipt.logs });
+    const id = (logs[0]?.args as { marketId?: bigint })?.marketId;
+    if (id !== undefined) router.push(`/hire/${id}`);
+  } catch { /* non-fatal — the market shows in My markets regardless */ }
 }
 
 function IdentityGate({ agentId, onOk }: { agentId: string; onOk: () => void }) {
@@ -195,6 +212,7 @@ function LiveTotal({ label, totalHuman, feeBps }: { label: string; totalHuman: s
 }
 
 function OpenWizard({ sdk, account, agentId, feeBps, onCreated }: WizardProps) {
+  const router = useRouter();
   const [step, setStep] = useState(0);
   const [subject, setSubject] = useState('');
   const [desc, setDesc] = useState('');
@@ -457,7 +475,7 @@ function OpenWizard({ sdk, account, agentId, feeBps, onCreated }: WizardProps) {
                         revealThreshold: Number(agentThreshold),
                       },
                     });
-                    setAgentResult(res); onCreated?.();
+                    setAgentResult(res); onCreated?.(); router.push(`/hire/${res.marketId}`);
                   } catch (e) {
                     setAgentErr(e instanceof Error ? e.message : 'create failed');
                   } finally { setAgentBusy(false); }
@@ -494,7 +512,7 @@ function OpenWizard({ sdk, account, agentId, feeBps, onCreated }: WizardProps) {
               },
             }, account!);
           }}
-          onDone={() => { onCreated?.(); setDeployOpen(false); setStep(0); setSubject(''); setDesc(''); }}
+          onDone={(r) => { onCreated?.(); setDeployOpen(false); setStep(0); setSubject(''); setDesc(''); void goToCreatedMarket(sdk, router, r); }}
           onClose={() => setDeployOpen(false)}
         />
       )}
@@ -503,6 +521,7 @@ function OpenWizard({ sdk, account, agentId, feeBps, onCreated }: WizardProps) {
 }
 
 function DirectWizard({ sdk, account, agentId, feeBps, onCreated }: WizardProps) {
+  const router = useRouter();
   const [step, setStep] = useState(0);
   const [subject, setSubject] = useState('');
   const [desc, setDesc] = useState('');
@@ -602,7 +621,7 @@ function DirectWizard({ sdk, account, agentId, feeBps, onCreated }: WizardProps)
               reviewWindow: BigInt(Number(reviewDays) * 86400),
             }, account!);
           }}
-          onDone={() => { onCreated?.(); setDeployOpen(false); setStep(0); setSubject(''); setDesc(''); setWorker(''); }}
+          onDone={(r) => { onCreated?.(); setDeployOpen(false); setStep(0); setSubject(''); setDesc(''); setWorker(''); void goToCreatedMarket(sdk, router, r); }}
           onClose={() => setDeployOpen(false)}
         />
       )}
@@ -611,6 +630,7 @@ function DirectWizard({ sdk, account, agentId, feeBps, onCreated }: WizardProps)
 }
 
 function BountyWizard({ sdk, account, agentId, feeBps, onCreated }: WizardProps) {
+  const router = useRouter();
   const [step, setStep] = useState(0);
   const [subject, setSubject] = useState('');
   const [desc, setDesc] = useState('');
@@ -683,7 +703,7 @@ function BountyWizard({ sdk, account, agentId, feeBps, onCreated }: WizardProps)
               pool: toUnits(pool),
             }, account!);
           }}
-          onDone={() => { onCreated?.(); setDeployOpen(false); setStep(0); setSubject(''); setDesc(''); }}
+          onDone={(r) => { onCreated?.(); setDeployOpen(false); setStep(0); setSubject(''); setDesc(''); void goToCreatedMarket(sdk, router, r); }}
           onClose={() => setDeployOpen(false)}
         />
       )}
