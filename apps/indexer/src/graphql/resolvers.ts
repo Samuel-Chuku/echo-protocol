@@ -126,7 +126,7 @@ export const resolvers = {
       // whole address family so agent-run markets (requester = their DCW) appear too.
       if (a.requester) {
         const family = await addressFamily(a.requester);
-        conds.push(sql`LOWER(${markets.requester}) = ANY(${family})`);
+        conds.push(inArray(sql`LOWER(${markets.requester})`, family));
       }
       const rows = await db.select().from(markets)
         .where(conds.length ? and(...conds) : undefined)
@@ -153,7 +153,7 @@ export const resolvers = {
       // Case-insensitive requester match — markets.requester is stored as viem returned it (checksum).
       const family = await addressFamily(addr);
       const mine = await db.select({ id: markets.id }).from(markets)
-        .where(sql`LOWER(${markets.requester}) = ANY(${family})`);
+        .where(inArray(sql`LOWER(${markets.requester})`, family));
       const ids = mine.map((r) => r.id);
       const actorMatch = family.length > 1 ? inArray(events.actor, family) : eq(events.actor, addr);
       const ownership = ids.length ? or(actorMatch, inArray(events.marketId, ids)) : actorMatch;

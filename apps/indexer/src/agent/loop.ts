@@ -1,4 +1,4 @@
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { db } from '../db/client.js';
 import { agentMarkets, agentDecisions, applications, contents, attachments } from '../db/schema.js';
 import { config } from '../config.js';
@@ -29,7 +29,7 @@ async function getDecision(marketId: number, participant: string): Promise<Decis
 
 async function countStages(marketId: number, stages: string[]): Promise<number> {
   const [row] = await db.select({ c: sql<number>`count(*)` }).from(agentDecisions)
-    .where(and(eq(agentDecisions.marketId, marketId), sql`${agentDecisions.stage} = ANY(${stages})`));
+    .where(and(eq(agentDecisions.marketId, marketId), inArray(agentDecisions.stage, stages)));
   return Number(row?.c ?? 0);
 }
 
