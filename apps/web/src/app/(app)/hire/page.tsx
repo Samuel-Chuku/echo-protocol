@@ -33,8 +33,8 @@ export default function HirePage() {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold text-white mb-1">Post a job</h1>
-      <p className="text-sm text-white/50 mb-6">Create work, then manage it. Your identity: agentId {agentId || '—'}.</p>
+      <h1 className="text-3xl font-bold text-white mb-1.5">Post a job</h1>
+      <p className="text-base text-white/50 mb-6">Create work, then manage it. Your identity: agentId {agentId || '—'}.</p>
       <IdentityBanner />
       <CreateMarket sdk={sdk} account={account} agentId={agentId} feeBps={feeBps} onCreated={() => setCreatedAt(Date.now())} />
       <MyMarkets account={account} createdAt={createdAt} />
@@ -121,20 +121,20 @@ function DurationField({ label, amount, unit, onAmount, onUnit, hint, tip }: {
 }) {
   return (
     <label className="block" title={hint}>
-      <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-wide text-white/40">
+      <span className="inline-flex items-center gap-1 text-sm font-semibold text-white/70">
         {label}
         {tip && <InfoTip text={tip} label={label} />}
       </span>
-      <div className="mt-0.5 flex gap-1">
+      <div className="mt-1.5 flex gap-1.5">
         <input
           value={amount}
           onChange={(e) => onAmount(e.target.value)}
-          className="flex-1 min-w-0 rounded-md border border-white/10 bg-white/[0.04] px-2 py-1.5 text-sm text-white focus:border-teal-500/50 focus:outline-none"
+          className="flex-1 min-w-0 rounded-lg border border-white/10 bg-white/[0.04] px-3.5 py-2.5 text-base text-white focus:border-teal-500/50 focus:outline-none"
         />
         <select
           value={unit}
           onChange={(e) => onUnit(e.target.value as DurationUnit)}
-          className="rounded-md border border-white/10 bg-[#0d2d4a] px-2 py-1.5 text-sm text-white focus:border-teal-500/50 focus:outline-none"
+          className="rounded-lg border border-white/10 bg-[#0d2d4a] px-3 py-2.5 text-base text-white focus:border-teal-500/50 focus:outline-none"
         >
           <option value="minutes">min</option>
           <option value="hours">hours</option>
@@ -163,21 +163,21 @@ function LadderField({ label, value, onChange, tip, desc }: {
   label: string; value: string; onChange: (v: string) => void; tip: ReactNode; desc: string;
 }) {
   return (
-    <div className="flex items-center gap-3 rounded-lg border border-white/[0.08] bg-white/[0.02] px-3 py-2">
+    <div className="flex items-center gap-4 rounded-xl border border-white/[0.08] bg-white/[0.02] px-4 py-3">
       <div className="min-w-0 flex-1">
-        <span className="inline-flex items-center gap-1 text-sm font-medium text-white/80">
+        <span className="inline-flex items-center gap-1.5 text-base font-semibold text-white">
           {label}
           <InfoTip text={tip} label={label} />
         </span>
-        <p className="text-[11px] text-white/40 leading-tight">{desc}</p>
+        <p className="text-sm text-white/45 leading-snug">{desc}</p>
       </div>
-      <div className="flex items-center gap-1 shrink-0">
-        <span className="text-xs text-white/40">$</span>
+      <div className="flex items-center gap-1.5 shrink-0">
+        <span className="text-base text-white/40">$</span>
         <input
           value={value}
           onChange={(e) => onChange(e.target.value)}
           inputMode="decimal"
-          className="w-20 rounded-md border border-white/10 bg-white/[0.05] px-2 py-1.5 text-sm text-right font-mono text-white focus:border-teal-500/40 focus:outline-none"
+          className="w-28 rounded-lg border border-white/10 bg-white/[0.05] px-3 py-2 text-lg text-right font-mono font-semibold text-white focus:border-teal-500/40 focus:outline-none"
         />
       </div>
     </div>
@@ -187,9 +187,9 @@ function LadderField({ label, value, onChange, tip, desc }: {
 /** Live running total + platform fee, recalculated on every keystroke in the tier/payout step. */
 function LiveTotal({ label, totalHuman, feeBps }: { label: string; totalHuman: string; feeBps?: bigint }) {
   return (
-    <div className="rounded-lg border border-teal-500/20 bg-teal-500/[0.05] p-3 text-sm space-y-1.5">
-      <div className="flex justify-between"><span className="text-white/50">{label}</span><span className="font-mono text-white">${totalHuman} USDC</span></div>
-      <div className="flex justify-between"><span className="text-white/50">Platform fee{feeBps !== undefined ? ` (${Number(feeBps) / 100}% on payouts)` : ' on payouts'}</span><span className="font-mono text-teal-400">${feeOn(totalHuman, feeBps)} USDC est.</span></div>
+    <div className="rounded-xl border border-teal-500/20 bg-teal-500/[0.05] p-4 space-y-1.5">
+      <div className="flex items-baseline justify-between"><span className="text-sm font-medium text-white/60">{label}</span><span className="font-mono text-xl font-bold text-white">${totalHuman} <span className="text-xs font-sans font-normal text-white/40">USDC</span></span></div>
+      <div className="flex justify-between text-sm"><span className="text-white/50">Platform fee{feeBps !== undefined ? ` (${Number(feeBps) / 100}% on payouts)` : ' on payouts'}</span><span className="font-mono text-teal-400">${feeOn(totalHuman, feeBps)} USDC est.</span></div>
     </div>
   );
 }
@@ -240,22 +240,23 @@ function OpenWizard({ sdk, account, agentId, feeBps, onCreated }: WizardProps) {
   const tierTotal = usdc(tiers.reduce((sum, t) => sum + toUnits(t || '0'), 0n));
 
   return (
-    <div className={`${CARD_CLASS} max-w-2xl`}>
+    <div className={`${CARD_CLASS} w-full sm:p-8`}>
       <LockedTypeBadge mode={EchoMode.OpenMarket} />
       <ProgressSteps steps={['Details', 'Payout ladder', 'Rules & timing', 'Review']} current={step} />
 
       {/* Step 0 — what the job is */}
       {step === 0 && (
         <div className="space-y-3">
-          <p className="text-xs text-white/50">A <b className="text-white/70">reveal market</b> takes many hidden applications, then you unlock, grade, and advance the best ones round by round — paying more at each round.</p>
+          <p className="text-base text-white/60 leading-relaxed">A <b className="text-white font-semibold">reveal market</b> takes many hidden applications, then you unlock, grade, and advance the best ones round by round — paying more at each round.</p>
           <Field label="subject" value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="What workers see in browse" />
           <TextArea label="description" value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="Scope / terms" rows={4} />
-          <label className="flex items-start gap-2 rounded-lg border border-teal-500/20 bg-teal-500/[0.04] p-3 cursor-pointer">
-            <input type="checkbox" checked={agentMode} onChange={(e) => setAgentMode(e.target.checked)} className="mt-0.5 accent-teal-500" />
-            <span className="text-xs text-white/70">
-              <b className="text-teal-300">🤖 Run with an AI agent.</b> An autonomous agent (its own Circle wallet) screens
-              applicants&apos; public previews, reveals the promising ones for you, and auto-advances those clearly meeting
-              your guardrails — the rest it ranks for your review. You set the criteria + spend caps next.
+          <label className="flex items-start gap-3 rounded-xl border border-teal-500/25 bg-teal-500/[0.05] p-4 cursor-pointer transition hover:border-teal-500/45 hover:bg-teal-500/[0.08]">
+            <input type="checkbox" checked={agentMode} onChange={(e) => setAgentMode(e.target.checked)} className="mt-1 h-4 w-4 accent-teal-500" />
+            <span className="text-sm text-white/70 leading-relaxed">
+              <span className="block text-base font-bold text-teal-300 mb-0.5">🤖 Run with an AI agent</span>
+              An autonomous agent (its own Circle wallet) screens applicants&apos; public previews, reveals the promising
+              ones for you, and auto-advances those clearly meeting your guardrails — the rest it ranks for your review.
+              You set the criteria + spend caps next.
             </span>
           </label>
           <Button onClick={() => setStep(1)} disabled={!subject}>Next: payout ladder</Button>
@@ -265,7 +266,7 @@ function OpenWizard({ sdk, account, agentId, feeBps, onCreated }: WizardProps) {
       {/* Step 1 — the payout ladder (the 4 tier amounts) with plain-language meaning (#3) */}
       {step === 1 && (
         <div className="space-y-3">
-          <p className="text-xs text-white/50">Set what each round pays. Applicants climb the ladder as you advance them — you only pay a round when you advance someone into it.</p>
+          <p className="text-base text-white/60 leading-relaxed">Set what each round pays. Applicants climb the ladder as you advance them — <b className="text-white font-semibold">you only pay a round when you advance someone into it</b>.</p>
           <div className="space-y-1.5">
             <LadderField label="Reveal fee" value={tiers[0]} onChange={(v) => setTiers(tiers.map((x, j) => (j === 0 ? v : x)))}
               tip="The fee YOU pay to unlock and read one applicant's hidden submission. Set to 0 for no paid reveal — you grade applications directly instead."
@@ -291,8 +292,8 @@ function OpenWizard({ sdk, account, agentId, feeBps, onCreated }: WizardProps) {
       {/* Step 2 — rules & timing (escrow, stake, deadlines) — each carries a plain-language tooltip (#3/#5) */}
       {step === 2 && (
         <div className="space-y-3">
-          <p className="text-xs text-white/50">Fund the market and set the rules. Hover any <span className="text-teal-400">?</span> for a plain-language explanation.</p>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-1">
+          <p className="text-base text-white/60 leading-relaxed">Fund the market and set the rules. Hover any <span className="text-teal-400 font-semibold">?</span> for a plain-language explanation.</p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Field label="max applicants" value={maxApplicants} onChange={(e) => setMax(e.target.value)}
               tip="The most workers that can apply to this market. Escrow is sized from this." />
             <Field label="escrow USDC" value={totalEscrow}
@@ -302,7 +303,7 @@ function OpenWizard({ sdk, account, agentId, feeBps, onCreated }: WizardProps) {
 
           {/* Escrow is auto-computed from the payout ladder × max applicants; show the math + the hard
               floor so the requester never hits an opaque InsufficientEscrow revert (#2). */}
-          <div className={`rounded-lg border p-3 text-xs space-y-1 ${belowMin ? 'border-danger/40 bg-danger/[0.06]' : 'border-white/10 bg-white/[0.03]'}`}>
+          <div className={`rounded-xl border p-4 text-sm space-y-1.5 ${belowMin ? 'border-danger/40 bg-danger/[0.06]' : 'border-white/10 bg-white/[0.03]'}`}>
             <div className="flex justify-between"><span className="text-white/50">Recommended (covers everyone, every round)</span><span className="font-mono text-white/80">${usdc(recommended)}</span></div>
             <div className="flex justify-between"><span className="text-white/50">Contract minimum</span><span className="font-mono text-white/60">${usdc(minRequired)}</span></div>
             {escrowTouched && (
@@ -316,16 +317,16 @@ function OpenWizard({ sdk, account, agentId, feeBps, onCreated }: WizardProps) {
           </div>
 
           {/* #5 — the applicant stake, explained clearly */}
-          <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3 space-y-2">
+          <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 space-y-2">
             <Field label="applicant stake USDC (0 = none)" value={stake} onChange={(e) => setStake(e.target.value)}
               tip="USDC each applicant deposits to apply. It's HELD, not spent — refunded in full if they withdraw before you reveal them; forfeited to you only if you reveal them and they then fail to deliver. Deters spam applications." />
-            <p className="text-xs text-white/40">
-              Each applicant deposits this to apply — it&apos;s <b className="text-white/60">held, not spent</b>. Refunded if they
-              withdraw before you reveal them; forfeited to you if you reveal them and they ghost. Set <b className="text-white/60">0</b> for no stake.
+            <p className="text-sm text-white/45 leading-relaxed">
+              Each applicant deposits this to apply — it&apos;s <b className="text-white/70">held, not spent</b>. Refunded if they
+              withdraw before you reveal them; forfeited to you if you reveal them and they ghost. Set <b className="text-white/70">0</b> for no stake.
             </p>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-1">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <DurationField label="ghost deadline" amount={ghostAmount} unit={ghostUnit} onAmount={setGhostAmount} onUnit={setGhostUnit}
               tip="After you advance someone to the final round, how long they have to deliver before you can trigger the ghost penalty." />
             <DurationField label="flag window" amount={flagAmount} unit={flagUnit} onAmount={setFlagAmount} onUnit={setFlagUnit}
@@ -405,11 +406,11 @@ function OpenWizard({ sdk, account, agentId, feeBps, onCreated }: WizardProps) {
       {step === 3 && (
         <div className="space-y-4">
           <div>
-            <p className="text-sm font-semibold text-white mb-2">{subject}</p>
+            <p className="text-xl font-bold text-white mb-3">{subject}</p>
             <TierTrack steps={tierSteps} />
           </div>
-          <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3 text-sm space-y-1.5">
-            <div className="flex justify-between"><span className="text-white/50">Escrow to lock</span><span className="font-mono text-white">${totalEscrow} USDC</span></div>
+          <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 text-sm space-y-2">
+            <div className="flex items-baseline justify-between"><span className="text-white/50">Escrow to lock</span><span className="font-mono text-xl font-bold text-white">${totalEscrow} <span className="text-xs font-sans font-normal text-white/40">USDC</span></span></div>
             <div className="flex justify-between"><span className="text-white/50">Platform fee (on payouts)</span><span className="font-mono text-white/70">${feeOn(totalEscrow, feeBps)} USDC est.</span></div>
             <div className="flex justify-between"><span className="text-white/50">Max applicants</span><span className="font-mono text-white">{maxApplicants}</span></div>
             <div className="flex justify-between"><span className="text-white/50">Applicant stake</span><span className="font-mono text-white">{Number(stake) > 0 ? `$${stake} USDC` : 'none'}</span></div>
@@ -516,7 +517,7 @@ function DirectWizard({ sdk, account, agentId, feeBps, onCreated }: WizardProps)
   const totalHuman = usdc(total());
 
   return (
-    <div className={`${CARD_CLASS} max-w-2xl`}>
+    <div className={`${CARD_CLASS} w-full sm:p-8`}>
       <LockedTypeBadge mode={EchoMode.DirectJob} />
       <ProgressSteps steps={['Details', 'Milestones', 'Review & deploy']} current={step} />
 
@@ -620,7 +621,7 @@ function BountyWizard({ sdk, account, agentId, feeBps, onCreated }: WizardProps)
   const [deployOpen, setDeployOpen] = useState(false);
 
   return (
-    <div className={`${CARD_CLASS} max-w-2xl`}>
+    <div className={`${CARD_CLASS} w-full sm:p-8`}>
       <LockedTypeBadge mode={EchoMode.Bounty} />
       <ProgressSteps steps={['Details', 'Pool & payout', 'Review & deploy']} current={step} />
 
@@ -634,12 +635,12 @@ function BountyWizard({ sdk, account, agentId, feeBps, onCreated }: WizardProps)
 
       {step === 1 && (
         <div className="space-y-3">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-1">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Field label="pool USDC" value={pool} onChange={(e) => setPool(e.target.value)} />
             <Field label="payout per finding USDC" value={defaultAward} onChange={(e) => setDefaultAward(e.target.value)} />
           </div>
           <LiveTotal label="Pool" totalHuman={pool} feeBps={feeBps} />
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-1">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <Field label="review (days)" value={reviewDays} onChange={(e) => setReviewDays(e.target.value)} />
             <Field label="required proofs" value={requiredProofs} onChange={(e) => setProofs(e.target.value)} />
           </div>

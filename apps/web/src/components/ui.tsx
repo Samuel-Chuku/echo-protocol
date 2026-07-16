@@ -19,7 +19,7 @@ export const CARD_CLASS =
   'before:origin-left before:scale-x-0 before:bg-teal-500 before:transition-transform before:duration-200 hover:before:scale-x-100';
 
 export const INPUT_CLASS =
-  'mt-1 w-full px-3 py-2 text-sm rounded-lg bg-white/[0.05] border border-white/10 text-white ' +
+  'mt-1.5 w-full px-3.5 py-2.5 text-base rounded-lg bg-white/[0.05] border border-white/10 text-white ' +
   'placeholder:text-white/30 focus:outline-none focus:border-teal-500/40 transition-colors';
 
 /**
@@ -117,7 +117,7 @@ export function InfoTip({ text, label }: { text: ReactNode; label?: string }) {
 export function Field({ label, tip, ...props }: { label: string; tip?: ReactNode } & InputHTMLAttributes<HTMLInputElement>) {
   return (
     <label className="block">
-      <span className="inline-flex items-center gap-1 text-xs font-medium text-white/50">
+      <span className="inline-flex items-center gap-1 text-sm font-semibold text-white/70">
         {label}
         {tip && <InfoTip text={tip} label={label} />}
       </span>
@@ -129,7 +129,7 @@ export function Field({ label, tip, ...props }: { label: string; tip?: ReactNode
 export function TextArea({ label, ...props }: { label: string } & TextareaHTMLAttributes<HTMLTextAreaElement>) {
   return (
     <label className="block">
-      <span className="text-xs font-medium text-white/50">{label}</span>
+      <span className="text-sm font-semibold text-white/70">{label}</span>
       <textarea {...props} className={`${INPUT_CLASS} resize-none`} />
     </label>
   );
@@ -138,7 +138,7 @@ export function TextArea({ label, ...props }: { label: string } & TextareaHTMLAt
 export function Select({ label, children, ...props }: { label: string; children: ReactNode } & SelectHTMLAttributes<HTMLSelectElement>) {
   return (
     <label className="block">
-      <span className="text-xs font-medium text-white/50">{label}</span>
+      <span className="text-sm font-semibold text-white/70">{label}</span>
       <select {...props} className={INPUT_CLASS}>{children}</select>
     </label>
   );
@@ -284,15 +284,15 @@ export function ProgressSteps({ steps, current }: { steps: string[]; current: nu
         const done = i < current;
         const active = i === current;
         return (
-          <li key={label} className="flex items-center gap-2 flex-1">
+          <li key={label} className="flex items-center gap-2.5 flex-1">
             <span
-              className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-semibold transition ${
+              className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-sm font-bold transition ${
                 done ? 'bg-teal-500 text-ink' : active ? 'border-2 border-teal-500 text-teal-400' : 'border border-white/15 text-white/40'
               }`}
             >
               {i + 1}
             </span>
-            <span className={`hidden sm:inline text-sm font-medium ${active ? 'text-white' : 'text-white/40'}`}>{label}</span>
+            <span className={`hidden sm:inline text-base font-semibold ${active ? 'text-white' : 'text-white/40'}`}>{label}</span>
             {i < steps.length - 1 && <span className="h-px flex-1 bg-white/10" />}
           </li>
         );
