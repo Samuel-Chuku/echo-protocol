@@ -1,11 +1,23 @@
-import { createPublicClient, createWalletClient, http, type Chain, type PublicClient, type WalletClient } from 'viem';
+import { createPublicClient, createWalletClient, fallback, http, type Chain, type PublicClient, type WalletClient } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { arcTestnet } from '@echo/sdk';
 import { config } from './config.js';
 
+// Same multi-provider fallback as the indexer's chain.ts (see the incident note there): Arc has
+// four independently rate-limited public endpoints; never let one provider's view of our IP take
+// the dashboard's reads down. RPC_URL stays first; override the list with comma-separated RPC_URLS.
+const FALLBACK_URLS = [
+  'https://rpc.drpc.testnet.arc.network',
+  'https://rpc.quicknode.testnet.arc.network',
+  'https://rpc.blockdaemon.testnet.arc.network',
+];
+const urls = process.env.RPC_URLS
+  ? process.env.RPC_URLS.split(',').map((u) => u.trim()).filter(Boolean)
+  : [config.rpcUrl, ...FALLBACK_URLS.filter((u) => u !== config.rpcUrl)];
+
 export const publicClient: PublicClient = createPublicClient({
   chain: arcTestnet as unknown as Chain,
-  transport: http(config.rpcUrl),
+  transport: fallback(urls.map((u) => http(u))),
 });
 
 // Local-account signer for owner-only writes. Undefined when DEPLOYER_PRIVATE_KEY is unset
