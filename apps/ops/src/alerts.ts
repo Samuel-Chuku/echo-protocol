@@ -32,6 +32,16 @@ function humanDuration(s: number): string {
 
 /** Compute the operator health signals shown as the Overview alert banner. */
 export async function alerts(): Promise<Alert[]> {
+  // Same reasoning as the snapshot cache (monitor.ts): up to 3 RPC calls per build, polled every
+  // 6s by an open dashboard — cache so watching the dashboard doesn't eat the indexer's RPC quota.
+  if (alertsCache && Date.now() - alertsCache.at < 25_000) return alertsCache.data;
+  const data = await buildAlerts();
+  alertsCache = { at: Date.now(), data };
+  return data;
+}
+let alertsCache: { at: number; data: Alert[] } | null = null;
+
+async function buildAlerts(): Promise<Alert[]> {
   const out: Alert[] = [];
   const now = Math.floor(Date.now() / 1000);
 

@@ -25,6 +25,10 @@ services:
       APP_DIR: apps/indexer
       # Tee console output to the shared log volume so the ops dashboard can tail it (/api/logs).
       LOG_FILE: /var/log/echo/indexer.log
+      # Arc's public RPC rate-limits per IP; 4s polling was part of what got us penalized. 15s
+      # steady-state is plenty for a feed UI. This `environment` entry outranks apps/indexer/.env,
+      # so the knob is INDEXER_POLL_MS in the VPS root .env.
+      POLL_INTERVAL_MS: ${INDEXER_POLL_MS:-15000}
     env_file: [apps/indexer/.env]
     restart: unless-stopped
     expose: ["4000"]

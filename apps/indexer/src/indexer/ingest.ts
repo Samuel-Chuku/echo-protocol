@@ -94,9 +94,14 @@ const MIN_BATCH = 50n;
 const isRateLimit = (e: unknown): boolean =>
   /request limit|rate limit|too many request|429|-32005/i.test(String((e as Error)?.message ?? e));
 
-/** Exponential backoff for rate limiting: 5s → 10s → … → 2min cap. */
+/** Exponential backoff for rate limiting: 5s → 10s → … → 2min cap. Past LONG_STREAK the cap jumps
+ *  to 10min: providers that answer "request limit reached" typically impose a PENALTY WINDOW that
+ *  every further request renews — after this many consecutive refusals the only way out is to go
+ *  properly quiet, not to keep knocking every 2 minutes. */
 const RATE_LIMIT_BASE_MS = 5_000;
 const RATE_LIMIT_CAP_MS = 120_000;
+const RATE_LIMIT_LONG_STREAK = 8;
+const RATE_LIMIT_LONG_CAP_MS = 600_000;
 
 /** Pacing between successful backfill batches so a long catch-up doesn't re-trip the limit. */
 const BACKFILL_PACE_MS = 300;
@@ -163,7 +168,8 @@ export async function runIngestLoop(): Promise<void> {
           // SAME range once the window clears.
           if (isRateLimit(e)) {
             rateLimitStreak++;
-            const wait = Math.min(RATE_LIMIT_BASE_MS * 2 ** (rateLimitStreak - 1), RATE_LIMIT_CAP_MS);
+            const cap = rateLimitStreak >= RATE_LIMIT_LONG_STREAK ? RATE_LIMIT_LONG_CAP_MS : RATE_LIMIT_CAP_MS;
+            const wait = Math.min(RATE_LIMIT_BASE_MS * 2 ** (rateLimitStreak - 1), cap);
             // Some providers answer "request limit reached" for a too-large SPAN as well as for a
             // too-busy window — indistinguishable from here. Waiting alone can then wedge forever
             // on one range, so after every 3rd consecutive hit, ALSO try a smaller span; a shrink
