@@ -65,6 +65,14 @@ async function indexRange(fromBlock: bigint, toBlock: bigint): Promise<void> {
     try {
       res = await applyEvent(eventName, args, { block: Number(log.blockNumber), now });
     } catch (e) {
+      // Reducers do their own RPC reads (MarketCreated re-reads getMarket etc). If one of those
+      // is rate-limited/transient, swallowing it permanently drops the DERIVED row while the raw
+      // event is kept and the cursor advances — market 8 vanished from the markets table exactly
+      // this way. Fail the whole range instead: the caller backs off and replays it, and reducers
+      // are replay-safe (insert onConflictDoNothing + recompute-not-increment).
+      if (isRateLimit(e) || /rpc request failed|http request failed|timeout/i.test((e as Error).message)) throw e;
+      // A deterministic reducer bug, by contrast, would freeze ingest forever if rethrown — for
+      // those, keep the old behavior: log, store the raw event, move on.
       console.error('[reduce]', eventName, (e as Error).message);
       res = { marketId: args.marketId !== undefined ? Number(args.marketId) : null, actor: null };
     }
