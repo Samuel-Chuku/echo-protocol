@@ -128,6 +128,13 @@ export async function indexerCursor(): Promise<number | null> {
 
 /** Rewind the indexer cursor to force a re-index from `block`. The running loop picks it up next poll. */
 export async function setIndexerCursor(block: number): Promise<void> {
+  // Keep the pre-rewind cursor in a sibling row first — the dashboard shows it as "before
+  // re-index" so an operator can tell how far back they jumped (and where "caught up" is).
+  await sql`
+    INSERT INTO cursor (id, last_block)
+    SELECT 'reindex-prev', last_block FROM cursor WHERE id = 'head'
+    ON CONFLICT (id) DO UPDATE SET last_block = EXCLUDED.last_block
+  `;
   await sql`
     INSERT INTO cursor (id, last_block) VALUES ('head', ${block})
     ON CONFLICT (id) DO UPDATE SET last_block = ${block}

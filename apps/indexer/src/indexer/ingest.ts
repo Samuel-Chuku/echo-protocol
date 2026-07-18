@@ -101,15 +101,30 @@ const RATE_LIMIT_CAP_MS = 120_000;
 /** Pacing between successful backfill batches so a long catch-up doesn't re-trip the limit. */
 const BACKFILL_PACE_MS = 300;
 
+/**
+ * Live loop state for the health endpoint. The DB cursor only moves when a batch COMMITS — during
+ * a wedge (or a long backfill) it can sit far from where the loop actually is, and from outside
+ * the two are indistinguishable. This is the loop's own testimony: current position + what it's
+ * doing right now. Exposed via GraphQL `health` and shown on the ops dashboard.
+ */
+export const ingestStatus = { block: 0, state: 'starting', updatedAt: 0 };
+const setStatus = (block: bigint, state: string) => {
+  ingestStatus.block = Number(block);
+  ingestStatus.state = state;
+  ingestStatus.updatedAt = Math.floor(Date.now() / 1000);
+};
+
 /** Backfill from the cursor to head, then poll head forever. */
 export async function runIngestLoop(): Promise<void> {
   let from = (await getCursor()) + 1n;
   let batch = config.batchSize; // adaptive: halves on RPC failures, grows back on success
   let rateLimitStreak = 0; // consecutive rate-limit hits anywhere in the loop → exponential backoff
   console.log(`[ingest] starting from block ${from}`);
+  setStatus(from, 'starting');
   for (;;) {
     try {
       if (await isIngestPaused()) {
+        setStatus(from, 'paused (ops flag)');
         await sleep(config.pollIntervalMs);
         continue;
       }
@@ -123,6 +138,13 @@ export async function runIngestLoop(): Promise<void> {
       const head = await publicClient.getBlockNumber();
       let failures = 0; // consecutive non-rate-limit failures on the CURRENT range
       while (from <= head) {
+        // Rewinds must be noticed MID-backfill too — this loop can run for hours, and the outer
+        // check alone means an ops "re-index" during it is silently clobbered by the next commit.
+        const rewound = (await getCursor()) + 1n;
+        if (rewound < from) {
+          console.log(`[ingest] cursor rewound externally → re-indexing from block ${rewound}`);
+          from = rewound;
+        }
         const to = from + batch - 1n > head ? head : from + batch - 1n;
         try {
           await indexRange(from, to);
@@ -130,18 +152,28 @@ export async function runIngestLoop(): Promise<void> {
           from = to + 1n;
           failures = 0;
           rateLimitStreak = 0;
+          setStatus(from, from <= head ? 'backfilling' : 'at head');
           // Healthy batch → grow back toward the configured size (we may have shrunk below).
           if (batch < config.batchSize) batch = batch * 2n > config.batchSize ? config.batchSize : batch * 2n;
           if (from <= head) await sleep(BACKFILL_PACE_MS); // pace the backfill, stay under the limit
         } catch (e) {
           const msg = (e as Error).message.slice(0, 120);
-          // Rate limited → the request window is exhausted; retrying fast or shrinking the span
-          // only digs deeper (prod froze ~190k blocks behind doing exactly that). Back off
-          // exponentially and retry the SAME range at the SAME size once the window clears.
+          // Rate limited → the request window is exhausted; retrying fast only digs deeper (prod
+          // froze ~190k blocks behind doing exactly that). Back off exponentially and retry the
+          // SAME range once the window clears.
           if (isRateLimit(e)) {
             rateLimitStreak++;
             const wait = Math.min(RATE_LIMIT_BASE_MS * 2 ** (rateLimitStreak - 1), RATE_LIMIT_CAP_MS);
+            // Some providers answer "request limit reached" for a too-large SPAN as well as for a
+            // too-busy window — indistinguishable from here. Waiting alone can then wedge forever
+            // on one range, so after every 3rd consecutive hit, ALSO try a smaller span; a shrink
+            // costs nothing if the real cause was the window (it grows back on the next success).
+            if (rateLimitStreak % 3 === 0 && batch > MIN_BATCH) {
+              batch = batch / 2n < MIN_BATCH ? MIN_BATCH : batch / 2n;
+              console.warn(`[ingest] sustained rate-limit on ${from}-${to} — also shrinking to batch=${batch}`);
+            }
             console.warn(`[ingest] rate-limited on ${from}-${to} — backing off ${wait / 1000}s (streak ${rateLimitStreak})`);
+            setStatus(from, `rate-limited (backoff ${wait / 1000}s, streak ${rateLimitStreak})`);
             await sleep(wait);
             continue;
           }
@@ -150,6 +182,7 @@ export async function runIngestLoop(): Promise<void> {
           // shrink the batch (size-related caps), and only surface the error when even the minimum
           // span keeps failing. Cursor progress is preserved per-range throughout.
           failures++;
+          setStatus(from, `retrying range (${msg})`);
           if (failures <= 3) {
             console.warn(`[ingest] range ${from}-${to} failed (attempt ${failures}: ${msg}) — retrying same range`);
             await sleep(1000 * failures);
@@ -164,6 +197,7 @@ export async function runIngestLoop(): Promise<void> {
           throw e;
         }
       }
+      setStatus(from, 'at head');
     } catch (e) {
       // Rate limits can also hit outside indexRange (e.g. getBlockNumber). A flat short sleep here
       // is how the loop used to hammer a throttled endpoint every 4s forever — back off instead.
@@ -171,10 +205,12 @@ export async function runIngestLoop(): Promise<void> {
         rateLimitStreak++;
         const wait = Math.min(RATE_LIMIT_BASE_MS * 2 ** (rateLimitStreak - 1), RATE_LIMIT_CAP_MS);
         console.warn(`[ingest] rate-limited at head poll — backing off ${wait / 1000}s (streak ${rateLimitStreak})`);
+        setStatus(from, `rate-limited at head poll (backoff ${wait / 1000}s, streak ${rateLimitStreak})`);
         await sleep(wait);
         continue;
       }
       console.error('[ingest] error:', (e as Error).message);
+      setStatus(from, `error: ${(e as Error).message.slice(0, 120)}`);
     }
     await sleep(config.pollIntervalMs);
   }

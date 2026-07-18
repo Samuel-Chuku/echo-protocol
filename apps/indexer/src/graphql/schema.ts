@@ -168,5 +168,13 @@ export const typeDefs = /* GraphQL */ `
     lagBlocks: Int!
     markets: Int!
     events: Int!
+    "The ingest loop's LIVE in-memory position — the cursor (lastBlock) only moves on commit, so during a backfill or a stall these two tell different stories."
+    ingestBlock: Int!
+    "What the loop is doing right now: backfilling / at head / rate-limited (backoff …) / retrying / paused / error."
+    ingestState: String!
+    "Unix time the loop last reported in — a stale value means the loop itself is stuck or dead."
+    ingestUpdatedAt: Int!
+    "The cursor value from just before the last ops re-index, if one ever happened."
+    prevCursor: Int
   }
 `;

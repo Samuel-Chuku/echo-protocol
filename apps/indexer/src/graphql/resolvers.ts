@@ -5,6 +5,7 @@ import { db } from '../db/client.js';
 import { markets, applications, findings, milestones, disputes, events, cursor, reputation, contents, attachments, agentWallets } from '../db/schema.js';
 import { publicClient } from '../chain.js';
 import { config } from '../config.js';
+import { ingestStatus } from '../indexer/ingest.js';
 
 const C = CONTRACTS.arcTestnet;
 
@@ -240,6 +241,8 @@ export const resolvers = {
 
     health: async () => {
       const [cur] = await db.select().from(cursor).where(eq(cursor.id, 'head')).limit(1);
+      // 'reindex-prev' is written by the ops reindex route: the cursor as it was before the rewind.
+      const [prev] = await db.select().from(cursor).where(eq(cursor.id, 'reindex-prev')).limit(1);
       const lastBlock = cur?.lastBlock ?? 0;
       let headBlock = lastBlock;
       try { headBlock = Number(await publicClient.getBlockNumber()); } catch { /* offline */ }
@@ -248,6 +251,8 @@ export const resolvers = {
       return {
         lastBlock, headBlock, lagBlocks: Math.max(0, headBlock - lastBlock),
         markets: Number(mCount?.c ?? 0), events: Number(eCount?.c ?? 0),
+        ingestBlock: ingestStatus.block, ingestState: ingestStatus.state, ingestUpdatedAt: ingestStatus.updatedAt,
+        prevCursor: prev?.lastBlock ?? null,
       };
     },
   },

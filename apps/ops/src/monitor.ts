@@ -11,17 +11,24 @@ async function ownerOf(address: `0x${string}`): Promise<string | null> {
   }
 }
 
-async function pingIndexer(): Promise<boolean> {
+type IngestHealth = { ingestBlock: number; ingestState: string; ingestUpdatedAt: number; prevCursor: number | null };
+
+/** One GraphQL round-trip doubles as the liveness ping AND fetches the ingest loop's live state
+ *  (in-memory position + what it's doing) — the DB cursor alone can't tell a stall from a backfill. */
+async function pingIndexer(): Promise<IngestHealth | null> {
   try {
     const res = await fetch(config.indexerGraphqlUrl, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ query: '{ __typename }' }),
+      body: JSON.stringify({ query: '{ health { ingestBlock ingestState ingestUpdatedAt prevCursor } }' }),
       signal: AbortSignal.timeout(2500),
     });
-    return res.ok;
+    if (!res.ok) return null;
+    const body = await res.json().catch(() => null) as { data?: { health?: IngestHealth } } | null;
+    // An older indexer image without the ingest fields still counts as "up".
+    return body?.data?.health ?? { ingestBlock: 0, ingestState: 'unknown (indexer image predates ingest status)', ingestUpdatedAt: 0, prevCursor: null };
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -30,7 +37,7 @@ export async function snapshot() {
   const c = config.contracts;
   const deployer = ownerAccount?.address ?? null;
 
-  const [head, cursor, disputes, events, indexerUp] = await Promise.all([
+  const [head, cursor, disputes, events, ingest] = await Promise.all([
     publicClient.getBlockNumber().catch(() => null),
     indexerCursor(),
     disputeCounts(),
@@ -63,10 +70,16 @@ export async function snapshot() {
       rpcUrl: config.rpcUrl,
     },
     indexer: {
-      up: indexerUp,
+      up: ingest != null,
       cursor,
       lag: head != null && cursor != null ? Number(head) - cursor : null,
       events,
+      // Live loop state (vs `cursor`, which only moves on commit): where ingestion actually is,
+      // what it's doing, when it last reported, and the cursor as it was before the last re-index.
+      ingestBlock: ingest?.ingestBlock ?? null,
+      ingestState: ingest?.ingestState ?? null,
+      ingestUpdatedAt: ingest?.ingestUpdatedAt ?? null,
+      prevCursor: ingest?.prevCursor ?? null,
     },
     disputes,
     disputeResolver: drConfig

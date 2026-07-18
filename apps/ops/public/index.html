@@ -110,6 +110,7 @@
     <div class="tab" data-tab="activity">Activity</div>
     <div class="tab" data-tab="disputes">Disputes</div>
     <div class="tab" data-tab="audit">Audit</div>
+    <div class="tab" data-tab="logs">Logs</div>
     <div class="tab" data-tab="controls">Controls</div>
     <div class="tab" data-tab="flags">Flags</div>
   </nav>
@@ -142,7 +143,10 @@
           <h2>Chain &amp; Indexer</h2>
           <div class="row"><span class="k">Chain head</span><span class="v mono" id="s-head">—</span></div>
           <div class="row"><span class="k">Indexer</span><span class="v" id="s-indexer">—</span></div>
-          <div class="row"><span class="k">Cursor block</span><span class="v mono" id="s-cursor">—</span></div>
+          <div class="row"><span class="k">Cursor block (committed)</span><span class="v mono" id="s-cursor">—</span></div>
+          <div class="row"><span class="k">Ingest at (live)</span><span class="v mono" id="s-ingest">—</span></div>
+          <div class="row"><span class="k">Ingest state</span><span class="v" id="s-ingest-state">—</span></div>
+          <div class="row"><span class="k">Before re-index</span><span class="v mono" id="s-prev">—</span></div>
           <div class="row"><span class="k">Lag (blocks)</span><span class="v mono" id="s-lag">—</span></div>
           <div class="row"><span class="k">Disputes (open / total)</span><span class="v mono" id="s-disputes">—</span></div>
         </section>
@@ -219,6 +223,18 @@
           <tbody id="auBody"><tr><td colspan="5" class="hint">Loading…</td></tr></tbody>
         </table>
       </div>
+    </section>
+
+    <!-- LOGS -->
+    <section class="pane" id="pane-logs">
+      <div class="filters">
+        <select id="lgApp"><option value="indexer">indexer</option><option value="ops">ops</option></select>
+        <select id="lgLines"><option>200</option><option>500</option><option>1000</option></select>
+        <button class="mini" id="lgApply">Apply</button>
+        <label class="hint" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="lgFollow" checked style="width:auto"> follow</label>
+        <span class="hint" id="lgMeta"></span>
+      </div>
+      <pre id="lgOut" class="mono" style="background:rgba(0,0,0,.35);border:1px solid rgba(255,255,255,.08);border-radius:8px;padding:12px;height:60vh;overflow:auto;white-space:pre-wrap;word-break:break-all;font-size:12px;line-height:1.5;margin:0">Loading…</pre>
     </section>
 
     <!-- CONTROLS -->
@@ -335,6 +351,15 @@
         $('s-head').textContent = s.chain.head ?? '—';
         $('s-indexer').innerHTML = s.indexer.up ? '<span class="ok">up</span>' : '<span class="bad">down</span>';
         $('s-cursor').textContent = s.indexer.cursor ?? '—';
+        // Live loop position + state — a moving ingestBlock with a frozen cursor means backfilling;
+        // both frozen with a stale report time means the loop is wedged. Stale = no report in >2min.
+        $('s-ingest').textContent = s.indexer.ingestBlock || '—';
+        const st = s.indexer.ingestState;
+        const stale = s.indexer.ingestUpdatedAt && (Date.now() / 1000 - s.indexer.ingestUpdatedAt) > 120;
+        $('s-ingest-state').innerHTML = st
+          ? `<span class="${/backfilling|at head/.test(st) && !stale ? 'ok' : 'warn'}">${esc(st)}${stale ? ' · no report for ' + Math.round((Date.now() / 1000 - s.indexer.ingestUpdatedAt) / 60) + 'm' : ''}</span>`
+          : '—';
+        $('s-prev').textContent = s.indexer.prevCursor ?? '—';
         const lag = s.indexer.lag; $('s-lag').textContent = lag ?? '—'; $('s-lag').className = 'v mono ' + (lag == null ? '' : lag > 5000 ? 'warn' : 'ok');
         $('s-disputes').textContent = s.disputes.open + ' / ' + s.disputes.total;
         $('s-deployer').textContent = short(s.deployer.address);
@@ -468,6 +493,23 @@
       } catch (e) { if (String(e.message) !== '401') $('auBody').innerHTML = `<tr><td colspan="5" class="bad">${esc(e.message)}</td></tr>`; }
     }
 
+    // ── Logs ────────────────────────────────────────────────────────────────
+    // Tails the shared log volume via /api/logs. "Follow" re-fetches on the global 6s tick and
+    // keeps the view pinned to the bottom — unless you've scrolled up to read something.
+    async function loadLogs() {
+      try {
+        const r = await api(`/api/logs?app=${$('lgApp').value}&lines=${$('lgLines').value}`);
+        const el = $('lgOut');
+        const pinned = el.dataset.init !== '1' || el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+        el.textContent = r.lines.join('\n') || '(log file is empty)';
+        $('lgMeta').textContent = r.size ? `${(r.size / 1024).toFixed(0)} KB · last write ${fmtTime(r.mtime)}` : '';
+        if (pinned) el.scrollTop = el.scrollHeight;
+        el.dataset.init = '1';
+      } catch (e) { if (String(e.message) !== '401') $('lgOut').textContent = 'error: ' + e.message; }
+    }
+    $('lgApply').addEventListener('click', loadLogs);
+    $('lgApp').addEventListener('change', () => { $('lgOut').dataset.init = ''; loadLogs(); });
+
     // ── Flags ───────────────────────────────────────────────────────────────
     async function loadFlags() {
       try {
@@ -520,7 +562,7 @@
 
     // ── Tabs + polling ──────────────────────────────────────────────────────
     const loadControls = () => { loadOverview(); loadJurors(); };
-    const LOADERS = { overview: loadOverview, markets: loadMarkets, activity: loadActivity, disputes: loadDisputes, audit: loadAudit, flags: loadFlags, controls: loadControls };
+    const LOADERS = { overview: loadOverview, markets: loadMarkets, activity: loadActivity, disputes: loadDisputes, audit: loadAudit, logs: loadLogs, flags: loadFlags, controls: loadControls };
     function switchTab(name) {
       activeTab = name;
       document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t.dataset.tab === name));
@@ -533,6 +575,7 @@
     function tick() {
       if (activeTab === 'overview' || activeTab === 'controls') loadOverview();
       else if (activeTab === 'activity' && $('aLive').checked) loadActivity();
+      else if (activeTab === 'logs' && $('lgFollow').checked) loadLogs();
     }
 
     // ── Auth gate ───────────────────────────────────────────────────────────
