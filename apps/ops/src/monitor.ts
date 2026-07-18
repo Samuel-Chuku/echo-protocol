@@ -34,6 +34,17 @@ async function pingIndexer(): Promise<IngestHealth | null> {
 
 /** One snapshot for the status panel: chain head, indexer lag, deployer balance, dispute config, owner checks. */
 export async function snapshot() {
+  // ~12 RPC calls per build, and the overview tab polls every 6s — uncached, an open dashboard
+  // burns the VPS IP's request quota and rate-limits the INDEXER off the same endpoint. 25s is
+  // fresh enough for ops eyes; ownership/config values change on the order of deploys, not seconds.
+  if (snapCache && Date.now() - snapCache.at < 25_000) return snapCache.data;
+  const data = await buildSnapshot();
+  snapCache = { at: Date.now(), data };
+  return data;
+}
+let snapCache: { at: number; data: Awaited<ReturnType<typeof buildSnapshot>> } | null = null;
+
+async function buildSnapshot() {
   const c = config.contracts;
   const deployer = ownerAccount?.address ?? null;
 

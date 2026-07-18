@@ -1,4 +1,6 @@
 import 'dotenv/config'; // load .env before any module reads process.env (e.g. @echo/sdk constants)
+import { teeConsoleToFile } from './logfile.js';
+teeConsoleToFile(); // before anything logs, so the ops log viewer sees the boot banner too
 import { migrate } from './db/client.js';
 import { runIngestLoop } from './indexer/ingest.js';
 import { runAgentLoop } from './agent/loop.js';

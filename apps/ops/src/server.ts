@@ -8,6 +8,7 @@ import { listFlags, setFlag, indexerCursor, setIndexerCursor, recordAudit, listA
 import { snapshot } from './monitor.js';
 import { listMarkets, marketDetail, activity, metrics, listDisputes, jurorRoster } from './queries.js';
 import { alerts } from './alerts.js';
+import { tailLog, logApps } from './logs.js';
 import {
   seatJuror,
   setModeAStake,
@@ -55,6 +56,12 @@ export function startServer(): Promise<void> {
   app.get('/api/metrics', requireAdmin, h(async (_req, res) => res.json(await metrics())));
   app.get('/api/alerts', requireAdmin, h(async (_req, res) => res.json(await alerts())));
   app.get('/api/audit', requireAdmin, h(async (req, res) => res.json(await listAudit(Number(req.query.limit) || 100))));
+
+  // Live log tail from the shared `echo_logs` volume (each app tees console → file, see logfile.ts).
+  // ?app=indexer|ops, ?lines=200. The dashboard polls this for a follow-mode view.
+  app.get('/api/logs', requireAdmin, h(async (req, res) =>
+    res.json(tailLog(String(req.query.app || 'indexer'), Number(req.query.lines) || 200))));
+  app.get('/api/logs/apps', requireAdmin, h(async (_req, res) => res.json(logApps())));
 
   app.get('/api/markets', requireAdmin, h(async (req, res) => {
     const q = req.query;

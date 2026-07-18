@@ -23,9 +23,13 @@ services:
       context: .
     environment:
       APP_DIR: apps/indexer
+      # Tee console output to the shared log volume so the ops dashboard can tail it (/api/logs).
+      LOG_FILE: /var/log/echo/indexer.log
     env_file: [apps/indexer/.env]
     restart: unless-stopped
     expose: ["4000"]
+    volumes:
+      - echo_logs:/var/log/echo
 
   ops:
     image: ghcr.io/samuel-chuku/echo-backend:latest
@@ -39,8 +43,13 @@ services:
       APP_DIR: apps/ops
       OPS_HOST: 0.0.0.0
       INDEXER_GRAPHQL_URL: http://indexer:4000/graphql
+      # Ops both writes its own log here and serves tails of every app's log (/api/logs).
+      LOG_FILE: /var/log/echo/ops.log
+      LOG_DIR: /var/log/echo
     restart: unless-stopped
     expose: ["4100"]
+    volumes:
+      - echo_logs:/var/log/echo
 
   caddy:
     image: caddy:2-alpine
@@ -61,3 +70,6 @@ services:
 volumes:
   caddy_data:
   caddy_config:
+  # Shared by indexer + ops: each tees its console to <app>.log (5MB, one rotation — bounded), the
+  # ops /api/logs endpoint tails them for the dashboard's Logs tab.
+  echo_logs:
