@@ -296,7 +296,10 @@
 
     function toast(msg, kind) { const t = $('toast'); t.textContent = msg; t.className = 'show ' + (kind || ''); setTimeout(() => (t.className = kind || ''), 3200); }
     async function api(path, opts = {}) {
-      const res = await fetch(path, { ...opts, headers: { 'content-type': 'application/json', authorization: 'Bearer ' + token, ...(opts.headers || {}) } });
+      // Session token goes in x-ops-token — NEVER Authorization. That header belongs to the Caddy
+      // basic_auth gate in front of this app; overriding it with a Bearer token makes Caddy 401
+      // every call and the browser re-prompt its basic-auth dialog forever.
+      const res = await fetch(path, { ...opts, headers: { 'content-type': 'application/json', 'x-ops-token': token, ...(opts.headers || {}) } });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) { if (res.status === 401) lock(); throw new Error(body.error || res.status); }
       return body;

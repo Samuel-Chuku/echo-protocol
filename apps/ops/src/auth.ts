@@ -44,8 +44,14 @@ export function requireAdmin(req: Request, res: Response, next: NextFunction): v
     res.status(503).json({ error: 'admin disabled — OPS_TOTP_SECRET is not set on the server' });
     return;
   }
+  // The session token rides in x-ops-token, NOT Authorization: the Caddy basic_auth gate in front
+  // of this app owns the Authorization header (Basic …), and a request can only carry one — a
+  // Bearer token there knocks out the Basic credentials and Caddy 401s every API call (the
+  // "basic-auth dialog keeps reappearing after TOTP login" bug). Bearer is kept as a fallback for
+  // direct/ungated access (local dev, curl inside the compose network).
   const header = req.header('authorization') || '';
-  const token = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
+  const token = req.header('x-ops-token')?.trim()
+    || (header.startsWith('Bearer ') ? header.slice(7).trim() : '');
   if (!validateSession(token, clientIp(req))) {
     res.status(401).json({ error: 'unauthorized' });
     return;
