@@ -55,7 +55,11 @@ async function assertCanReadContent(
     const [m] = await db.select().from(markets).where(eq(markets.id, marketId)).limit(1);
     if (!m) throw new Error('Market not found');
     const isParticipant = v === k;
-    const isRequester = v === m.requester.toLowerCase();
+    // "Requester" includes the human owner behind an agent-run market: on-chain the requester is
+    // their Circle DCW, but the owner paid for the reveal (from the DCW they fund) and reviews the
+    // deferred applicants — same read rights, still gated behind reveal below.
+    const requesterFamily = await addressFamily(v);
+    const isRequester = requesterFamily.includes(m.requester.toLowerCase());
     if (!isParticipant && !isRequester) throw new Error('Forbidden');
     if (isRequester) {
       const [app] = await db.select().from(applications)
@@ -68,7 +72,11 @@ async function assertCanReadContent(
       address: C.agenticCommerce, abi: AgenticCommerceABI,
       functionName: 'getJob', args: [BigInt(key)],
     }) as { provider: Address; evaluator: Address };
-    if (![job.provider.toLowerCase(), job.evaluator.toLowerCase()].includes(v)) throw new Error('Forbidden');
+    // Evaluator match runs across the viewer's address family: on agent-run markets the evaluator is
+    // the requester's DCW, and the human owner reviews deferred submissions from the manage page.
+    const family = await addressFamily(v);
+    const ok = job.provider.toLowerCase() === v || family.includes(job.evaluator.toLowerCase());
+    if (!ok) throw new Error('Forbidden');
   } else {
     throw new Error('Unknown content kind');
   }

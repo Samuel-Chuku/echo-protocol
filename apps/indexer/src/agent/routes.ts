@@ -72,14 +72,47 @@ async function ensureAgentIdentity(owner: string, walletId: string, walletAddres
 export function mountAgentRoutes(app: Express): void {
   app.get('/agent/market/:id', wrap(async (req, res) => {
     const [row] = await db.select().from(agentMarkets).where(eq(agentMarkets.marketId, Number(req.params.id))).limit(1);
-    res.json({ agentRun: !!row, walletAddress: row?.walletAddress ?? null, enabled: row ? row.enabled === 1 : false });
+    // Surface the HUMAN owner behind the DCW: on-chain the market's requester is the agent wallet,
+    // and the owner link only exists here (agent_wallets). The UI shows the real requestor with it.
+    const [w] = row
+      ? await db.select().from(agentWallets).where(eq(agentWallets.walletAddress, row.walletAddress)).limit(1)
+      : [];
+    res.json({
+      agentRun: !!row,
+      walletAddress: row?.walletAddress ?? null,
+      owner: w?.owner ?? null,
+      enabled: row ? row.enabled === 1 : false,
+    });
+  }));
+
+  // Peek at an owner's agent wallet WITHOUT provisioning one (the POST below is get-or-create; a
+  // profile page must not mint a Circle DCW for every visitor). Public read — the owner↔wallet link
+  // is observable on-chain anyway (deposits flow owner → DCW).
+  app.get('/agent/wallet/:owner', wrap(async (req, res) => {
+    const owner = String(req.params.owner ?? '').toLowerCase();
+    const [w] = await db.select().from(agentWallets).where(eq(agentWallets.owner, owner)).limit(1);
+    res.json({ exists: !!w, walletAddress: w?.walletAddress ?? null });
   }));
 
   app.get('/agent/decisions', wrap(async (req, res) => {
     const marketId = Number(req.query.marketId);
-    if (!marketId) throw new Error('marketId required');
-    const rows = await db.select().from(agentDecisions).where(eq(agentDecisions.marketId, marketId));
-    res.json({ decisions: rows });
+    const owner = typeof req.query.owner === 'string' ? req.query.owner.toLowerCase() : '';
+    if (marketId) {
+      const rows = await db.select().from(agentDecisions).where(eq(agentDecisions.marketId, marketId));
+      res.json({ decisions: rows });
+      return;
+    }
+    // owner= → the agent's decisions across ALL of that requester's agent markets (activity page's
+    // agent section). Pure DB join: decisions → their market → the owner's wallet. Zero RPC.
+    if (owner) {
+      const rows = await db.select({ d: agentDecisions }).from(agentDecisions)
+        .innerJoin(agentMarkets, eq(agentDecisions.marketId, agentMarkets.marketId))
+        .innerJoin(agentWallets, eq(agentMarkets.walletAddress, agentWallets.walletAddress))
+        .where(eq(agentWallets.owner, owner));
+      res.json({ decisions: rows.map((r) => r.d) });
+      return;
+    }
+    throw new Error('marketId or owner required');
   }));
 
   // Get-or-create the requester's persistent agent wallet + its live USDC balance. This is the

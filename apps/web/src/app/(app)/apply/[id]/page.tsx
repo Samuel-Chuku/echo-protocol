@@ -2,7 +2,7 @@
 
 import { use, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import Link from 'next/link';
-import { ChevronLeft, ShieldCheck, CheckCircle2 } from 'lucide-react';
+import { ChevronLeft, ShieldCheck, CheckCircle2, Bot } from 'lucide-react';
 import { useQuery, useClient, gql } from 'urql';
 import { EchoMode, CONTRACTS } from '@echo/sdk';
 import { useEcho } from '@/lib/sdk';
@@ -68,12 +68,21 @@ type MarketDetail = {
 const u = (s: string | null | undefined) => (s ? `$${usdc(BigInt(s))}` : '—');
 const STATUS_TONE = { active: 'success', closed: 'neutral', cancelled: 'danger' } as const;
 
-/** Mode-specific terms rows for the KV panel. */
-function termsRows(m: MarketDetail, ghostDays: number | null): [string, ReactNode][] {
+/** Mode-specific terms rows for the KV panel. `agent` carries the human owner behind an agent-run
+ *  market — on-chain the requester is the Circle DCW, so show the real person AND the agent. */
+function termsRows(m: MarketDetail, ghostDays: number | null, agent?: { agentRun: boolean; owner: string | null }): [string, ReactNode][] {
   const rows: [string, ReactNode][] = [
     ['status', <Badge key="s" tone={STATUS_TONE[m.status as keyof typeof STATUS_TONE] ?? 'neutral'}>{m.status}</Badge>],
-    ['requester', <Link key="req" href={`/u/${m.requester}`} className="hover:underline">{short(m.requester)}</Link>],
   ];
+  if (agent?.agentRun && agent.owner) {
+    rows.push(['requester', <Link key="req" href={`/u/${agent.owner}`} className="hover:underline">{short(agent.owner)}</Link>]);
+    rows.push(['screening', <span key="ai" className="inline-flex items-center gap-1 text-teal-300"><Bot className="w-3.5 h-3.5" /> AI agent ({short(m.requester)})</span>]);
+  } else {
+    rows.push(['requester', <Link key="req" href={`/u/${m.requester}`} className="hover:underline">{short(m.requester)}</Link>]);
+    if (agent?.agentRun) {
+      rows.push(['screening', <span key="ai" className="inline-flex items-center gap-1 text-teal-300"><Bot className="w-3.5 h-3.5" /> AI agent</span>]);
+    }
+  }
   if (m.mode === EchoMode.OpenMarket) {
     rows.push(['escrow', u(m.escrowTotal)]);
     rows.push(['reveal fee', m.revealFee && m.revealFee !== '0' ? u(m.revealFee) : '—']);
@@ -96,11 +105,13 @@ export default function JobDetailPage({ params }: { params: Promise<{ id: string
   const { sdk, account } = useEcho();
   const { agentId } = useAgent();
   const [ghostDeadline, setGhostDeadline] = useState<bigint | null>(null);
-  const [agentRun, setAgentRun] = useState(false);
+  // Agent-run context: walletAddress = the DCW that IS the on-chain requester; owner = the human
+  // behind it. Drives the required-preview gate, the "AI-screened" badge, and the true-requestor row.
+  const [agent, setAgent] = useState<{ agentRun: boolean; walletAddress: string | null; owner: string | null }>({ agentRun: false, walletAddress: null, owner: null });
+  const agentRun = agent.agentRun;
 
-  // Is this an AI-agent-run market? If so, applicants MUST provide a public preview (the screener reads it).
   useEffect(() => {
-    getAgentMarket(Number(id)).then((a) => setAgentRun(a.agentRun)).catch(() => {});
+    getAgentMarket(Number(id)).then((a) => setAgent({ agentRun: a.agentRun, walletAddress: a.walletAddress, owner: a.owner })).catch(() => {});
   }, [id]);
 
   // Stable variables identity — an inline literal makes urql setState during render (setstate-in-render).
@@ -126,13 +137,18 @@ export default function JobDetailPage({ params }: { params: Promise<{ id: string
         <h1 className="text-2xl font-bold text-white">{m?.subject || `Market #${id}`}</h1>
         {m && <Badge tone={modeBadgeTone(m.mode)}>{modeName(m.mode)}</Badge>}
         {m && <Badge tone={STATUS_TONE[m.status as keyof typeof STATUS_TONE] ?? 'neutral'}>{m.status}</Badge>}
+        {agentRun && <Badge tone="teal">AI-screened</Badge>}
       </div>
 
       <div className="mt-4"><IdentityBanner /></div>
 
-      {m && account && account.toLowerCase() === m.requester.toLowerCase() && (
+      {m && account && (account.toLowerCase() === m.requester.toLowerCase() || (!!agent.owner && account.toLowerCase() === agent.owner.toLowerCase())) && (
         <div className="mt-3 rounded-md border border-teal-500/20 bg-teal-500/10 px-3 py-2 text-sm flex items-center gap-2">
-          <span className="text-teal-300">You created this market — you&apos;re viewing the applicant page.</span>
+          <span className="text-teal-300">
+            {agent.owner && account.toLowerCase() === agent.owner.toLowerCase() && account.toLowerCase() !== m.requester.toLowerCase()
+              ? 'Your AI agent runs this market — you’re viewing the applicant page.'
+              : 'You created this market — you’re viewing the applicant page.'}
+          </span>
           <Link href={`/hire/${id}`} className="ml-auto inline-flex items-center gap-1 text-teal-400 font-medium underline">
             Manage instead
           </Link>
@@ -150,7 +166,7 @@ export default function JobDetailPage({ params }: { params: Promise<{ id: string
               <p className="text-sm text-white/70 whitespace-pre-wrap">{m.description || <span className="text-white/30 italic">No description provided.</span>}</p>
             </Card>
             <Card title="Terms">
-              <KV rows={termsRows(m, ghostDeadline !== null ? Number(ghostDeadline) / 86400 : null)} />
+              <KV rows={termsRows(m, ghostDeadline !== null ? Number(ghostDeadline) / 86400 : null, agent)} />
             </Card>
             <div className="sm:col-span-2">
               <Receipt

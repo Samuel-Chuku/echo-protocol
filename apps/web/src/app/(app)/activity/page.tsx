@@ -4,18 +4,24 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
   Briefcase, UserPlus, Search, Flag, Scale, Lock, Circle,
-  ExternalLink, ChevronRight, Filter, X,
+  ExternalLink, ChevronRight, Filter, X, Bot,
 } from 'lucide-react';
 import { useAccount } from 'wagmi';
 import { useQuery } from 'urql';
 import { useAgent } from '@/lib/agent';
 import { ACTIVITY_QUERY, eventLabel, summarizeArgs, timeAgo, marketHref, type ActivityRow } from '@/lib/activity';
 import { txLink, short } from '@/lib/format';
+import { peekAgentWallet, getOwnerAgentDecisions, type AgentDecision } from '@/lib/agentApi';
 
 /**
  * Activity feed for the connected wallet. Cards, not a divide-y list — every row has its own
  * surface, a category icon, a status pill, and a chevron so it reads as obviously clickable.
  * Real filtering: status (Pending / Completed) + event-family multi-select + free-text search.
+ *
+ * Agent-aware: the indexer's activity resolver already folds the caller's agent wallet (Circle DCW)
+ * into the feed — here we make those rows *visible* as the agent's: an "Agent" stat pill filters to
+ * them, each carries an AI-agent badge, and the agent's own decision feed (screen/reveal/advance/
+ * rank, with reasons) renders as its own section. All of it is indexer REST/DB — zero extra RPC.
  */
 
 type StatusFilter = 'ALL' | 'PENDING' | 'COMPLETED';
@@ -58,7 +64,24 @@ export default function ActivityPage() {
   });
   const all = useMemo(() => data?.activity ?? [], [data?.activity]);
 
+  // The requester's agent wallet (Circle DCW) — its address tags which rows were the AGENT acting,
+  // and its decision ledger renders as the agent section. Both are indexer reads (no RPC).
+  const [agentAddr, setAgentAddr] = useState<string | null>(null);
+  const [decisions, setDecisions] = useState<AgentDecision[]>([]);
+  useEffect(() => {
+    if (!address) { setAgentAddr(null); setDecisions([]); return; }
+    let active = true;
+    peekAgentWallet(address).then((w) => {
+      if (!active) return;
+      setAgentAddr(w.exists ? w.walletAddress!.toLowerCase() : null);
+      if (w.exists) getOwnerAgentDecisions(address).then((d) => { if (active) setDecisions(d); }).catch(() => {});
+    }).catch(() => {});
+    return () => { active = false; };
+  }, [address]);
+  const isAgentRow = (r: ActivityRow) => !!agentAddr && !!r.actor && r.actor.toLowerCase() === agentAddr;
+
   const [status, setStatus] = useState<StatusFilter>('ALL');
+  const [agentOnly, setAgentOnly] = useState(false);
   const [selected, setSelected] = useState<Set<Category>>(new Set());
   const [search, setSearch] = useState('');
   const [filterOpen, setFilterOpen] = useState(false);
@@ -78,11 +101,12 @@ export default function ActivityPage() {
       return next;
     });
   };
-  const resetFilters = () => { setStatus('ALL'); setSelected(new Set()); setSearch(''); };
+  const resetFilters = () => { setStatus('ALL'); setSelected(new Set()); setSearch(''); setAgentOnly(false); };
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return all.filter((r) => {
+      if (agentOnly && !isAgentRow(r)) return false;
       if (status !== 'ALL' && r.state !== status) return false;
       if (selected.size > 0) {
         const cat = categoryOf(r.eventName);
@@ -94,14 +118,16 @@ export default function ActivityPage() {
       }
       return true;
     });
-  }, [all, status, selected, search]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [all, status, selected, search, agentOnly, agentAddr]);
 
   const counts = {
     ALL: all.length,
     PENDING: all.filter((r) => r.state === 'PENDING').length,
     COMPLETED: all.filter((r) => r.state === 'COMPLETED').length,
+    AGENT: agentAddr ? all.filter(isAgentRow).length : 0,
   };
-  const activeFilterCount = (status !== 'ALL' ? 1 : 0) + selected.size + (search.trim() ? 1 : 0);
+  const activeFilterCount = (status !== 'ALL' ? 1 : 0) + selected.size + (search.trim() ? 1 : 0) + (agentOnly ? 1 : 0);
   const now = Math.floor(Date.now() / 1000);
 
   if (!isConnected) {
@@ -124,11 +150,18 @@ export default function ActivityPage() {
       </p>
 
       {/* Summary strip */}
-      <div className="grid grid-cols-3 gap-2 mb-4">
-        <StatPill label="Total" value={counts.ALL} active={status === 'ALL'} onClick={() => setStatus('ALL')} />
+      <div className={`grid gap-2 mb-4 ${agentAddr ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-3'}`}>
+        <StatPill label="Total" value={counts.ALL} active={status === 'ALL' && !agentOnly} onClick={() => { setStatus('ALL'); setAgentOnly(false); }} />
         <StatPill label="Pending" value={counts.PENDING} tone="amber" active={status === 'PENDING'} onClick={() => setStatus('PENDING')} />
         <StatPill label="Completed" value={counts.COMPLETED} tone="teal" active={status === 'COMPLETED'} onClick={() => setStatus('COMPLETED')} />
+        {agentAddr && (
+          <StatPill label="AI agent" value={counts.AGENT} active={agentOnly} onClick={() => setAgentOnly((v) => !v)} />
+        )}
       </div>
+
+      {/* The agent's own decision feed — what it screened/revealed/advanced/ranked and why, across
+          all your agent markets. Rendered above the on-chain feed; ranked (needs you) first. */}
+      {agentAddr && decisions.length > 0 && <AgentSection decisions={decisions} agentAddr={agentAddr} />}
 
       {/* Search + filter row */}
       <div className="flex items-center gap-2 mb-4">
@@ -231,9 +264,65 @@ export default function ActivityPage() {
 
       <div className="grid grid-cols-1 gap-2">
         {filtered.map((r) => (
-          <ActivityCard key={r.id} row={r} now={now} myAddress={address} />
+          <ActivityCard key={r.id} row={r} now={now} myAddress={address} agent={isAgentRow(r)} />
         ))}
       </div>
+    </div>
+  );
+}
+
+/* ──────────────── agent decision feed (all of this requester's agent markets) ──────────────── */
+
+const STAGE_LABEL: Record<string, { text: string; cls: string }> = {
+  revealed: { text: 'Revealed', cls: 'text-teal-300' },
+  advanced: { text: 'Advanced → Shortlist', cls: 'text-success' },
+  ranked: { text: 'Ranked (needs your review)', cls: 'text-warning' },
+  screened: { text: 'Skipped (below bar)', cls: 'text-white/40' },
+};
+
+function AgentSection({ decisions, agentAddr }: { decisions: AgentDecision[]; agentAddr: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const order: Record<string, number> = { ranked: 0, advanced: 1, revealed: 2, screened: 3 };
+  const sorted = [...decisions].sort((a, b) =>
+    (order[a.stage] ?? 9) - (order[b.stage] ?? 9) || b.createdAt - a.createdAt,
+  );
+  const visible = expanded ? sorted : sorted.slice(0, 5);
+
+  return (
+    <div className="mb-4 rounded-xl border border-teal-500/25 bg-gradient-to-br from-teal-500/[0.07] to-transparent p-4">
+      <div className="flex items-center gap-2">
+        <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-teal-500/15 text-teal-300"><Bot className="w-4 h-4" /></span>
+        <div>
+          <h2 className="text-sm font-semibold text-white leading-tight">Your AI agent</h2>
+          <p className="text-[11px] text-white/40 leading-tight font-mono">{short(agentAddr)} · {decisions.length} decision{decisions.length === 1 ? '' : 's'} across your agent markets</p>
+        </div>
+      </div>
+      <ul className="mt-3 divide-y divide-white/[0.08]">
+        {visible.map((d) => {
+          const s = STAGE_LABEL[d.stage] ?? { text: d.stage, cls: 'text-white/50' };
+          return (
+            <li key={d.id} className="py-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+              <Link href={`/hire/${d.marketId}`} className="text-xs text-white/40 font-mono hover:text-white transition">#{d.marketId}</Link>
+              <span className="font-mono text-white/80">{short(d.participant)}</span>
+              <span className={`text-xs font-medium ${s.cls}`}>{s.text}</span>
+              {d.revealScore != null && <span className="text-[11px] text-white/30">score {d.revealScore}</span>}
+              {d.txHash && (
+                <a href={txLink(d.txHash)} target="_blank" rel="noreferrer" className="text-[11px] text-teal-400 inline-flex items-center gap-0.5 hover:underline">
+                  tx <ExternalLink className="w-3 h-3" />
+                </a>
+              )}
+              {(d.reason || d.revealReason) && (
+                <span className="w-full text-xs text-white/50">{d.reason || d.revealReason}</span>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+      {sorted.length > 5 && (
+        <button onClick={() => setExpanded((e) => !e)} className="mt-2 text-xs text-teal-400 hover:underline">
+          {expanded ? 'Show fewer' : `Show all ${sorted.length}`}
+        </button>
+      )}
     </div>
   );
 }
@@ -255,7 +344,7 @@ function StatPill({ label, value, tone = 'teal', active, onClick }: {
   );
 }
 
-function ActivityCard({ row: r, now, myAddress }: { row: ActivityRow; now: number; myAddress?: string }) {
+function ActivityCard({ row: r, now, myAddress, agent }: { row: ActivityRow; now: number; myAddress?: string; agent?: boolean }) {
   const href = marketHref(r, myAddress);
   const category = categoryOf(r.eventName);
   const { Icon, bg, fg } = category ? CATEGORY_STYLE[category] : FALLBACK_STYLE;
@@ -271,6 +360,11 @@ function ActivityCard({ row: r, now, myAddress }: { row: ActivityRow; now: numbe
         <div className="flex items-center gap-2 flex-wrap">
           <span className="text-sm font-semibold text-white">{eventLabel(r.eventName)}</span>
           {r.marketId !== null && <span className="text-xs text-white/40 font-mono">market #{r.marketId}</span>}
+          {agent && (
+            <span className="inline-flex items-center gap-1 rounded-full border border-teal-500/30 bg-teal-500/10 px-1.5 py-0.5 text-[10px] font-medium text-teal-300">
+              <Bot className="w-3 h-3" /> AI agent
+            </span>
+          )}
           <span className={`ml-auto rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
             r.state === 'PENDING' ? 'bg-warning/10 text-warning' : 'bg-white/[0.06] text-white/40'
           }`}>

@@ -28,10 +28,11 @@ async function authed(path: string, body: unknown): Promise<any> {
   return data;
 }
 
-/** Is a market agent-run? Drives the required-preview gate on the apply page. */
-export async function getAgentMarket(marketId: number): Promise<{ agentRun: boolean; walletAddress: string | null; enabled: boolean }> {
+/** Is a market agent-run? Drives the required-preview gate on the apply page. `owner` is the human
+ *  requester behind the DCW (the on-chain requester IS the agent wallet; the link lives off-chain). */
+export async function getAgentMarket(marketId: number): Promise<{ agentRun: boolean; walletAddress: string | null; owner: string | null; enabled: boolean }> {
   const res = await fetch(`${API_BASE}/agent/market/${marketId}`);
-  if (!res.ok) return { agentRun: false, walletAddress: null, enabled: false };
+  if (!res.ok) return { agentRun: false, walletAddress: null, owner: null, enabled: false };
   return res.json();
 }
 
@@ -40,6 +41,20 @@ export async function getAgentDecisions(marketId: number): Promise<AgentDecision
   const res = await fetch(`${API_BASE}/agent/decisions?marketId=${marketId}`);
   if (!res.ok) return [];
   return (await res.json()).decisions ?? [];
+}
+
+/** All agent decisions across every agent market owned by `owner` — the activity page's agent feed. */
+export async function getOwnerAgentDecisions(owner: string): Promise<AgentDecision[]> {
+  const res = await fetch(`${API_BASE}/agent/decisions?owner=${encodeURIComponent(owner.toLowerCase())}`);
+  if (!res.ok) return [];
+  return (await res.json()).decisions ?? [];
+}
+
+/** Does `owner` already have an agent wallet? Read-only — never provisions (unlike getAgentWallet). */
+export async function peekAgentWallet(owner: string): Promise<{ exists: boolean; walletAddress: string | null }> {
+  const res = await fetch(`${API_BASE}/agent/wallet/${encodeURIComponent(owner.toLowerCase())}`);
+  if (!res.ok) return { exists: false, walletAddress: null };
+  return res.json();
 }
 
 /** Get-or-create the signed-in requester's persistent agent wallet + its live USDC balance. */

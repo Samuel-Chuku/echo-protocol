@@ -2,7 +2,7 @@
 
 import { use, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import Link from 'next/link';
-import { ChevronLeft, ChevronUp, ChevronDown, ExternalLink, Clock, Ghost, MessageSquare, Star, Lock } from 'lucide-react';
+import { ChevronLeft, ChevronUp, ChevronDown, ExternalLink, Clock, Ghost, MessageSquare, Star, Lock, Bot } from 'lucide-react';
 import { useQuery, gql } from 'urql';
 import { EchoMode, CONTRACTS } from '@echo/sdk';
 import { useEcho } from '@/lib/sdk';
@@ -17,6 +17,7 @@ import { TierAdvanceModal } from '@/components/TierAdvanceModal';
 import { GhostPenaltyModal } from '@/components/GhostPenaltyModal';
 import { usdc, scope, toUnits, short, modeName, modeBadgeTone, txLink, duration, FINDING_STATUS, MILESTONE_STATUS } from '@/lib/format';
 import { eventLabel, summarizeArgs, timeAgo, type ActivityRow } from '@/lib/activity';
+import { getAgentMarket } from '@/lib/agentApi';
 
 type PayoutSummary = {
   total: bigint;
@@ -66,6 +67,23 @@ const MARKET_ACTIVITY = gql`
   }
 `;
 
+// Indexer-first market details (#1): the header/overview render from this even when the RPC pool is
+// rate-limiting — the on-chain `load()` then enriches with live values (remaining escrow, apps).
+const MARKET_DETAIL = gql`
+  query MarketDetail($id: Int!) {
+    market(id: $id) {
+      id mode requester subject description status tiers
+      escrowTotal revealFee flagWindow ghostDeadline applicantCount
+    }
+  }
+`;
+
+type GqlMarket = {
+  id: number; mode: number; requester: string; subject: string | null; description: string | null;
+  status: string; tiers: string[] | null; escrowTotal: string | null; revealFee: string | null;
+  flagWindow: number | null; ghostDeadline: number | null; applicantCount: number;
+};
+
 const TIER_LABELS = ['Applied', 'Revealed', 'Shortlist', 'Final'];
 
 export default function ManageMarketPage({ params }: { params: Promise<{ id: string }> }) {
@@ -78,15 +96,39 @@ export default function ManageMarketPage({ params }: { params: Promise<{ id: str
 
   const marketId = () => BigInt(id || '0');
 
+  // Agent-run context: for these markets the ON-CHAIN requester is the Circle DCW, and the human
+  // owner only exists off-chain (agent_wallets). Drives the owner banner + read-only gating.
+  const [agentInfo, setAgentInfo] = useState<{ agentRun: boolean; walletAddress: string | null; owner: string | null }>({ agentRun: false, walletAddress: null, owner: null });
+  useEffect(() => {
+    getAgentMarket(Number(id)).then((a) => setAgentInfo({ agentRun: a.agentRun, walletAddress: a.walletAddress, owner: a.owner })).catch(() => {});
+  }, [id]);
+
+  // Indexer copy of the market — renders details instantly and survives RPC outages.
+  const detailVars = useMemo(() => ({ id: Number(id) }), [id]);
+  const [{ data: gqlDetail }] = useQuery<{ market: GqlMarket | null }>({
+    query: MARKET_DETAIL,
+    variables: detailVars,
+    requestPolicy: 'cache-and-network',
+  });
+  const gm = gqlDetail?.market ?? null;
+
   // Requester-only actions (Close market, grading, ghost) revert for anyone else on-chain, so we
   // hide them from non-requesters (e.g. a worker viewing their own market page).
   const isRequester =
     !!account && !!data?.market?.requester && account.toLowerCase() === data.market.requester.toLowerCase();
+  // The human behind an agent-run market. They own the market economically but can NOT sign its
+  // on-chain requester actions (those are onlyRequester = the DCW) — read-only management view.
+  const isAgentOwner = !!account && !!agentInfo.owner && account.toLowerCase() === agentInfo.owner.toLowerCase();
 
   // A closed market is terminal: escrow has been returned and every on-chain write (grade, ghost,
   // settle, close, attribution funding) reverts. When closed we drop all action affordances and keep
   // the page read-only — status, applicant results, timeline, and feedback.
-  const isClosed = !!data?.market?.closed;
+  const isClosed = data ? !!data.market?.closed : gm ? gm.status !== 'active' : false;
+
+  // Merged view fields: RPC when loaded, indexer otherwise — the page is never blank while the
+  // chain read is stalled/rate-limited.
+  const mode = data?.mode ?? gm?.mode ?? null;
+  const subject = data?.market?.subject || gm?.subject || '';
 
   // Single source of truth for marketActivity rows — used by both the Timeline AND the per-applicant
   // payout rollup (so we only hit the indexer once per refresh).
@@ -191,24 +233,60 @@ export default function ManageMarketPage({ params }: { params: Promise<{ id: str
       </div>
       <div className="flex items-center gap-3 mt-2 mb-1">
         <h1 className="text-2xl font-bold text-white">Market #{id}</h1>
-        {data && <Badge tone={modeBadgeTone(data.mode)}>{modeName(data.mode)}</Badge>}
-        {data && <Badge tone={data.market?.closed ? 'neutral' : 'success'}>{data.market?.closed ? 'closed' : 'active'}</Badge>}
+        {mode !== null && <Badge tone={modeBadgeTone(mode)}>{modeName(mode)}</Badge>}
+        {(data || gm) && <Badge tone={isClosed ? 'neutral' : 'success'}>{isClosed ? 'closed' : 'active'}</Badge>}
+        {agentInfo.agentRun && <Badge tone="teal">AI-agent run</Badge>}
       </div>
-      <p className="text-sm text-white/50 mb-6">{data ? '' : 'Loading…'}{data?.market?.subject ? data.market.subject : ''}</p>
+      <p className="text-sm text-white/50 mb-6">{data || gm ? '' : 'Loading…'}{subject}</p>
+
+      {/* Agent-run + you are the human owner: explain why there are no action buttons. The DCW is
+          the on-chain requester; reveal/advance/accept are onlyRequester so only the agent wallet can
+          sign them. The agent auto-reveals + advances to Shortlist and defers the rest (ranked). */}
+      {isAgentOwner && !isRequester && (
+        <div className="mb-6 flex items-start gap-3 rounded-card border border-teal-500/25 bg-teal-500/[0.07] p-4">
+          <Bot className="w-4 h-4 text-teal-300 mt-0.5 shrink-0" />
+          <div>
+            <h3 className="text-sm font-semibold text-white">Your AI agent runs this market</h3>
+            <p className="text-xs text-white/60 mt-0.5">
+              This market was created from your agent wallet ({short(agentInfo.walletAddress ?? undefined)}), which is its
+              on-chain requester — so reveal, advance, and accept can only be signed by the agent, not your connected
+              wallet. The agent screens previews, pays to reveal promising applicants, and auto-advances those that
+              clearly meet your guardrails <b className="text-white/80">up to Shortlist</b>; everything past that it
+              ranks and leaves for review. Track its calls in <b className="text-white/80">AI agent activity</b> below,
+              and manage the wallet&apos;s balance from your <Link href={`/u/${account}`} className="underline hover:text-white">profile</Link>.
+            </p>
+          </div>
+        </div>
+      )}
 
       <Section title="Status" desc="Live on-chain state for this market.">
         <Card title="Overview">
           <Command label="Refresh" tone="neutral" run={async () => { await load(); return 'refreshed'; }} />
-          {err && <p className="text-xs text-danger break-all">{err}</p>}
-          {data && (
-            <KV rows={[
+          {err && !gm && <p className="text-xs text-danger break-all">{err}</p>}
+          {err && gm && (
+            <p className="text-xs text-warning">
+              Live chain read failed ({err.slice(0, 120)}) — showing the indexer&apos;s copy below; Refresh to retry.
+            </p>
+          )}
+          {(data || gm) && (
+            <KV rows={data ? [
               ['requester', short(data.market?.requester)],
               ['escrow remaining', `$${usdc(data.remaining)}`],
               ['reveal fee', data.revealFee ? `$${usdc(data.revealFee)}` : '—'],
               ['flag window', data.flagWindow ? duration(Number(data.flagWindow)) : '—'],
               ['ghost deadline', data.ghostDeadline ? `${duration(Number(data.ghostDeadline))} after final round` : '—'],
               ['applicants', String(data.market?.applicantCount ?? '—')],
+            ] : [
+              ['requester', short(gm!.requester)],
+              ['escrow total', gm!.escrowTotal ? `$${usdc(BigInt(gm!.escrowTotal))}` : '—'],
+              ['reveal fee', gm!.revealFee && gm!.revealFee !== '0' ? `$${usdc(BigInt(gm!.revealFee))}` : '—'],
+              ['flag window', gm!.flagWindow ? duration(gm!.flagWindow) : '—'],
+              ['ghost deadline', gm!.ghostDeadline ? `${duration(gm!.ghostDeadline)} after final round` : '—'],
+              ['applicants', String(gm!.applicantCount)],
             ]} />
+          )}
+          {gm?.description && (
+            <p className="text-xs text-white/50 whitespace-pre-wrap border-t border-white/[0.08] pt-2 mt-1">{gm.description}</p>
           )}
         </Card>
 
@@ -228,11 +306,20 @@ export default function ManageMarketPage({ params }: { params: Promise<{ id: str
           </div>
         )}
 
-        {data?.mode === EchoMode.OpenMarket && (
+        {mode === EchoMode.OpenMarket && (
           <div className="sm:col-span-2 space-y-3">
             <AgentDecisions marketId={Number(id)} />
-            <ApplicantList sdk={sdk} account={account} data={data} marketId={marketId()} onChanged={load} onGhost={setGhostResult} closed={isClosed} revealedAtMap={revealedAtMap} />
-            {!isClosed && (
+            {data ? (
+              // The human owner of an agent market can't sign requester actions (the DCW is the
+              // on-chain requester) — hide the action buttons (closed) but grant requester-level
+              // READS (application bodies after reveal) via readOnlyRequester.
+              <ApplicantList sdk={sdk} account={account} data={data} marketId={marketId()} onChanged={load} onGhost={setGhostResult} closed={isClosed || (agentInfo.agentRun && !isRequester)} revealedAtMap={revealedAtMap} readOnlyRequester={isAgentOwner && !isRequester} />
+            ) : (
+              <div className={CARD_CLASS}>
+                <p className="text-xs text-white/40">Applicant list needs a live chain read — retrying via Refresh above.</p>
+              </div>
+            )}
+            {!isClosed && (!agentInfo.agentRun || isRequester) && data && (
               <div className={CARD_CLASS}>
                 <h3 className="text-sm font-semibold text-white">Close market</h3>
                 <p className="text-xs text-white/40 mt-0.5">Returns unspent USDC to you. A reveal market needs its minimum-reveal floor met first.</p>
@@ -445,7 +532,7 @@ function StatusReport({ data, closed, rows }: { data: Loaded; closed: boolean; r
 /* ──────────────────────────── Open/Reveal applicant list ──────────────────────────── */
 
 function ApplicantList({
-  sdk, account, data, marketId, onChanged, onGhost, closed, revealedAtMap,
+  sdk, account, data, marketId, onChanged, onGhost, closed, revealedAtMap, readOnlyRequester,
 }: {
   sdk: ReturnType<typeof useEcho>['sdk'];
   account?: `0x${string}`;
@@ -457,6 +544,9 @@ function ApplicantList({
   closed: boolean;
   /** participant (lowercased) → unix seconds of their Revealed event. Drives the settle countdown. */
   revealedAtMap: Map<string, number>;
+  /** Human owner of an agent-run market: full requester READ rights (bodies, deliverables) but no
+   *  on-chain actions — those are onlyRequester and the DCW is the requester. */
+  readOnlyRequester?: boolean;
 }) {
   const [advance, setAdvance] = useState<{ participant: string; fromLabel: string; toLabel: string; amount: string; paysNow: boolean; run: () => Promise<unknown> } | null>(null);
   const apps = data.apps ?? [];
@@ -464,8 +554,10 @@ function ApplicantList({
   const ghostAmount = tierAmounts[3] !== undefined ? usdc(tierAmounts[3]) : '0';
   const now = useNow(1000);
   // Tier-job accept/reject/revision + deliverable reads are the evaluator's tools — requester-only.
+  // The agent owner gets the read half via readOnlyRequester (the indexer's gate matches).
   const isRequester =
-    !!account && !!data.market?.requester && account.toLowerCase() === data.market.requester.toLowerCase();
+    (!!account && !!data.market?.requester && account.toLowerCase() === data.market.requester.toLowerCase()) ||
+    !!readOnlyRequester;
 
   // Real per-job ghost deadlines. The contract starts the Final job's ghost clock at grade-to-Final
   // time (MarketRegistry._createTierJob), NOT at apply time — so read sdk.ghostDeadline(finalJobId)

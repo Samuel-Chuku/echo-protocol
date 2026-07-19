@@ -1,8 +1,8 @@
 'use client';
 
-import { use, useMemo, useState } from 'react';
+import { use, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { ExternalLink, Copy, Check, Download, Share2, Lock, Award } from 'lucide-react';
+import { ExternalLink, Copy, Check, Download, Share2, Lock, Award, Bot } from 'lucide-react';
 import { getAddress } from 'viem';
 import { useAccount } from 'wagmi';
 import { useQuery, gql } from 'urql';
@@ -10,6 +10,8 @@ import { eventLabel, summarizeArgs, timeAgo, marketHref, type ActivityRow } from
 import { short, modeName, modeBadgeTone, txLink, addrLink, usdc, usdcShort } from '@/lib/format';
 import { Badge, Button, EmptyState, StatCard, CARD_CLASS, Card, KV } from '@/components/ui';
 import { SendUsdcCard, useIsPasskeyWallet } from '@/components/SendUsdc';
+import { AgentWallet } from '@/components/AgentWallet';
+import { peekAgentWallet } from '@/lib/agentApi';
 
 /**
  * Public profile. Aggregates what the indexer knows about an address: markets they created
@@ -109,6 +111,18 @@ export default function ProfilePage({ params }: { params: Promise<{ handle: stri
   const showSend = isOwn && isPasskey;
   const isNewUser = !agentId && markets.length === 0 && apps.length === 0;
 
+  // Agent wallet management (own profile only). Peek — never lazily provision a Circle DCW just by
+  // opening a profile; getAgentWallet() (inside <AgentWallet/>) is get-or-create, so we only mount it
+  // when a wallet already exists or the owner explicitly asks for one.
+  const [agentWalletExists, setAgentWalletExists] = useState<boolean | null>(null);
+  const [agentSetupOpen, setAgentSetupOpen] = useState(false);
+  useEffect(() => {
+    if (!isOwn) { setAgentWalletExists(null); return; }
+    let active = true;
+    peekAgentWallet(address).then((w) => { if (active) setAgentWalletExists(w.exists); }).catch(() => { if (active) setAgentWalletExists(false); });
+    return () => { active = false; };
+  }, [isOwn, address]);
+
   return (
     <div>
       <div className="flex flex-col items-center text-center gap-4 mb-6 sm:flex-row sm:items-start sm:text-left">
@@ -141,6 +155,29 @@ export default function ProfilePage({ params }: { params: Promise<{ handle: stri
         <div id="send" className="scroll-mt-24 mb-8">
           <h2 className="text-lg font-bold text-white mb-3">Send USDC</h2>
           <SendUsdcCard />
+        </div>
+      )}
+
+      {/* Agent wallet management — own profile only. View, deposit, withdraw the standing Circle DCW
+          that funds + runs your agent markets. If none exists yet, an explicit opt-in creates one
+          (AgentWallet's load is get-or-create); a bare profile visit never provisions. */}
+      {isOwn && agentWalletExists !== null && (
+        <div id="agent-wallet" className="scroll-mt-24 mb-8">
+          <h2 className="text-lg font-bold text-white mb-3">Agent wallet</h2>
+          {agentWalletExists || agentSetupOpen ? (
+            <AgentWallet />
+          ) : (
+            <div className={CARD_CLASS}>
+              <p className="text-sm text-white/60 flex items-start gap-2">
+                <Bot className="w-4 h-4 shrink-0 mt-0.5 text-teal-400" />
+                No agent wallet yet. It&apos;s a standing USDC account an AI agent uses to create and run
+                markets for you — screening applicants, paying reveal fees, and advancing the best ones.
+              </p>
+              <Button variant="secondary" className="mt-3" onClick={() => setAgentSetupOpen(true)}>
+                Set up my agent wallet
+              </Button>
+            </div>
+          )}
         </div>
       )}
 
