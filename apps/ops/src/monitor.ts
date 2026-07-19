@@ -11,22 +11,32 @@ async function ownerOf(address: `0x${string}`): Promise<string | null> {
   }
 }
 
-type IngestHealth = { ingestBlock: number; ingestState: string; ingestUpdatedAt: number; prevCursor: number | null };
+type RpcEndpoint = { url: string; ok: boolean; latencyMs: number | null; block: number | null; error: string | null; checkedAt: number };
+type IngestHealth = { ingestBlock: number; ingestState: string; ingestUpdatedAt: number; prevCursor: number | null; rpcEndpoints?: RpcEndpoint[] };
 
 /** One GraphQL round-trip doubles as the liveness ping AND fetches the ingest loop's live state
- *  (in-memory position + what it's doing) — the DB cursor alone can't tell a stall from a backfill. */
+ *  (in-memory position + what it's doing) — the DB cursor alone can't tell a stall from a backfill.
+ *  Also pulls the indexer's per-endpoint RPC probes so the dashboard shows WHICH Arc provider is
+ *  down/slow when users report "network busy" errors. */
 async function pingIndexer(): Promise<IngestHealth | null> {
   try {
     const res = await fetch(config.indexerGraphqlUrl, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ query: '{ health { ingestBlock ingestState ingestUpdatedAt prevCursor } }' }),
+      body: JSON.stringify({ query: '{ health { ingestBlock ingestState ingestUpdatedAt prevCursor rpcEndpoints { url ok latencyMs block error checkedAt } } }' }),
       signal: AbortSignal.timeout(2500),
     });
     if (!res.ok) return null;
     const body = await res.json().catch(() => null) as { data?: { health?: IngestHealth } } | null;
-    // An older indexer image without the ingest fields still counts as "up".
-    return body?.data?.health ?? { ingestBlock: 0, ingestState: 'unknown (indexer image predates ingest status)', ingestUpdatedAt: 0, prevCursor: null };
+    if (body?.data?.health) return body.data.health;
+    // An older indexer image without the new fields still counts as "up" — retry the legacy shape.
+    const legacy = await fetch(config.indexerGraphqlUrl, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ query: '{ health { ingestBlock ingestState ingestUpdatedAt prevCursor } }' }),
+      signal: AbortSignal.timeout(2500),
+    }).then((r) => (r.ok ? r.json() : null)).catch(() => null) as { data?: { health?: IngestHealth } } | null;
+    return legacy?.data?.health ?? { ingestBlock: 0, ingestState: 'unknown (indexer image predates ingest status)', ingestUpdatedAt: 0, prevCursor: null };
   } catch {
     return null;
   }
@@ -79,6 +89,9 @@ async function buildSnapshot() {
     chain: {
       head: head != null ? Number(head) : null,
       rpcUrl: config.rpcUrl,
+      // Per-provider probe results from the indexer (60s cadence there) — which endpoint is the
+      // problem when users hit "network busy". Empty on older indexer images.
+      rpcEndpoints: ingest?.rpcEndpoints ?? [],
     },
     indexer: {
       up: ingest != null,

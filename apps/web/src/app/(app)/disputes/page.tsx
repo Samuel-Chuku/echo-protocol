@@ -82,19 +82,22 @@ export default function DisputesPage() {
             }} />
         </Card>
 
-        <Card title="Open tier-job dispute" hint="openTierJobDispute — the worker contests a REJECTED Final-tier job. Tie pays the worker.">
-          <div className="grid grid-cols-3 gap-1">
-            <Field label="marketId" value={marketId} onChange={(e) => setMarketId(e.target.value)} />
-            <Field label="jobId" value={jobId} onChange={(e) => setJobId(e.target.value)} placeholder="Arc jobId" />
-            <Field label="bond USDC" value={bond} onChange={(e) => setBond(e.target.value)} />
-          </div>
-          <Command label="Open tier-job dispute" disabled={!account || !jobId}
-            onDone={() => { setJobId(''); setBond(''); }}
-            run={async () => {
-              await sdk.ensureUsdcAllowance(C.disputeResolver, toUnits(bond), account!);
-              return sdk.openTierJobDispute(BigInt(marketId), BigInt(jobId), toUnits(bond), account!);
-            }} />
-        </Card>
+        {/* Third card in a 2-col grid — span the full row so it doesn't strand a half-empty column. */}
+        <div className="sm:col-span-2">
+          <Card title="Open tier-job dispute" hint="openTierJobDispute — the worker contests a REJECTED Final-tier job. Tie pays the worker.">
+            <div className="grid grid-cols-3 gap-1">
+              <Field label="marketId" value={marketId} onChange={(e) => setMarketId(e.target.value)} />
+              <Field label="jobId" value={jobId} onChange={(e) => setJobId(e.target.value)} placeholder="Arc jobId" />
+              <Field label="bond USDC" value={bond} onChange={(e) => setBond(e.target.value)} />
+            </div>
+            <Command label="Open tier-job dispute" disabled={!account || !jobId}
+              onDone={() => { setJobId(''); setBond(''); }}
+              run={async () => {
+                await sdk.ensureUsdcAllowance(C.disputeResolver, toUnits(bond), account!);
+                return sdk.openTierJobDispute(BigInt(marketId), BigInt(jobId), toUnits(bond), account!);
+              }} />
+          </Card>
+        </div>
       </Section>
 
       <Section title="Lifecycle">
@@ -108,9 +111,9 @@ export default function DisputesPage() {
                 return sdk.counterDispute(did(), account!);
               }} />
             <Command label="Vote: for opener" disabled={!account} run={() => sdk.voteDispute(did(), true, account!)} />
-            <Command label="Vote: against" tone="neutral" disabled={!account} run={() => sdk.voteDispute(did(), false, account!)} />
+            <Command label="Vote: against" tone="neutral" modal disabled={!account} run={() => sdk.voteDispute(did(), false, account!)} />
             <Command label="Resolve" disabled={!account} onDone={() => sdk.getDispute(did()).then(setD)} run={() => sdk.resolveDispute(did(), account!)} />
-            <Command label="Claim reward" tone="neutral" disabled={!account} run={() => sdk.claimJurorReward(did(), account!)} />
+            <Command label="Claim reward" tone="neutral" modal disabled={!account} run={() => sdk.claimJurorReward(did(), account!)} />
           </div>
         </Card>
 
@@ -120,7 +123,7 @@ export default function DisputesPage() {
             <Field label="hint text → hash" value={hint} onChange={(e) => setHint(e.target.value)} />
           </div>
           <div className="flex flex-wrap gap-2">
-            <Command label="Record hint" tone="neutral" disabled={!account}
+            <Command label="Record hint" tone="neutral" modal disabled={!account}
               onDone={() => setHint('')}
               run={() => sdk.recordAgentHint(did(), scope(hint), account!)} />
             <Command label="Load dispute" tone="neutral" run={async () => { setD(await sdk.getDispute(did())); return 'loaded'; }} />

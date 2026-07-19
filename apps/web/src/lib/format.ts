@@ -144,5 +144,22 @@ export const MODE_BLURBS = [
 export const FINDING_STATUS = ['Pending', 'Accepted', 'Rejected', 'Disputed'] as const;
 export const MILESTONE_STATUS = ['Pending', 'Submitted', 'Released'] as const;
 
+/** Arc JobStatus labels + dark-theme pill classes (enum order = AgenticCommerce contract). Single
+ *  source of truth — was duplicated (and drifting) between hire/[id] and apply/[id]. */
+export const JOB_STATUS = ['Open', 'Funded', 'Submitted', 'Completed', 'Rejected', 'Expired'] as const;
+export const JOB_STATUS_CLASS = [
+  'bg-teal-500/10 text-teal-300 border-teal-500/20',
+  'bg-teal-500/10 text-teal-300 border-teal-500/20',
+  'bg-warning/10 text-warning border-warning/20',
+  'bg-success/10 text-success border-success/20',
+  'bg-danger/10 text-danger border-danger/20',
+  'bg-white/5 text-white/40 border-white/10',
+] as const;
+
+/** EchoHook tier labels (tier index → human name; 4-6 are the hook's special job kinds). */
+export const HOOK_TIER_LABELS: Record<number, string> = {
+  0: 'Submitted', 1: 'Substantive', 2: 'Shortlist', 3: 'Final', 4: 'Ghost', 5: 'Milestone', 6: 'Finding',
+};
+
 export const isZeroAddr = (a?: string) => !a || /^0x0{40}$/i.test(a);
 export type { Address };

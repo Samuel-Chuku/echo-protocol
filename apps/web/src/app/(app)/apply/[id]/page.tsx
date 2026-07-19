@@ -9,14 +9,14 @@ import { useEcho } from '@/lib/sdk';
 import { useAgent } from '@/lib/agent';
 import { useContent } from '@/lib/content';
 import { ACTIVITY_QUERY, type ActivityRow } from '@/lib/activity';
-import { Section, Card, Field, TextArea, KV, Badge, Button, CARD_CLASS, TierTrack, Countdown, useNow, type TierStep } from '@/components/ui';
+import { Section, Card, Field, TextArea, KV, Badge, Button, CARD_CLASS, TierTrack, Countdown, useNow, SkeletonCard, type TierStep } from '@/components/ui';
 import { Command } from '@/components/Command';
 import { Attachments } from '@/components/Attachments';
 import { Receipt } from '@/components/Receipt';
 import { TxModal } from '@/components/TxModal';
 import { RegisterIdentityModal } from '@/components/RegisterIdentityModal';
 import { IdentityBanner } from '@/components/IdentityBanner';
-import { usdc, scope, short, modeName, modeBadgeTone, isZeroAddr, txLink, toUnits, MILESTONE_STATUS } from '@/lib/format';
+import { usdc, scope, short, modeName, modeBadgeTone, isZeroAddr, txLink, toUnits, MILESTONE_STATUS, JOB_STATUS, JOB_STATUS_CLASS, HOOK_TIER_LABELS } from '@/lib/format';
 import { getAgentMarket } from '@/lib/agentApi';
 
 const TIER_DISPUTES_QUERY = gql`
@@ -24,21 +24,6 @@ const TIER_DISPUTES_QUERY = gql`
     disputes { id subject target opener counter status forOpener against }
   }
 `;
-
-const JOB_STATUS = ['Open', 'Funded', 'Submitted', 'Completed', 'Rejected', 'Expired'];
-const JOB_STATUS_CLASS = [
-  'bg-sky-500/10 text-sky-400 border-sky-500/20',
-  'bg-sky-500/10 text-sky-400 border-sky-500/20',
-  'bg-warning/10 text-warning border-warning/20',
-  'bg-success/10 text-success border-success/20',
-  'bg-danger/10 text-danger border-danger/20',
-  'bg-white/[0.06] text-white/40 border-white/10',
-];
-
-const HOOK_TIER_LABELS: Record<number, string> = {
-  0: 'Submitted', 1: 'Substantive', 2: 'Shortlist', 3: 'Final',
-  4: 'Ghost', 5: 'Milestone', 6: 'Finding',
-};
 
 const C = CONTRACTS.arcTestnet;
 
@@ -155,7 +140,12 @@ export default function JobDetailPage({ params }: { params: Promise<{ id: string
         </div>
       )}
 
-      {fetching && !m && <p className="text-sm text-white/40">Loading...</p>}
+      {fetching && !m && (
+        <div className="mt-6 grid gap-4 sm:grid-cols-2">
+          <SkeletonCard lines={4} />
+          <SkeletonCard lines={4} />
+        </div>
+      )}
       {error && <p className="text-sm text-danger break-all">{error.message} — is the indexer running on :4000?</p>}
       {!fetching && !error && !m && <p className="text-sm text-white/40">No market #{id} in the indexer.</p>}
 
@@ -597,34 +587,34 @@ function TierJobCard({ sdk, account, marketId, job, onChanged }: {
       </div>
 
       {inRevision && (
-        <div className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 space-y-2">
-          <p className="text-xs text-amber-800 font-medium">
+        <div className="mt-2 rounded-md border border-warning/25 bg-warning/[0.08] px-3 py-2 space-y-2">
+          <p className="text-xs text-warning font-medium">
             Revision requested — update your deliverable below and resubmit.
           </p>
           <div className="flex items-center gap-2 flex-wrap">
             {rev.extensions < 3 ? (
-              <Command label={`Extend deadline ${nextGrant}`} tone="neutral"
+              <Command label={`Extend deadline ${nextGrant}`} tone="neutral" modal
                 onDone={onChanged}
                 run={() => sdk.extendRevision(job.jobId, account)} />
             ) : (
-              <span className="text-[11px] text-gray-500">No extensions left.</span>
+              <span className="text-[11px] text-white/40">No extensions left.</span>
             )}
-            <span className="text-[11px] text-gray-500">{rev.extensions}/3 extensions used</span>
+            <span className="text-[11px] text-white/40">{rev.extensions}/3 extensions used</span>
           </div>
         </div>
       )}
 
       {status === 0 && isProvider && (
         <>
-          <label className="block text-xs uppercase tracking-wide text-gray-500 mt-2 mb-1">Deliverable for this tier</label>
+          <label className="block text-xs uppercase tracking-wide text-white/40 mt-2 mb-1">Deliverable for this tier</label>
           <textarea
             value={deliverable}
             onChange={(e) => setDeliverable(e.target.value)}
             rows={5}
             placeholder={tier === 3 ? 'Final deliverable — the actual work product the requester is paying for.' : 'Whatever you owe at this stage (case study, take-home, plan, etc).'}
-            className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm font-mono"
+            className="w-full rounded-md border border-white/10 bg-white/[0.04] px-3 py-2 text-sm font-mono text-white placeholder:text-white/30 focus:border-teal-500/50 focus:outline-none"
           />
-          {err && <p className="text-xs text-red-600">{err}</p>}
+          {err && <p className="text-xs text-danger">{err}</p>}
           <Attachments marketId={Number(marketId)} kind="deliver" contentKey={job.jobId.toString()} account={account}
             canEdit label="Deliverable files (optional) — attach before you submit" />
           <Command label="Submit deliverable" disabled={!deliverable.trim()}
@@ -644,13 +634,13 @@ function TierJobCard({ sdk, account, marketId, job, onChanged }: {
       )}
 
       {status === 0 && !isProvider && (
-        <p className="text-xs text-gray-500 mt-2">Connect as the assigned provider to submit a deliverable here.</p>
+        <p className="text-xs text-white/40 mt-2">Connect as the assigned provider to submit a deliverable here.</p>
       )}
 
       {(status === 2 || status === 3) && savedBody !== null && (
-        <div className="mt-2 rounded-md border border-gray-200 bg-gray-50 px-3 py-2">
-          <div className="text-[10px] uppercase tracking-wide text-gray-500 mb-1">Your deliverable (saved off-chain)</div>
-          <p className="text-sm text-gray-700 whitespace-pre-wrap">{savedBody}</p>
+        <div className="mt-2 rounded-md border border-white/10 bg-white/[0.03] px-3 py-2">
+          <div className="text-[10px] uppercase tracking-wide text-white/40 mb-1">Your deliverable (saved off-chain)</div>
+          <p className="text-sm text-white/70 whitespace-pre-wrap">{savedBody}</p>
         </div>
       )}
       {(status === 2 || status === 3) && isProvider && (
@@ -658,33 +648,33 @@ function TierJobCard({ sdk, account, marketId, job, onChanged }: {
       )}
 
       {status === 3 && (
-        <p className="text-xs text-emerald-700 mt-2">Accepted — {usdc(amount)} USDC paid out. Tx on-chain via EchoHook settlement.</p>
+        <p className="text-xs text-success mt-2">Accepted — {usdc(amount)} USDC paid out. Tx on-chain via EchoHook settlement.</p>
       )}
       {status === 2 && (
-        <p className="text-xs text-amber-700 mt-2">Submitted. Waiting on the requester to accept → release payment.</p>
+        <p className="text-xs text-warning mt-2">Submitted. Waiting on the requester to accept → release payment.</p>
       )}
       {status === 4 && (
-        <div className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2">
-          <p className="text-xs text-amber-800 font-medium">Rejected by the requester — this tier was not paid.</p>
+        <div className="mt-2 rounded-md border border-warning/25 bg-warning/[0.08] px-3 py-2">
+          <p className="text-xs text-warning font-medium">Rejected by the requester — this tier was not paid.</p>
           {rejectBody !== null
-            ? <p className="mt-1 text-sm text-gray-700 whitespace-pre-wrap"><span className="text-[10px] uppercase tracking-wide text-gray-500">Reason: </span>{rejectBody}</p>
-            : <p className="mt-1 text-xs text-gray-500 italic">No reason was provided.</p>}
+            ? <p className="mt-1 text-sm text-white/70 whitespace-pre-wrap"><span className="text-[10px] uppercase tracking-wide text-white/40">Reason: </span>{rejectBody}</p>
+            : <p className="mt-1 text-xs text-white/40 italic">No reason was provided.</p>}
 
           {/* Worker recourse: contest an unfair Final-tier reject via the staked-jury panel. */}
           {tier === 3 && isProvider && (
             disp ? (
-              <div className="mt-2 border-t border-amber-200 pt-2">
-                <p className="text-xs text-gray-700">
+              <div className="mt-2 border-t border-warning/20 pt-2">
+                <p className="text-xs text-white/70">
                   You contested this rejection — dispute #{disp.id} is{' '}
                   {disp.status === 1
                     ? (disp.forOpener >= disp.against ? 'resolved in your favor (paid).' : 'resolved: rejection upheld.')
                     : 'open. The requester must counter, then the jury votes.'}
                 </p>
-                <Link href="/disputes" className="text-xs text-sky-700 hover:underline">Track in Disputes →</Link>
+                <Link href="/disputes" className="text-xs text-teal-400 hover:underline">Track in Disputes →</Link>
               </div>
             ) : (
-              <div className="mt-2 border-t border-amber-200 pt-2 space-y-1">
-                <p className="text-xs text-gray-700">Think this was unfair? Contest it — a staked jury decides, and a tie pays you.</p>
+              <div className="mt-2 border-t border-warning/20 pt-2 space-y-1">
+                <p className="text-xs text-white/70">Think this was unfair? Contest it — a staked jury decides, and a tie pays you.</p>
                 <div className="flex items-end gap-2">
                   <Field label="bond USDC" value={bond} onChange={(e) => setBond(e.target.value)} />
                   <Command label="Contest this rejection" disabled={!bond.trim()}
@@ -694,7 +684,7 @@ function TierJobCard({ sdk, account, marketId, job, onChanged }: {
                       return sdk.openTierJobDispute(marketId, job.jobId, toUnits(bond), account);
                     }} />
                 </div>
-                <p className="text-[11px] text-gray-500">Posts a USDC bond. If the jury sides with you (or ties), you’re paid the tier amount and refunded the bond; if not, the bond is forfeit.</p>
+                <p className="text-[11px] text-white/40">Posts a USDC bond. If the jury sides with you (or ties), you’re paid the tier amount and refunded the bond; if not, the bond is forfeit.</p>
               </div>
             )
           )}

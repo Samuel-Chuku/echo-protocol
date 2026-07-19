@@ -67,11 +67,11 @@ function TxOverlay({ state, onClose }: { state: TxState; onClose: () => void }) 
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
       onClick={state.status === 'signing' ? undefined : onClose}
     >
       <div
-        className="w-full max-w-sm rounded-2xl border border-gray-200 bg-white p-6 shadow-xl"
+        className="w-full max-w-sm rounded-2xl border border-white/10 bg-[#0d2d4a] p-6 shadow-xl"
         onClick={(e) => e.stopPropagation()}
       >
         {state.status === 'signing' && <Signing title={state.title} stepLabel={stepLabel} kind={state.kind} />}
@@ -86,15 +86,15 @@ function Signing({ title, stepLabel, kind }: { title: string; stepLabel: string 
   return (
     <div className="flex flex-col items-center text-center">
       <div className="relative mb-4 flex h-16 w-16 items-center justify-center">
-        <span className="absolute inset-0 animate-ping rounded-full bg-blue-400/30" />
-        <span className="absolute inset-0 rounded-full bg-blue-50" />
-        <Wallet className="relative h-7 w-7 text-blue-600" />
+        <span className="absolute inset-0 animate-ping rounded-full bg-teal-400/20" />
+        <span className="absolute inset-0 rounded-full bg-teal-500/10" />
+        <Wallet className="relative h-7 w-7 text-teal-400" />
       </div>
-      <h3 className="text-base font-semibold text-gray-900">
+      <h3 className="text-base font-semibold text-white">
         {kind === 'approval' ? 'Approve in your wallet' : 'Sign transaction'}
       </h3>
-      <p className="mt-1 text-sm text-gray-500">{title}</p>
-      <div className="mt-3 flex items-center gap-1.5 text-xs text-gray-400">
+      <p className="mt-1 text-sm text-white/50">{title}</p>
+      <div className="mt-3 flex items-center gap-1.5 text-xs text-white/40">
         <Loader2 className="h-3.5 w-3.5 animate-spin" />
         Waiting for confirmation…{stepLabel ? ` · ${stepLabel}` : ''}
       </div>
@@ -106,21 +106,21 @@ function Success({ state, stepLabel, onClose }: { state: TxState; stepLabel: str
   const showLink = state.kind === 'action' && state.hash;
   return (
     <div className="flex flex-col items-center text-center">
-      <CheckCircle2 className="mb-3 h-12 w-12 text-emerald-500" />
-      <h3 className="text-base font-semibold text-gray-900">
-        {state.kind === 'approval' ? 'Approved' : 'Transaction submitted'}
+      <CheckCircle2 className="mb-3 h-12 w-12 text-success" />
+      <h3 className="text-base font-semibold text-white">
+        {state.kind === 'approval' ? 'Approved' : 'Transaction successful'}
       </h3>
-      <p className="mt-1 text-sm text-gray-500">{state.title}{stepLabel ? ` · ${stepLabel}` : ''}</p>
+      <p className="mt-1 text-sm text-white/50">{state.title}{stepLabel ? ` · ${stepLabel}` : ''}</p>
 
       {showLink && (
-        <div className="mt-4 w-full rounded-xl border border-gray-100 bg-gray-50 p-3">
+        <div className="mt-4 w-full rounded-xl border border-white/10 bg-white/[0.04] p-3">
           <TxRow hash={state.hash!} />
         </div>
       )}
 
       <button
         onClick={onClose}
-        className="mt-5 w-full rounded-md bg-gray-900 px-3 py-2 text-sm font-medium text-white hover:bg-gray-700"
+        className="mt-5 w-full rounded-md bg-teal-500 px-3 py-2 text-sm font-semibold text-ink hover:bg-teal-400 transition"
       >
         Done
       </button>
@@ -131,13 +131,13 @@ function Success({ state, stepLabel, onClose }: { state: TxState; stepLabel: str
 function Failure({ state, onClose }: { state: TxState; onClose: () => void }) {
   return (
     <div className="flex flex-col items-center text-center">
-      <XCircle className="mb-3 h-12 w-12 text-red-500" />
-      <h3 className="text-base font-semibold text-gray-900">Transaction failed</h3>
-      <p className="mt-1 text-sm text-gray-500">{state.title}</p>
-      <p className="mt-3 w-full break-words rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{state.error}</p>
+      <XCircle className="mb-3 h-12 w-12 text-danger" />
+      <h3 className="text-base font-semibold text-white">Transaction failed</h3>
+      <p className="mt-1 text-sm text-white/50">{state.title}</p>
+      <p className="mt-3 w-full break-words rounded-lg border border-danger/20 bg-danger/10 px-3 py-2 text-sm text-danger">{state.error}</p>
       <button
         onClick={onClose}
-        className="mt-5 w-full rounded-md bg-gray-100 px-3 py-2 text-sm font-medium text-gray-800 hover:bg-gray-200"
+        className="mt-5 w-full rounded-md border border-white/15 bg-white/[0.06] px-3 py-2 text-sm font-medium text-white hover:bg-white/[0.1] transition"
       >
         Close
       </button>
@@ -150,24 +150,24 @@ export function TxRow({ hash }: { hash: string }) {
   const [copied, setCopied] = useState(false);
   return (
     <div className="flex items-center gap-2 text-sm">
-      <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500" />
+      <CheckCircle2 className="h-4 w-4 shrink-0 text-success" />
       <a
         href={txLink(hash)}
         target="_blank"
         rel="noreferrer"
         title="View on Arcscan"
-        className="inline-flex items-center gap-1 font-medium text-gray-700 hover:underline"
+        className="inline-flex items-center gap-1 font-medium text-white/80 hover:underline"
       >
-        Tx: <span className="font-mono text-gray-500">{short(hash)}</span>
+        Tx: <span className="font-mono text-white/50">{short(hash)}</span>
         <ExternalLink className="h-3.5 w-3.5" />
       </a>
       <span className="flex-1" />
       <button
         onClick={() => { navigator.clipboard?.writeText(hash).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1200); }).catch(() => {}); }}
         title="Copy tx hash"
-        className="text-gray-400 hover:text-gray-700"
+        className="text-white/40 hover:text-white transition"
       >
-        {copied ? <Check className="h-4 w-4 text-emerald-500" /> : <Copy className="h-4 w-4" />}
+        {copied ? <Check className="h-4 w-4 text-success" /> : <Copy className="h-4 w-4" />}
       </button>
     </div>
   );

@@ -3,7 +3,7 @@ import { keccak256, toBytes, type Address } from 'viem';
 import { AgenticCommerceABI, CONTRACTS } from '@echo/sdk';
 import { db } from '../db/client.js';
 import { markets, applications, findings, milestones, disputes, events, cursor, reputation, contents, attachments, agentWallets } from '../db/schema.js';
-import { publicClient } from '../chain.js';
+import { publicClient, rpcProbes } from '../chain.js';
 import { config } from '../config.js';
 import { ingestStatus } from '../indexer/ingest.js';
 
@@ -261,7 +261,22 @@ export const resolvers = {
         markets: Number(mCount?.c ?? 0), events: Number(eCount?.c ?? 0),
         ingestBlock: ingestStatus.block, ingestState: ingestStatus.state, ingestUpdatedAt: ingestStatus.updatedAt,
         prevCursor: prev?.lastBlock ?? null,
+        rpcEndpoints: rpcProbes(),
       };
+    },
+  },
+
+  Market: {
+    // Sum of this market's indexed TierPayout amounts — worker payouts so far, derived without RPC.
+    // Field resolver so it only computes when a query actually selects `paidOut`.
+    paidOut: async (m: { id: number }) => {
+      const rows = await db.select({ args: events.args }).from(events)
+        .where(and(eq(events.marketId, m.id), eq(events.eventName, 'TierPayout')));
+      let sum = 0n;
+      for (const r of rows) {
+        try { sum += BigInt(String((JSON.parse(r.args) as { amount?: string }).amount ?? '0')); } catch { /* skip */ }
+      }
+      return sum.toString();
     },
   },
 

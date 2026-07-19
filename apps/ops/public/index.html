@@ -149,6 +149,7 @@
           <div class="row"><span class="k">Before re-index</span><span class="v mono" id="s-prev">—</span></div>
           <div class="row"><span class="k">Lag (blocks)</span><span class="v mono" id="s-lag">—</span></div>
           <div class="row"><span class="k">Disputes (open / total)</span><span class="v mono" id="s-disputes">—</span></div>
+          <div class="row"><span class="k">RPC pool</span><span class="v mono" id="s-rpcpool">—</span></div>
         </section>
         <section class="card">
           <h2>Deployer &amp; Ownership</h2>
@@ -362,6 +363,15 @@
         $('s-prev').textContent = s.indexer.prevCursor ?? '—';
         const lag = s.indexer.lag; $('s-lag').textContent = lag ?? '—'; $('s-lag').className = 'v mono ' + (lag == null ? '' : lag > 5000 ? 'warn' : 'ok');
         $('s-disputes').textContent = s.disputes.open + ' / ' + s.disputes.total;
+        // RPC pool: one short-name badge per Arc endpoint (from the indexer's 60s probes) — green
+        // with latency when up, red with a hover title carrying the error when down.
+        const pool = s.chain.rpcEndpoints || [];
+        $('s-rpcpool').innerHTML = pool.length
+          ? pool.map((p) => {
+              const name = p.url.includes('drpc') ? 'dRPC' : p.url.includes('quicknode') ? 'QuickNode' : p.url.includes('blockdaemon') ? 'Blockdaemon' : 'primary';
+              return `<span class="${p.ok ? 'ok' : 'bad'}" title="${esc(p.url)}${p.error ? ' — ' + esc(p.error) : ''}">${name}${p.ok && p.latencyMs != null ? ' ' + p.latencyMs + 'ms' : ' ✕'}</span>`;
+            }).join(' · ')
+          : '—';
         $('s-deployer').textContent = short(s.deployer.address);
         $('s-balance').textContent = s.deployer.usdcBalance != null ? s.deployer.usdcBalance + ' USDC' : '—';
         $('s-writes').innerHTML = s.deployer.writesEnabled ? '<span class="ok">enabled</span>' : '<span class="warn">read-only</span>';

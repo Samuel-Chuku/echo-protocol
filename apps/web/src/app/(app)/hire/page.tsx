@@ -11,7 +11,7 @@ import { EchoMode, buildMetadata, CONTRACTS, MarketRegistryABI } from '@echo/sdk
 import { useEcho } from '@/lib/sdk';
 import { useAgent } from '@/lib/agent';
 import { useFlag } from '@/lib/flags';
-import { Card, Field, TextArea, Badge, Button, EmptyState, CARD_CLASS, ProgressSteps, TierTrack, InfoTip, type TierStep } from '@/components/ui';
+import { Card, Field, TextArea, Badge, Button, EmptyState, CARD_CLASS, ProgressSteps, TierTrack, InfoTip, Skeleton, type TierStep } from '@/components/ui';
 import { IdentityBanner } from '@/components/IdentityBanner';
 import { RegisterIdentityModal } from '@/components/RegisterIdentityModal';
 import { TxModal } from '@/components/TxModal';
@@ -760,7 +760,11 @@ function MyMarkets({ account, createdAt }: { account?: `0x${string}`; createdAt:
         {!isConnected && (
           <EmptyState icon={Briefcase} title="Connect a wallet" desc="Connect a wallet to see the markets you've created." />
         )}
-        {isConnected && fetching && rows.length === 0 && <p className="text-xs text-white/40">Loading...</p>}
+        {isConnected && fetching && rows.length === 0 && (
+          <div className="space-y-2">
+            {Array.from({ length: 2 }).map((_, i) => <Skeleton key={i} className="h-10 w-full" />)}
+          </div>
+        )}
         {error && <p className="text-xs text-danger break-all">{error.message} — is the indexer running on :4000?</p>}
         {isConnected && !fetching && !error && rows.length === 0 && (
           <EmptyState

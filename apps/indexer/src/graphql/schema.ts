@@ -85,6 +85,8 @@ export const typeDefs = /* GraphQL */ `
     status: String!
     applicantCount: Int!
     createdAt: Int!
+    "Sum of indexed TierPayout amounts (base units) — USDC actually paid to workers so far. Derived from events, so pages can show progress without an RPC read. (Not full escrow accounting: reveal fees / ghost reserves / protocol fees are separate legs.)"
+    paidOut: String!
   }
 
   type Application {
@@ -176,5 +178,16 @@ export const typeDefs = /* GraphQL */ `
     ingestUpdatedAt: Int!
     "The cursor value from just before the last ops re-index, if one ever happened."
     prevCursor: Int
+    "Per-endpoint health of the Arc RPC pool (60s probes) — which provider is down/slow when users report network trouble."
+    rpcEndpoints: [RpcEndpoint!]!
+  }
+
+  type RpcEndpoint {
+    url: String!
+    ok: Boolean!
+    latencyMs: Int
+    block: Int
+    error: String
+    checkedAt: Int!
   }
 `;

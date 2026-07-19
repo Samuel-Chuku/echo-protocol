@@ -2,7 +2,7 @@
 
 import { use, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import Link from 'next/link';
-import { ChevronLeft, ChevronUp, ChevronDown, ExternalLink, Clock, Ghost, MessageSquare, Star, Lock, Bot } from 'lucide-react';
+import { ChevronLeft, ChevronUp, ChevronDown, ExternalLink, Clock, Ghost, MessageSquare, Star, Lock, Bot, Check, Link as LinkIcon } from 'lucide-react';
 import { useQuery, gql } from 'urql';
 import { EchoMode, CONTRACTS } from '@echo/sdk';
 import { useEcho } from '@/lib/sdk';
@@ -15,7 +15,7 @@ import { AgentDecisions } from '@/components/AgentDecisions';
 import { TxModal } from '@/components/TxModal';
 import { TierAdvanceModal } from '@/components/TierAdvanceModal';
 import { GhostPenaltyModal } from '@/components/GhostPenaltyModal';
-import { usdc, scope, toUnits, short, modeName, modeBadgeTone, txLink, duration, FINDING_STATUS, MILESTONE_STATUS } from '@/lib/format';
+import { usdc, scope, toUnits, short, modeName, modeBadgeTone, txLink, duration, FINDING_STATUS, MILESTONE_STATUS, JOB_STATUS, JOB_STATUS_CLASS, HOOK_TIER_LABELS } from '@/lib/format';
 import { eventLabel, summarizeArgs, timeAgo, type ActivityRow } from '@/lib/activity';
 import { humanizeError } from '@/lib/errors';
 import { getAgentMarket } from '@/lib/agentApi';
@@ -25,21 +25,6 @@ type PayoutSummary = {
   perTier: Map<number, bigint>;
   ghostSlashed: bigint;
 };
-
-const HOOK_TIER_LABELS: Record<number, string> = {
-  0: 'Submitted', 1: 'Substantive', 2: 'Shortlist', 3: 'Final', 4: 'Ghost', 5: 'Milestone', 6: 'Finding',
-};
-
-// Arc JobStatus pills — dark-theme variants matching the redesign palette.
-const JOB_STATUS = ['Open', 'Funded', 'Submitted', 'Completed', 'Rejected', 'Expired'];
-const JOB_STATUS_CLASS = [
-  'bg-teal-500/10 text-teal-300 border-teal-500/20',
-  'bg-teal-500/10 text-teal-300 border-teal-500/20',
-  'bg-warning/10 text-warning border-warning/20',
-  'bg-success/10 text-success border-success/20',
-  'bg-danger/10 text-danger border-danger/20',
-  'bg-white/5 text-white/40 border-white/10',
-];
 
 const C = CONTRACTS.arcTestnet;
 
@@ -74,7 +59,7 @@ const MARKET_DETAIL = gql`
   query MarketDetail($id: Int!) {
     market(id: $id) {
       id mode requester subject description status tiers
-      escrowTotal revealFee flagWindow ghostDeadline applicantCount
+      escrowTotal revealFee flagWindow ghostDeadline applicantCount paidOut
     }
   }
 `;
@@ -82,7 +67,7 @@ const MARKET_DETAIL = gql`
 type GqlMarket = {
   id: number; mode: number; requester: string; subject: string | null; description: string | null;
   status: string; tiers: string[] | null; escrowTotal: string | null; revealFee: string | null;
-  flagWindow: number | null; ghostDeadline: number | null; applicantCount: number;
+  flagWindow: number | null; ghostDeadline: number | null; applicantCount: number; paidOut: string;
 };
 
 const TIER_LABELS = ['Applied', 'Revealed', 'Shortlist', 'Final'];
@@ -289,6 +274,7 @@ export default function ManageMarketPage({ params }: { params: Promise<{ id: str
             ] : [
               ['requester', short(gm!.requester)],
               ['escrow total', gm!.escrowTotal ? `$${usdc(BigInt(gm!.escrowTotal))}` : '—'],
+              ['paid to workers', `$${usdc(BigInt(gm!.paidOut || '0'))}`],
               ['reveal fee', gm!.revealFee && gm!.revealFee !== '0' ? `$${usdc(BigInt(gm!.revealFee))}` : '—'],
               ['flag window', gm!.flagWindow ? duration(gm!.flagWindow) : '—'],
               ['ghost deadline', gm!.ghostDeadline ? `${duration(gm!.ghostDeadline)} after final round` : '—'],
@@ -322,6 +308,7 @@ export default function ManageMarketPage({ params }: { params: Promise<{ id: str
             </div>
             <KV rows={[
               ['escrow total', gm.escrowTotal ? `$${usdc(BigInt(gm.escrowTotal))}` : '—'],
+              ['paid to workers', `$${usdc(BigInt(gm.paidOut || '0'))}`],
               ['applicants', String(gm.applicantCount)],
             ]} />
           </Card>
@@ -353,7 +340,8 @@ export default function ManageMarketPage({ params }: { params: Promise<{ id: str
               // The indexer already knows there's nobody yet — show the real empty state instead of
               // a confusing "waiting on the chain" line.
               <div className={CARD_CLASS}>
-                <EmptyState icon={Clock} title="No applicants yet" desc="Once workers apply, they'll show up here to be revealed and advanced." />
+                <EmptyState icon={Clock} title="No applicants yet" desc="Once workers apply, they'll show up here to be revealed and advanced. Share the market to bring them in."
+                  action={<ShareMarketButton marketId={id} />} />
               </div>
             ) : (
               <div className={CARD_CLASS}>
@@ -398,6 +386,24 @@ export default function ManageMarketPage({ params }: { params: Promise<{ id: str
       )}
       {ghostResult && <GhostPenaltyModal recipient={ghostResult.recipient} amount={ghostResult.amount} paid={ghostResult.paid} onClose={() => setGhostResult(null)} />}
     </div>
+  );
+}
+
+
+/** "Copy share link" CTA for markets with no applicants yet: puts the public applicant page
+ *  (/apply/{id}) on the clipboard so the requester can promote the market. */
+function ShareMarketButton({ marketId }: { marketId: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <Button
+      variant="secondary"
+      onClick={() => {
+        const url = `${window.location.origin}/apply/${marketId}`;
+        navigator.clipboard?.writeText(url).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); }).catch(() => {});
+      }}
+    >
+      {copied ? <><Check className="w-3.5 h-3.5" /> Link copied</> : <><LinkIcon className="w-3.5 h-3.5" /> Copy share link</>}
+    </Button>
   );
 }
 
@@ -637,7 +643,8 @@ function ApplicantList({
   if (apps.length === 0) {
     return (
       <div className={CARD_CLASS}>
-        <EmptyState icon={Clock} title="No applicants yet" desc="Once workers apply, they'll show up here for you to reveal and advance." />
+        <EmptyState icon={Clock} title="No applicants yet" desc="Once workers apply, they'll show up here for you to reveal and advance. Share the market to bring them in."
+          action={<ShareMarketButton marketId={marketId.toString()} />} />
       </div>
     );
   }
@@ -701,7 +708,7 @@ function ApplicantList({
                       );
                     }
                     return (
-                      <Command label="Settle stake" tone="neutral" disabled={!account}
+                      <Command label="Settle stake" tone="neutral" modal disabled={!account}
                         run={() => sdk.settleRevealStake(marketId, a.participant, account!)} onDone={onChanged} />
                     );
                   })()}
@@ -709,6 +716,7 @@ function ApplicantList({
                     <Command
                       label="Trigger ghost"
                       tone="neutral"
+                      modal
                       disabled={!account}
                       run={async () => {
                         // Which branch fires depends on the Final job's Arc status at the deadline:
@@ -876,7 +884,7 @@ function ApplicantTierJobs({ sdk, account, marketId, tierJobIds, onDone }: {
                       onDone={() => { load(); onDone(); }}
                       run={() => sdk.completeTierJob(j.jobId, scope('accept'), account)} />
                     {!hideReject && (
-                      <Command label="Reject" tone="neutral" disabled={!account}
+                      <Command label="Reject" tone="neutral" modal disabled={!account}
                         onDone={() => { setRejectReason(''); load(); onDone(); }}
                         run={async () => {
                           // Store the (optional) reason in the content channel BEFORE rejecting, so the
@@ -887,7 +895,7 @@ function ApplicantTierJobs({ sdk, account, marketId, tierJobIds, onDone }: {
                           return sdk.rejectTierJob(j.jobId, scope('reject'), account);
                         }} />
                     )}
-                    <Command label="Request revision" tone="neutral" disabled={!account || j.revisionUsed}
+                    <Command label="Request revision" tone="neutral" modal disabled={!account || j.revisionUsed}
                       onDone={() => { load(); onDone(); }}
                       run={() => sdk.requestRevision(j.jobId, account)} />
                   </div>
@@ -940,7 +948,7 @@ function DirectJobActions({ sdk, account, data, marketId, onChanged, closed }: {
           <Field label="milestone index" value={idx} onChange={(e) => setIdx(e.target.value)} />
           <div className="flex flex-wrap gap-2">
             <Command label="Accept milestone" disabled={!account} onDone={onChanged} run={() => sdk.acceptMilestone(marketId, BigInt(idx), account!)} />
-            <Command label="Auto-release" tone="neutral" disabled={!account} onDone={onChanged} run={() => sdk.autoReleaseMilestone(marketId, BigInt(idx), account!)} />
+            <Command label="Auto-release" tone="neutral" modal disabled={!account} onDone={onChanged} run={() => sdk.autoReleaseMilestone(marketId, BigInt(idx), account!)} />
             <Command label="Cancel job" tone="danger" disabled={!account} onDone={onChanged} run={() => sdk.cancelDirectJob(marketId, account!)} />
           </div>
         </>
@@ -968,8 +976,8 @@ function BountyActions({ sdk, account, data, marketId, onChanged, closed }: { sd
           </div>
           <div className="flex flex-wrap gap-2">
             <Command label="Accept finding" disabled={!account} onDone={onChanged} run={() => sdk.acceptFinding(marketId, BigInt(idx), toUnits(award), account!)} />
-            <Command label="Reject" tone="neutral" disabled={!account} onDone={onChanged} run={() => sdk.rejectFinding(marketId, BigInt(idx), account!)} />
-            <Command label="Auto-escalate" tone="neutral" disabled={!account} onDone={onChanged} run={() => sdk.autoEscalateFinding(marketId, BigInt(idx), account!)} />
+            <Command label="Reject" tone="neutral" modal disabled={!account} onDone={onChanged} run={() => sdk.rejectFinding(marketId, BigInt(idx), account!)} />
+            <Command label="Auto-escalate" tone="neutral" modal disabled={!account} onDone={onChanged} run={() => sdk.autoEscalateFinding(marketId, BigInt(idx), account!)} />
             <Command label="Close bounty" tone="danger" disabled={!account} onDone={onChanged} run={() => sdk.closeBounty(marketId, account!)} />
           </div>
         </>

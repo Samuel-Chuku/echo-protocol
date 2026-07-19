@@ -4,7 +4,7 @@ import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { ChevronDown, ChevronRight, RefreshCw, Search } from 'lucide-react';
 import { useQuery, gql } from 'urql';
-import { Badge, Button, EmptyState, CARD_CLASS, Tabs } from '@/components/ui';
+import { Badge, Button, EmptyState, CARD_CLASS, Tabs, SkeletonCard } from '@/components/ui';
 import { usdc, short, modeName, modeBadgeTone, ago, duration } from '@/lib/format';
 
 /**
@@ -123,7 +123,11 @@ export default function ApplyPage() {
         </div>
       </div>
 
-      {fetching && filtered.length === 0 && <p className="text-sm text-white/40">Loading…</p>}
+      {fetching && filtered.length === 0 && (
+        <div className="grid gap-4 sm:grid-cols-2">
+          {Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} lines={3} />)}
+        </div>
+      )}
       {error && <p className="text-sm text-danger break-all">{error.message} — is the indexer running on :4000?</p>}
       {!fetching && !error && filtered.length === 0 && (
         <EmptyState

@@ -16,8 +16,10 @@ const TONES: Record<Tone, string> = {
 
 /**
  * The wired-button primitive every command uses. `run` performs the SDK call and (for writes)
- * returns the tx hash; the button shows pending/result inline with an Arcscan link. Errors surface
- * the revert reason. Keep `run` a thunk so inputs are read at click time.
+ * returns the tx hash. Writes (tone !== 'neutral') route through the global tx overlay so EVERY
+ * value-moving action gets the signing → success-receipt modal (user ask 2026-07-19); reads and
+ * utility buttons (Refresh, Load…) stay inline-only. The inline result line remains for both as a
+ * persistent record after the modal closes. Keep `run` a thunk so inputs are read at click time.
  */
 export function Command({
   label,
@@ -26,6 +28,7 @@ export function Command({
   disabled,
   onDone,
   successText,
+  modal,
 }: {
   label: string;
   run: () => Promise<unknown>;
@@ -35,24 +38,32 @@ export function Command({
   onDone?: (result: unknown) => void;
   /** Optional custom success message (e.g. "AR proposed successfully, AR #3") in place of the raw tx hash. */
   successText?: (result: unknown) => Promise<string> | string;
+  /** Overlay override. Tone is styling, not semantics — some WRITES are styled neutral (Settle
+   *  stake, Reject, Vote against…): pass modal to force the overlay on them; modal={false} keeps a
+   *  non-neutral utility button overlay-free. Default: overlay iff tone !== 'neutral'. */
+  modal?: boolean;
 }) {
   const { run: runTx } = useTx();
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<{ ok: boolean; raw: unknown; msg: string } | null>(null);
 
   // Reads/utility buttons (Refresh, Load …) use tone="neutral" and shouldn't pop the tx overlay.
-  const isWrite = tone !== 'neutral';
+  const isWrite = modal ?? tone !== 'neutral';
 
   async function onClick() {
     setBusy(true);
     setResult(null);
     try {
-      const r = await run();
+      // Writes go through the overlay (it owns signing/success/error presentation + bumpBalances);
+      // reads run bare. The overlay rethrows on failure so both paths land in the same catch.
+      const r = isWrite ? await runTx({ title: label }, run) : await run();
       const msg = successText ? await successText(r) : isTxHash(r) ? (r as string) : 'done';
       setResult({ ok: true, raw: r, msg });
-      bumpBalances(); // refresh all mounted USDC balances the moment the action lands
+      if (!isWrite) bumpBalances(); // overlay already bumped for writes
       onDone?.(r);
     } catch (e: unknown) {
+      // The overlay already showed the humanized error for writes; keep the inline line as a
+      // persistent record either way.
       setResult({ ok: false, raw: null, msg: humanizeError(e) });
     } finally {
       setBusy(false);

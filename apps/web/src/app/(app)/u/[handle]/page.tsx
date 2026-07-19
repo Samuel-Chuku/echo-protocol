@@ -8,7 +8,7 @@ import { useAccount } from 'wagmi';
 import { useQuery, gql } from 'urql';
 import { eventLabel, summarizeArgs, timeAgo, marketHref, type ActivityRow } from '@/lib/activity';
 import { short, modeName, modeBadgeTone, txLink, addrLink, usdc, usdcShort } from '@/lib/format';
-import { Badge, Button, EmptyState, StatCard, CARD_CLASS, Card, KV } from '@/components/ui';
+import { Badge, Button, EmptyState, StatCard, CARD_CLASS, Card, KV, SkeletonCard } from '@/components/ui';
 import { SendUsdcCard, useIsPasskeyWallet } from '@/components/SendUsdc';
 import { AgentWallet } from '@/components/AgentWallet';
 import { peekAgentWallet } from '@/lib/agentApi';
@@ -238,7 +238,12 @@ export default function ProfilePage({ params }: { params: Promise<{ handle: stri
         </div>
       </section>
 
-      {fetching && !data && <p className="text-sm text-white/40">Loading…</p>}
+      {fetching && !data && (
+        <div className="mb-8 grid gap-4 sm:grid-cols-2">
+          <SkeletonCard lines={3} />
+          <SkeletonCard lines={3} />
+        </div>
+      )}
       {error && <p className="text-sm text-danger break-all">{error.message} — is the indexer running on :4000?</p>}
 
       {isNewUser ? (

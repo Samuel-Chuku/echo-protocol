@@ -22,6 +22,26 @@ export const INPUT_CLASS =
   'mt-1.5 w-full px-3.5 py-2.5 text-base rounded-lg bg-white/[0.05] border border-white/10 text-white ' +
   'placeholder:text-white/30 focus:outline-none focus:border-teal-500/40 transition-colors';
 
+/** One shimmering placeholder bar. Compose into card-shaped skeletons so loading pages keep their
+ *  final width/height instead of reflowing when data lands (no "Loading…" text jumps). */
+export function Skeleton({ className = '' }: { className?: string }) {
+  return <div className={`animate-pulse rounded-md bg-white/[0.06] ${className}`} />;
+}
+
+/** A card-shaped skeleton: title bar + n content lines, on the standard card surface. */
+export function SkeletonCard({ lines = 3, className = '' }: { lines?: number; className?: string }) {
+  return (
+    <div className={`${CARD_CLASS} ${className}`}>
+      <Skeleton className="h-4 w-1/3" />
+      <div className="mt-3 space-y-2">
+        {Array.from({ length: lines }).map((_, i) => (
+          <Skeleton key={i} className={`h-3 ${i === lines - 1 ? 'w-1/2' : 'w-full'}`} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /**
  * Ticking "now" in unix seconds — updates every `intervalMs` so countdowns re-render live. Cleared on
  * unmount. Default 1s; pass 60000 for coarse (minute-granularity) timers to avoid needless renders.

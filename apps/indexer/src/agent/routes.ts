@@ -15,6 +15,23 @@ const wrap = (fn: (req: Request, res: Response) => Promise<unknown>) => (req: Re
   fn(req, res).catch((e) => res.status(400).json({ error: (e as Error).message ?? 'agent error' }));
 };
 
+/**
+ * Tiny TTL cache for the hot public reads (/agent/market/:id, /agent/wallet/:owner) — every market
+ * page view hits them, and the answers only change on market-create / first provision. 30s keeps the
+ * DB out of the request path without ever being noticeably stale. Bounded: evicts oldest at 500 keys.
+ */
+const readCache = new Map<string, { at: number; body: unknown }>();
+const CACHE_TTL_MS = 30_000;
+function cached<T>(key: string, load: () => Promise<T>): Promise<T> {
+  const hit = readCache.get(key);
+  if (hit && Date.now() - hit.at < CACHE_TTL_MS) return Promise.resolve(hit.body as T);
+  return load().then((body) => {
+    if (readCache.size >= 500) readCache.delete(readCache.keys().next().value!);
+    readCache.set(key, { at: Date.now(), body });
+    return body;
+  });
+}
+
 function clientIp(req: Request): string {
   const xff = req.headers['x-forwarded-for'];
   if (typeof xff === 'string' && xff.length) return xff.split(',')[0].trim();
@@ -71,18 +88,21 @@ async function ensureAgentIdentity(owner: string, walletId: string, walletAddres
  */
 export function mountAgentRoutes(app: Express): void {
   app.get('/agent/market/:id', wrap(async (req, res) => {
-    const [row] = await db.select().from(agentMarkets).where(eq(agentMarkets.marketId, Number(req.params.id))).limit(1);
-    // Surface the HUMAN owner behind the DCW: on-chain the market's requester is the agent wallet,
-    // and the owner link only exists here (agent_wallets). The UI shows the real requestor with it.
-    const [w] = row
-      ? await db.select().from(agentWallets).where(eq(agentWallets.walletAddress, row.walletAddress)).limit(1)
-      : [];
-    res.json({
-      agentRun: !!row,
-      walletAddress: row?.walletAddress ?? null,
-      owner: w?.owner ?? null,
-      enabled: row ? row.enabled === 1 : false,
+    const body = await cached(`market:${req.params.id}`, async () => {
+      const [row] = await db.select().from(agentMarkets).where(eq(agentMarkets.marketId, Number(req.params.id))).limit(1);
+      // Surface the HUMAN owner behind the DCW: on-chain the market's requester is the agent wallet,
+      // and the owner link only exists here (agent_wallets). The UI shows the real requestor with it.
+      const [w] = row
+        ? await db.select().from(agentWallets).where(eq(agentWallets.walletAddress, row.walletAddress)).limit(1)
+        : [];
+      return {
+        agentRun: !!row,
+        walletAddress: row?.walletAddress ?? null,
+        owner: w?.owner ?? null,
+        enabled: row ? row.enabled === 1 : false,
+      };
     });
+    res.json(body);
   }));
 
   // Peek at an owner's agent wallet WITHOUT provisioning one (the POST below is get-or-create; a
@@ -90,8 +110,11 @@ export function mountAgentRoutes(app: Express): void {
   // is observable on-chain anyway (deposits flow owner → DCW).
   app.get('/agent/wallet/:owner', wrap(async (req, res) => {
     const owner = String(req.params.owner ?? '').toLowerCase();
-    const [w] = await db.select().from(agentWallets).where(eq(agentWallets.owner, owner)).limit(1);
-    res.json({ exists: !!w, walletAddress: w?.walletAddress ?? null });
+    const body = await cached(`wallet:${owner}`, async () => {
+      const [w] = await db.select().from(agentWallets).where(eq(agentWallets.owner, owner)).limit(1);
+      return { exists: !!w, walletAddress: w?.walletAddress ?? null };
+    });
+    res.json(body);
   }));
 
   app.get('/agent/decisions', wrap(async (req, res) => {
@@ -122,6 +145,7 @@ export function mountAgentRoutes(app: Express): void {
     if (!owner) return;
     if (!config.agentEnabled) throw new Error('agent is disabled on this server');
     const { walletId, walletAddress } = await getOrCreateWallet(owner);
+    readCache.delete(`wallet:${owner}`); // a first provision flips the peek answer immediately
     // Balance read on-chain (Circle's balance API lags fresh deposits). Clients poll on-chain too.
     const bal = await publicClient.readContract({
       address: agentContracts.usdc,
@@ -243,6 +267,7 @@ export function mountAgentRoutes(app: Express): void {
       enabled: 1,
       createdAt: Math.floor(Date.now() / 1000),
     }).onConflictDoNothing();
+    readCache.delete(`market:${marketId}`); // the create flips agentRun for this id immediately
 
     res.json({ marketId, txHash });
   }));

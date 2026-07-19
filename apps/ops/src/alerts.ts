@@ -118,6 +118,27 @@ async function buildAlerts(): Promise<Alert[]> {
     /* markets table may be empty */
   }
 
+  // Arc RPC pool health (from the indexer's per-endpoint probes). All-down is critical — every
+  // chain read in the web app AND the indexer is failing; partial outage is a heads-up.
+  try {
+    const res = await fetch(config.indexerGraphqlUrl, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ query: '{ health { rpcEndpoints { url ok error } } }' }),
+      signal: AbortSignal.timeout(2500),
+    });
+    const body = await res.json().catch(() => null) as { data?: { health?: { rpcEndpoints?: Array<{ url: string; ok: boolean; error: string | null }> } } } | null;
+    const pool = body?.data?.health?.rpcEndpoints ?? [];
+    const down = pool.filter((p) => !p.ok);
+    if (pool.length > 0 && down.length === pool.length) {
+      out.push({ level: 'critical', title: 'All Arc RPC endpoints down', detail: down.map((p) => p.error).filter(Boolean).slice(0, 2).join('; ') || 'every provider failing probes' });
+    } else if (down.length > 0) {
+      out.push({ level: 'warn', title: `${down.length}/${pool.length} Arc RPC endpoint(s) down`, detail: down.map((p) => new URL(p.url).hostname).join(', ') });
+    }
+  } catch {
+    /* older indexer image without probes — skip */
+  }
+
   if (out.length === 0) out.push({ level: 'ok', title: 'All clear', detail: 'no active alerts' });
   return out;
 }

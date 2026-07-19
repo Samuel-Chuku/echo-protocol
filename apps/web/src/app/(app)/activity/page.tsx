@@ -12,6 +12,7 @@ import { useAgent } from '@/lib/agent';
 import { ACTIVITY_QUERY, eventLabel, summarizeArgs, timeAgo, marketHref, type ActivityRow } from '@/lib/activity';
 import { txLink, short } from '@/lib/format';
 import { peekAgentWallet, getOwnerAgentDecisions, type AgentDecision } from '@/lib/agentApi';
+import { SkeletonCard } from '@/components/ui';
 
 /**
  * Activity feed for the connected wallet. Cards, not a divide-y list — every row has its own
@@ -247,7 +248,11 @@ export default function ActivityPage() {
         </div>
       </div>
 
-      {fetching && all.length === 0 && <p className="text-xs text-white/40 px-1">Loading...</p>}
+      {fetching && all.length === 0 && (
+        <div className="grid grid-cols-1 gap-2">
+          {Array.from({ length: 3 }).map((_, i) => <SkeletonCard key={i} lines={2} />)}
+        </div>
+      )}
       {error && <p className="text-xs text-danger break-all px-1">{error.message} — is the indexer running on :4000?</p>}
       {!fetching && !error && filtered.length === 0 && all.length > 0 && (
         <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-8 text-center">
