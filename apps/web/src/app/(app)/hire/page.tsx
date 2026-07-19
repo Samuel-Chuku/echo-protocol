@@ -18,6 +18,8 @@ import { TxModal } from '@/components/TxModal';
 import { toUnits, usdc, scope, modeName, modeBadgeTone, MODE_BLURBS, recommendedEscrow, minEscrow } from '@/lib/format';
 import { createAgentMarket } from '@/lib/agentApi';
 import { AgentWallet } from '@/components/AgentWallet';
+import { useTx } from '@/lib/tx';
+import { humanizeError } from '@/lib/errors';
 
 const C = CONTRACTS.arcTestnet;
 const TYPE_ACCENT = ['border-teal-500/30 hover:border-teal-500/50', 'border-success/30 hover:border-success/50', 'border-warning/30 hover:border-warning/50'];
@@ -212,6 +214,7 @@ function LiveTotal({ label, totalHuman, feeBps }: { label: string; totalHuman: s
 }
 
 function OpenWizard({ sdk, account, agentId, feeBps, onCreated }: WizardProps) {
+  const { run: runTx } = useTx();
   const router = useRouter();
   const [step, setStep] = useState(0);
   const [subject, setSubject] = useState('');
@@ -458,26 +461,33 @@ function OpenWizard({ sdk, account, agentId, feeBps, onCreated }: WizardProps) {
                 onClick={async () => {
                   setAgentBusy(true); setAgentErr(null);
                   try {
-                    const res = await createAgentMarket({
-                      market: {
-                        subject, description: desc,
-                        tierAmounts: tiers.map((t) => toUnits(t).toString()) as [string, string, string, string],
-                        escrowTotal: toUnits(totalEscrow).toString(),
-                        maxApplicants: Number(maxApplicants),
-                        ghostDeadline: toSeconds(ghostAmount, ghostUnit),
-                        requiredProofs: Number(requiredProofs),
-                        stakeRequired: toUnits(stake).toString(),
-                        flagWindow: toSeconds(flagAmount, flagUnit),
-                      },
-                      agent: {
-                        revealCriteria, advanceGuardrails,
-                        maxReveals: Number(agentMaxReveals), maxAdvances: Number(agentMaxAdvances),
-                        revealThreshold: Number(agentThreshold),
-                      },
+                    // Through the global tx overlay so market creation gets the same success
+                    // receipt (with tx link) as every other transaction (user ask 2026-07-19).
+                    // runTx's fn returns the txHash so the receipt shows the Arcscan link.
+                    let created: { marketId: number; txHash: string } | null = null;
+                    await runTx({ title: 'Create agent-run market' }, async () => {
+                      created = await createAgentMarket({
+                        market: {
+                          subject, description: desc,
+                          tierAmounts: tiers.map((t) => toUnits(t).toString()) as [string, string, string, string],
+                          escrowTotal: toUnits(totalEscrow).toString(),
+                          maxApplicants: Number(maxApplicants),
+                          ghostDeadline: toSeconds(ghostAmount, ghostUnit),
+                          requiredProofs: Number(requiredProofs),
+                          stakeRequired: toUnits(stake).toString(),
+                          flagWindow: toSeconds(flagAmount, flagUnit),
+                        },
+                        agent: {
+                          revealCriteria, advanceGuardrails,
+                          maxReveals: Number(agentMaxReveals), maxAdvances: Number(agentMaxAdvances),
+                          revealThreshold: Number(agentThreshold),
+                        },
+                      });
+                      return created.txHash;
                     });
-                    setAgentResult(res); onCreated?.(); router.push(`/hire/${res.marketId}`);
+                    if (created) { setAgentResult(created); onCreated?.(); router.push(`/hire/${(created as { marketId: number }).marketId}`); }
                   } catch (e) {
-                    setAgentErr(e instanceof Error ? e.message : 'create failed');
+                    setAgentErr(humanizeError(e));
                   } finally { setAgentBusy(false); }
                 }}
               >Create agent market</Button>

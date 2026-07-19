@@ -5,14 +5,16 @@ import Image from 'next/image';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { Menu, X } from 'lucide-react';
+import { useAccount } from 'wagmi';
 import { WalletStatus } from './WalletStatus';
 import { ChainBadge } from './ChainBadge';
 
 // Role-first IA. Disputes is intentionally NOT here: it's market-specific, reached from inside a job.
+// Introducer is secondary (footer + "Want to be an Introducer?" card on profiles) — Profile took its
+// nav slot (user ask 2026-07-19).
 const LINKS = [
   { href: '/hire', label: 'Post a job' },
   { href: '/apply', label: 'Find work' },
-  { href: '/attribution', label: 'Introducer' },
   { href: '/activity', label: 'Activity' },
 ];
 
@@ -31,6 +33,10 @@ function ReputationPill({ className = '' }: { className?: string }) {
 export function Nav() {
   const path = usePathname();
   const [open, setOpen] = useState(false);
+  const { address } = useAccount();
+  // Profile deep-links to the connected wallet's own page; hidden until a wallet is connected
+  // (a bare /u/ has nothing to show).
+  const profileHref = address ? `/u/${address}` : null;
 
   return (
     <nav className="border-b border-white/[0.08] bg-ink/80 backdrop-blur sticky top-0 z-30">
@@ -54,6 +60,16 @@ export function Nav() {
               </Link>
             );
           })}
+          {profileHref && (
+            <Link
+              href={profileHref}
+              className={`px-3 py-1.5 text-sm font-medium rounded-full transition ${
+                path.startsWith('/u/') ? 'bg-teal-500 text-ink' : 'text-white/50 hover:text-white hover:bg-white/[0.06]'
+              }`}
+            >
+              Profile
+            </Link>
+          )}
           <ReputationPill />
         </div>
 
@@ -103,6 +119,17 @@ export function Nav() {
               </Link>
             );
           })}
+          {profileHref && (
+            <Link
+              href={profileHref}
+              onClick={() => setOpen(false)}
+              className={`min-h-[44px] flex items-center px-4 rounded-full text-base font-medium transition ${
+                path.startsWith('/u/') ? 'bg-teal-500 text-ink' : 'text-white/70 hover:text-white hover:bg-white/[0.06]'
+              }`}
+            >
+              Profile
+            </Link>
+          )}
           <ReputationPill className="min-h-[44px]" />
         </div>
 

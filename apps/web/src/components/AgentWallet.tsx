@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Bot, ArrowDownToLine, ArrowUpFromLine, Copy, Check, Loader2 } from 'lucide-react';
 import { useEcho } from '@/lib/sdk';
+import { useTx } from '@/lib/tx';
+import { humanizeError } from '@/lib/errors';
 import { getAgentWallet, withdrawAgent } from '@/lib/agentApi';
 import { useUsdcBalance, bumpBalances } from '@/lib/balances';
 import { toUnits, usdc, short } from '@/lib/format';
@@ -18,9 +20,9 @@ import { Button } from '@/components/ui';
  */
 export function AgentWallet({ onBalance }: { onBalance?: (balanceHuman: string) => void }) {
   const { sdk, account } = useEcho();
+  const { run: runTx } = useTx();
   const [wallet, setWallet] = useState<{ walletAddress: string } | null>(null);
   const [loadErr, setLoadErr] = useState<string | null>(null);
-  const [actionErr, setActionErr] = useState<string | null>(null);
   const [busy, setBusy] = useState<'deposit' | 'withdraw' | null>(null);
   const [depositAmt, setDepositAmt] = useState('');
   const [withdrawAmt, setWithdrawAmt] = useState('');
@@ -37,7 +39,7 @@ export function AgentWallet({ onBalance }: { onBalance?: (balanceHuman: string) 
     setLoadErr(null);
     getAgentWallet()
       .then((w) => { if (active) setWallet({ walletAddress: w.walletAddress }); })
-      .catch((e) => { if (active) setLoadErr(e instanceof Error ? e.message : 'failed to load agent wallet'); });
+      .catch((e) => { if (active) setLoadErr(humanizeError(e)); });
     return () => { active = false; };
   }, [account]);
 
@@ -46,30 +48,36 @@ export function AgentWallet({ onBalance }: { onBalance?: (balanceHuman: string) 
     if (agentBal !== null) onBalance?.(usdc(agentBal));
   }, [agentBal, onBalance]);
 
+  // Both money moves run through the global tx overlay (useTx) so the user gets the same
+  // signing → success-receipt modal every other transaction shows (user ask 2026-07-19).
   const deposit = useCallback(async () => {
     if (!wallet || !account || !depositAmt.trim()) return;
-    setBusy('deposit'); setActionErr(null);
+    setBusy('deposit');
     try {
-      await sdk.transferUsdc(wallet.walletAddress as `0x${string}`, toUnits(depositAmt), account);
+      await runTx({ title: `Deposit $${depositAmt} USDC into your agent wallet` }, () =>
+        sdk.transferUsdc(wallet.walletAddress as `0x${string}`, toUnits(depositAmt), account));
       setDepositAmt('');
       bumpBalances(); // on-chain read → reflects immediately, no Circle lag
-    } catch (e) {
-      setActionErr(e instanceof Error ? e.message : 'deposit failed');
-    } finally { setBusy(null); }
-  }, [wallet, account, depositAmt, sdk]);
+    } catch { /* the overlay already showed the humanized failure */ }
+    finally { setBusy(null); }
+  }, [wallet, account, depositAmt, sdk, runTx]);
 
   const withdraw = useCallback(async () => {
     if (!withdrawAmt.trim()) return;
-    setBusy('withdraw'); setActionErr(null);
+    setBusy('withdraw');
     try {
-      await withdrawAgent(withdrawAmt);
+      // Circle signs + submits server-side (no wallet prompt) — the overlay still gives the
+      // success receipt with the tx link once it lands.
+      await runTx({ title: `Withdraw $${withdrawAmt} USDC to your wallet` }, async () => {
+        const { txHash } = await withdrawAgent(withdrawAmt);
+        return txHash;
+      });
       setWithdrawAmt('');
       bumpBalances();
       setTimeout(refreshAgent, 4000); // Circle-submitted tx can land a beat later — re-read once more
-    } catch (e) {
-      setActionErr(e instanceof Error ? e.message : 'withdraw failed');
-    } finally { setBusy(null); }
-  }, [withdrawAmt, refreshAgent]);
+    } catch { /* the overlay already showed the humanized failure */ }
+    finally { setBusy(null); }
+  }, [withdrawAmt, refreshAgent, runTx]);
 
   if (loadErr) {
     return (
@@ -158,7 +166,6 @@ export function AgentWallet({ onBalance }: { onBalance?: (balanceHuman: string) 
         </div>
       </div>
 
-      {actionErr && <p className="mt-2 text-xs text-danger break-all">{actionErr}</p>}
     </div>
   );
 }

@@ -2,6 +2,7 @@ import {
   createPublicClient,
   createWalletClient,
   custom,
+  fallback,
   getAddress,
   http,
   parseEventLogs,
@@ -201,6 +202,17 @@ export { IDENTITY_ABI };
 // Drop-in client for building apps on Echo.
 // ═══════════════════════════════════════════════════════════
 
+// Arc testnet's four independently-operated public RPC endpoints. A single-provider dependency
+// stalled the indexer for days in July 2026 (the primary rate-limited/blacklisted heavy readers
+// while the other three served the same queries fine) — so reads fall back across all of them.
+// See memory: echo-arc-rpc-getlogs-blacklist. Order: primary first, then the alternates.
+export const ARC_RPC_URLS = [
+  'https://rpc.testnet.arc.network',
+  'https://rpc.drpc.testnet.arc.network',
+  'https://rpc.quicknode.testnet.arc.network',
+  'https://rpc.blockdaemon.testnet.arc.network',
+];
+
 export class EchoSdk {
   public publicClient: PublicClient;
   public walletClient?: WalletClient;
@@ -208,9 +220,13 @@ export class EchoSdk {
   public contracts = CONTRACTS.arcTestnet;
 
   constructor(rpcUrl?: string) {
+    // An explicit rpcUrl goes first and the public pool becomes its fallback (mirrors the
+    // indexer's chain.ts). retryCount 0 per endpoint: fail fast → next provider, instead of
+    // burning ~4s of viem retries on a provider that is down or rate-limiting.
+    const urls = rpcUrl ? [rpcUrl, ...ARC_RPC_URLS.filter((u) => u !== rpcUrl)] : ARC_RPC_URLS;
     this.publicClient = createPublicClient({
       chain: arcTestnet,
-      transport: http(rpcUrl || 'https://rpc.testnet.arc.network'),
+      transport: fallback(urls.map((u) => http(u, { retryCount: 0 }))),
     });
   }
 

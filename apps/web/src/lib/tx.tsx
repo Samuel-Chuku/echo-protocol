@@ -3,7 +3,7 @@
 import { createContext, useCallback, useContext, useRef, useState, type ReactNode } from 'react';
 import { Loader2, CheckCircle2, XCircle, ExternalLink, Copy, Check, Wallet } from 'lucide-react';
 import { isTxHash, txLink, short } from './format';
-import { formatTxError } from './errors';
+import { humanizeError } from './errors';
 import { bumpBalances } from './balances';
 
 /**
@@ -49,7 +49,7 @@ export function TxProvider({ children }: { children: ReactNode }) {
       if (kind === 'approval') timer.current = setTimeout(() => setState(null), 1400);
       return r;
     } catch (e) {
-      setState({ ...meta, kind, status: 'error', error: formatTxError(e) });
+      setState({ ...meta, kind, status: 'error', error: humanizeError(e) });
       throw e;
     }
   }, []);
@@ -134,7 +134,7 @@ function Failure({ state, onClose }: { state: TxState; onClose: () => void }) {
       <XCircle className="mb-3 h-12 w-12 text-red-500" />
       <h3 className="text-base font-semibold text-gray-900">Transaction failed</h3>
       <p className="mt-1 text-sm text-gray-500">{state.title}</p>
-      <p className="mt-3 w-full break-words rounded-lg bg-red-50 px-3 py-2 text-xs font-mono text-red-600">{state.error}</p>
+      <p className="mt-3 w-full break-words rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{state.error}</p>
       <button
         onClick={onClose}
         className="mt-5 w-full rounded-md bg-gray-100 px-3 py-2 text-sm font-medium text-gray-800 hover:bg-gray-200"

@@ -5,6 +5,7 @@ import { Loader2, CheckCircle2, ExternalLink, AlertCircle } from 'lucide-react';
 import { Modal } from './Modal';
 import { Button } from './ui';
 import { isTxHash, txLink } from '@/lib/format';
+import { humanizeError } from '@/lib/errors';
 
 type Step = 'confirm' | 'pending' | 'success' | 'error';
 
@@ -41,8 +42,7 @@ export function TxModal({
       setStep('success');
       onDone?.(r);
     } catch (e: unknown) {
-      const err = e as { shortMessage?: string; details?: string; message?: string };
-      setResult(err.shortMessage || err.details || err.message || String(e));
+      setResult(humanizeError(e));
       setStep('error');
     }
   }

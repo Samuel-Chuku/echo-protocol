@@ -17,6 +17,7 @@ import { TierAdvanceModal } from '@/components/TierAdvanceModal';
 import { GhostPenaltyModal } from '@/components/GhostPenaltyModal';
 import { usdc, scope, toUnits, short, modeName, modeBadgeTone, txLink, duration, FINDING_STATUS, MILESTONE_STATUS } from '@/lib/format';
 import { eventLabel, summarizeArgs, timeAgo, type ActivityRow } from '@/lib/activity';
+import { humanizeError } from '@/lib/errors';
 import { getAgentMarket } from '@/lib/agentApi';
 
 type PayoutSummary = {
@@ -217,11 +218,20 @@ export default function ManageMarketPage({ params }: { params: Promise<{ id: str
       });
     } catch (e: any) {
       setData(null);
-      setErr(e?.shortMessage || e?.message || String(e));
+      setErr(humanizeError(e));
     }
   }
 
   useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [id]);
+
+  // If the chain read failed (all RPC providers down/rate-limited), retry quietly on a backoff —
+  // the indexer copy keeps the page useful meanwhile, and this heals it without a manual Refresh.
+  useEffect(() => {
+    if (data || !err) return;
+    const t = setTimeout(() => { load(); }, 8000);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, err]);
 
   return (
     <div>
@@ -262,10 +272,10 @@ export default function ManageMarketPage({ params }: { params: Promise<{ id: str
       <Section title="Status" desc="Live on-chain state for this market.">
         <Card title="Overview">
           <Command label="Refresh" tone="neutral" run={async () => { await load(); return 'refreshed'; }} />
-          {err && !gm && <p className="text-xs text-danger break-all">{err}</p>}
+          {err && !gm && <p className="text-xs text-danger">{err}</p>}
           {err && gm && (
             <p className="text-xs text-warning">
-              Live chain read failed ({err.slice(0, 120)}) — showing the indexer&apos;s copy below; Refresh to retry.
+              Live network data is temporarily unavailable — showing the last indexed state. Hit Refresh to retry.
             </p>
           )}
           {(data || gm) && (
@@ -290,7 +300,32 @@ export default function ManageMarketPage({ params }: { params: Promise<{ id: str
           )}
         </Card>
 
-        {data && <StatusReport data={data} closed={isClosed} rows={activityRows} />}
+        {data ? (
+          <StatusReport data={data} closed={isClosed} rows={activityRows} />
+        ) : gm ? (
+          // Companion card from the indexer so Overview never sits beside an empty column while the
+          // chain read loads/retries (no-empty-space rule, user feedback 2026-07-19).
+          <Card title="Status report">
+            <div className="flex items-center gap-2">
+              <Badge tone={isClosed ? 'neutral' : 'success'}>{isClosed ? 'Closed' : 'Active'}</Badge>
+              <span className="text-xs text-white/40">{modeName(gm.mode)}</span>
+            </div>
+            <div>
+              <div className="text-[10px] uppercase tracking-wide text-white/40">Pending action</div>
+              <p className="mt-0.5 text-sm text-white/80">
+                {isClosed
+                  ? 'Closed and settled — no action required.'
+                  : gm.applicantCount === 0
+                    ? 'Waiting for the first applicant.'
+                    : `${gm.applicantCount} applicant${gm.applicantCount > 1 ? 's' : ''} so far — details load with the live chain read.`}
+              </p>
+            </div>
+            <KV rows={[
+              ['escrow total', gm.escrowTotal ? `$${usdc(BigInt(gm.escrowTotal))}` : '—'],
+              ['applicants', String(gm.applicantCount)],
+            ]} />
+          </Card>
+        ) : null}
 
         {isClosed && (
           <div className="sm:col-span-2 flex items-start gap-3 rounded-card border border-white/10 bg-white/[0.03] p-4">
@@ -314,9 +349,15 @@ export default function ManageMarketPage({ params }: { params: Promise<{ id: str
               // on-chain requester) — hide the action buttons (closed) but grant requester-level
               // READS (application bodies after reveal) via readOnlyRequester.
               <ApplicantList sdk={sdk} account={account} data={data} marketId={marketId()} onChanged={load} onGhost={setGhostResult} closed={isClosed || (agentInfo.agentRun && !isRequester)} revealedAtMap={revealedAtMap} readOnlyRequester={isAgentOwner && !isRequester} />
+            ) : gm && gm.applicantCount === 0 ? (
+              // The indexer already knows there's nobody yet — show the real empty state instead of
+              // a confusing "waiting on the chain" line.
+              <div className={CARD_CLASS}>
+                <EmptyState icon={Clock} title="No applicants yet" desc="Once workers apply, they'll show up here to be revealed and advanced." />
+              </div>
             ) : (
               <div className={CARD_CLASS}>
-                <p className="text-xs text-white/40">Applicant list needs a live chain read — retrying via Refresh above.</p>
+                <p className="text-xs text-white/40">Loading applicants…</p>
               </div>
             )}
             {!isClosed && (!agentInfo.agentRun || isRequester) && data && (

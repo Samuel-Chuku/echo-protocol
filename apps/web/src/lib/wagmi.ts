@@ -1,6 +1,6 @@
 'use client';
 
-import { createConfig, createStorage, cookieStorage, http } from 'wagmi';
+import { createConfig, createStorage, cookieStorage, http, fallback } from 'wagmi';
 import type { Chain } from 'viem';
 import { connectorsForWallets } from '@rainbow-me/rainbowkit';
 import {
@@ -10,7 +10,7 @@ import {
   coinbaseWallet,
   walletConnectWallet,
 } from '@rainbow-me/rainbowkit/wallets';
-import { arcTestnet } from '@echo/sdk';
+import { arcTestnet, ARC_RPC_URLS } from '@echo/sdk';
 import { circleConnector, circleConfigured } from './circle';
 
 /**
@@ -46,7 +46,10 @@ export const config = createConfig({
   chains,
   connectors,
   transports: {
-    [arcTestnet.id]: http('https://rpc.testnet.arc.network'),
+    // All four Arc public endpoints with fallback — a single-provider dependency stalled the
+    // indexer for days in July 2026; the browser gets the same resilience. Fail fast per
+    // endpoint (retryCount 0) so a down provider costs ~one request, not seconds of retries.
+    [arcTestnet.id]: fallback(ARC_RPC_URLS.map((u) => http(u, { retryCount: 0 }))),
   },
   ssr: true,
   storage: createStorage({ storage: cookieStorage }),

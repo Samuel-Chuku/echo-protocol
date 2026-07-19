@@ -2,7 +2,7 @@
 
 import { use, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { ExternalLink, Copy, Check, Download, Share2, Lock, Award, Bot } from 'lucide-react';
+import { ExternalLink, Copy, Check, Download, Share2, Lock, Award, Bot, Users, ArrowRight } from 'lucide-react';
 import { getAddress } from 'viem';
 import { useAccount } from 'wagmi';
 import { useQuery, gql } from 'urql';
@@ -179,6 +179,28 @@ export default function ProfilePage({ params }: { params: Promise<{ handle: stri
             </div>
           )}
         </div>
+      )}
+
+      {/* Introducer — moved out of the nav to here + the footer (user ask 2026-07-19). Prominent,
+          full-width, gradient accent so it reads as a protocol offering rather than filler. */}
+      {isOwn && (
+        <Link
+          href="/attribution"
+          className="group mb-8 flex items-center gap-4 rounded-2xl border border-purple-500/25 bg-gradient-to-r from-purple-500/[0.12] via-purple-500/[0.04] to-transparent p-5 transition hover:border-purple-500/50"
+        >
+          <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-purple-500/15 text-purple-300">
+            <Users className="h-6 w-6" />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block text-base font-semibold text-white">Want to be an Introducer?</span>
+            <span className="mt-0.5 block text-sm text-white/50">
+              Introduce great workers to Echo and earn a slice of every payout they win — automatically, on-chain, for years.
+            </span>
+          </span>
+          <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-purple-500/15 px-4 py-2 text-sm font-medium text-purple-300 transition group-hover:bg-purple-500/25">
+            Start earning <ArrowRight className="h-4 w-4 transition group-hover:translate-x-0.5" />
+          </span>
+        </Link>
       )}
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-6">

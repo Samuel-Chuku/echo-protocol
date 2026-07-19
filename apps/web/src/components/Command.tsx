@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { Loader2, ExternalLink, Check, X } from 'lucide-react';
 import { isTxHash, txLink } from '@/lib/format';
-import { formatTxError } from '@/lib/errors';
+import { humanizeError } from '@/lib/errors';
 import { useTx } from '@/lib/tx';
 import { bumpBalances } from '@/lib/balances';
 
@@ -53,8 +53,7 @@ export function Command({
       bumpBalances(); // refresh all mounted USDC balances the moment the action lands
       onDone?.(r);
     } catch (e: unknown) {
-      const err = e as { shortMessage?: string; details?: string; message?: string };
-      setResult({ ok: false, raw: null, msg: err.shortMessage || err.details || err.message || String(e) });
+      setResult({ ok: false, raw: null, msg: humanizeError(e) });
     } finally {
       setBusy(false);
     }
