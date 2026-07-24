@@ -2,7 +2,7 @@
 
 import { use, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import Link from 'next/link';
-import { ChevronLeft, ShieldCheck, CheckCircle2, Bot } from 'lucide-react';
+import { ChevronLeft, ChevronDown, ChevronUp, ShieldCheck, CheckCircle2, Bot } from 'lucide-react';
 import { useQuery, useClient, gql } from 'urql';
 import { EchoMode, CONTRACTS } from '@echo/sdk';
 import { useEcho } from '@/lib/sdk';
@@ -202,6 +202,9 @@ function OpenApply({ sdk, account, agentId, marketId, closed, agentRun }: { sdk:
   const [preview, setPreview] = useState('');
   const [app, setApp] = useState<any>(null);
   const [appLoading, setAppLoading] = useState(false);
+  // Collapsible submitted-application receipt: collapsed by default — once applied, the details are
+  // reference material, not the page's job (user feedback 2026-07-24).
+  const [appOpen, setAppOpen] = useState(false);
   const [applyOpen, setApplyOpen] = useState(false);
   const [identityOpen, setIdentityOpen] = useState(false);
   const [stake, setStake] = useState<bigint | null>(null);
@@ -270,21 +273,9 @@ function OpenApply({ sdk, account, agentId, marketId, closed, agentRun }: { sdk:
   useEffect(() => { loadTierJobs(); }, [loadTierJobs]);
 
   return (
-    <Section title="Apply" desc="Submit your application. The requester reveals, grades, and advances applicants through tiers.">
+    <Section title="Apply" desc={applied ? 'Your application is in — the requester takes it from here.' : 'Submit your application. The requester reveals, grades, and advances applicants through tiers.'}>
       <div className="sm:col-span-2 space-y-3">
-        {applied ? (
-          <div className="rounded-xl border border-success/20 bg-success/[0.06] px-4 py-3 text-sm">
-            <span className="inline-flex items-center gap-1.5 font-semibold text-success">
-              <CheckCircle2 className="w-4 h-4" /> Application submitted
-            </span>
-            {hasStake ? (
-              <span className="text-white/60"> Your {stakeText} stake is <b className="text-white/80">held</b> (not spent) — refunded in full if you withdraw before being revealed, forfeited only if you&apos;re revealed and then fail to deliver.</span>
-            ) : (
-              <span className="text-white/60"> No stake was required for this market.</span>
-            )}
-            <span className="block text-xs text-white/40 mt-1">Payouts land as the requester accepts each tier — track every on-chain movement on the <Link href="/activity" className="underline hover:text-white">Activity</Link> page.</span>
-          </div>
-        ) : stake === null ? (
+        {!applied && (stake === null ? (
           <div className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 text-sm text-white/50">
             Checking the stake requirement for this market…
           </div>
@@ -298,30 +289,60 @@ function OpenApply({ sdk, account, agentId, marketId, closed, agentRun }: { sdk:
           <div className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 text-sm text-white/60">
             <b className="font-semibold text-white">No stake required</b> to apply for this market. You can submit your application directly.
           </div>
-        )}
+        ))}
 
         {applied ? (
-          <Card title="Your application">
-            <div className="flex items-center gap-2">
+          /* One compact, collapsible receipt instead of banner + always-open card + uploader (user
+             feedback 2026-07-24). Header = the at-a-glance state; details fold away underneath. */
+          <div className={CARD_CLASS}>
+            <button
+              type="button"
+              onClick={() => setAppOpen((o) => !o)}
+              aria-expanded={appOpen}
+              className="flex w-full items-center gap-3 text-left"
+            >
               <CheckCircle2 className="w-5 h-5 text-success shrink-0" />
-              <span className="text-sm font-semibold text-white">Application submitted</span>
-            </div>
-            <KV rows={[
-              ['submission hash', short(app.submissionHash)],
-              ['tier status', TIER_STATUS_NAMES[Number(app.tierReached)] ?? `Tier ${app.tierReached}`],
-            ]} />
-            <div className="mt-2 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2">
-              <div className="text-[10px] uppercase tracking-wide text-white/40 mb-1">Your submission</div>
-              {myBody !== null
-                ? <p className="text-sm text-white/70 whitespace-pre-wrap">{myBody}</p>
-                : <p className="text-xs text-white/40 italic">Body isn&apos;t stored for this application (applied before the content channel, or from another device). Only its hash is on-chain.</p>}
-            </div>
-            {account && (
-              <Attachments marketId={Number(marketId)} kind="apply" contentKey={account.toLowerCase()} account={account}
-                canEdit={!closed} label="Your files" />
+              <span className="min-w-0 flex-1">
+                <span className="block text-sm font-semibold text-white">Application submitted</span>
+                <span className="block text-xs text-white/40 truncate">
+                  {hasStake ? `${stakeText} stake held (not spent)` : 'No stake was required'} · payouts land as the requester accepts each tier
+                </span>
+              </span>
+              <Badge tone={Number(app.tierReached) === 3 ? 'success' : 'neutral'}>{TIER_STATUS_NAMES[Number(app.tierReached)] ?? `Tier ${app.tierReached}`}</Badge>
+              {appOpen ? <ChevronUp className="w-4 h-4 text-white/40 shrink-0" /> : <ChevronDown className="w-4 h-4 text-white/40 shrink-0" />}
+            </button>
+
+            {appOpen && (
+              <div className="mt-3 space-y-2 border-t border-white/[0.08] pt-3">
+                {hasStake && (
+                  <p className="text-xs text-white/50">
+                    Your {stakeText} stake is <b className="text-white/70">held</b>, not spent — refunded in full if you withdraw
+                    before being revealed, forfeited only if you&apos;re revealed and then fail to deliver. Track every on-chain
+                    movement on the <Link href="/activity" className="underline hover:text-white">Activity</Link> page.
+                  </p>
+                )}
+                <KV rows={[
+                  ['submission hash', short(app.submissionHash)],
+                  ['tier status', TIER_STATUS_NAMES[Number(app.tierReached)] ?? `Tier ${app.tierReached}`],
+                ]} />
+                <div className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2">
+                  <div className="text-[10px] uppercase tracking-wide text-white/40 mb-1">Your submission</div>
+                  {myBody !== null
+                    ? <p className="text-sm text-white/70 whitespace-pre-wrap">{myBody}</p>
+                    : <p className="text-xs text-white/40 italic">Body isn&apos;t stored for this application (applied before the content channel, or from another device). Only its hash is on-chain.</p>}
+                </div>
+                {/* Read-only once applied: your files went in with the application — no uploader here. */}
+                {account && (
+                  <Attachments marketId={Number(marketId)} kind="apply" contentKey={account.toLowerCase()} account={account} label="Your files" compact />
+                )}
+                <button
+                  type="button"
+                  onClick={() => { loadApp(); }}
+                  className="text-xs text-white/40 hover:text-white underline transition"
+                >{appLoading ? 'Refreshing…' : 'Refresh my application'}</button>
+              </div>
             )}
-            <Button variant="secondary" busy={appLoading} onClick={() => { loadApp(); }}>Load my application</Button>
-          </Card>
+          </div>
         ) : (
           <Card title="Apply to this market" hint="Mints a participation receipt; pulls the stake if the market requires one.">
             <Field label="submission text → hash" value={submission} onChange={(e) => setSubmission(e.target.value)} />
