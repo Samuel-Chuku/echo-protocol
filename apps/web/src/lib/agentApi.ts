@@ -81,3 +81,19 @@ export type CreateAgentMarketInput = {
 export function createAgentMarket(input: CreateAgentMarketInput): Promise<{ marketId: number; txHash: string }> {
   return authed('/agent/markets', input);
 }
+
+/** Owner pauses/resumes the autonomous loop for one market (enabled flag). */
+export function pauseAgentMarket(marketId: number, enabled: boolean): Promise<{ marketId: number; enabled: boolean }> {
+  return authed(`/agent/market/${marketId}/pause`, { enabled });
+}
+
+/** Owner-signed reveal: the server signs reveal() (or gradeSubstantive on zero-fee markets) from the DCW. */
+export function agentReveal(marketId: number, participant: string): Promise<{ txHash: string }> {
+  return authed(`/agent/market/${marketId}/reveal`, { participant });
+}
+
+/** Owner-signed single-tier advance (1→2 Shortlist, 2→3 Final), gated server-side on the applicant
+ *  having submitted their current tier's deliverable. */
+export function agentAdvance(marketId: number, participant: string): Promise<{ txHash: string }> {
+  return authed(`/agent/market/${marketId}/advance`, { participant });
+}

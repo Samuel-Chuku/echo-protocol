@@ -3,13 +3,13 @@ import { encodeFunctionData, keccak256, parseEventLogs, toBytes } from 'viem';
 import { buildMetadata, IDENTITY_ABI } from '@echo/sdk';
 import { db } from '../db/client.js';
 import { agentMarkets, agentDecisions, agentWallets } from '../db/schema.js';
-import { eq } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
 import { config } from '../config.js';
 import { publicClient } from '../chain.js';
-import { MarketRegistryABI } from '../abis.js';
+import { MarketRegistryABI, AgenticCommerceABI } from '../abis.js';
 import { resolveSession } from '../auth/session.js';
 import { bearer } from '../auth/routes.js';
-import { provisionAgentWallet, withdrawUsdc, execApproveUsdc, execRegisterIdentity, execCallData, waitForTx, agentContracts } from './circle.js';
+import { provisionAgentWallet, withdrawUsdc, execApproveUsdc, execRegisterIdentity, execCallData, execReveal, execGradeSubstantive, execGradeShortlist, execGradeFinal, waitForTx, agentContracts } from './circle.js';
 
 const wrap = (fn: (req: Request, res: Response) => Promise<unknown>) => (req: Request, res: Response) => {
   fn(req, res).catch((e) => res.status(400).json({ error: (e as Error).message ?? 'agent error' }));
@@ -80,11 +80,14 @@ async function ensureAgentIdentity(owner: string, walletId: string, walletAddres
 
 /**
  * Agent REST surface (#4), mounted under /agent:
- *   GET  /agent/market/:id  → { agentRun, walletAddress? }   is this market agent-run? (public — drives apply UI)
+ *   GET  /agent/market/:id  → { agentRun, walletAddress?, owner?, enabled }   is this market agent-run? (public — drives apply UI)
  *   GET  /agent/decisions?marketId= → [decisions]            the agent's per-applicant feed (public read)
  *   POST /agent/wallet      → { walletId, walletAddress, balance }  get-or-create the requester's persistent agent wallet + balance (session)
  *   POST /agent/withdraw    → { txHash }                     withdraw USDC from the agent wallet to the owner (session)
  *   POST /agent/markets     → { marketId, txHash }           create an agent-run market drawing from the standing balance (session)
+ *   POST /agent/market/:id/pause   → { enabled }             owner pauses/resumes the autonomous loop for one market (session)
+ *   POST /agent/market/:id/reveal  → { txHash }              owner-signed reveal (DCW signs; falls back to gradeSubstantive on zero-fee markets)
+ *   POST /agent/market/:id/advance → { txHash }              owner-signed single-tier advance (1→2, 2→3), gated on the applicant having delivered
  */
 export function mountAgentRoutes(app: Express): void {
   app.get('/agent/market/:id', wrap(async (req, res) => {
@@ -167,6 +170,114 @@ export function mountAgentRoutes(app: Express): void {
     if (!wallet) throw new Error('no agent wallet to withdraw from');
     // Always send back to the OWNER (the signed-in requester) — never a client-supplied destination.
     const txHash = await waitForTx(await withdrawUsdc(wallet.walletId, owner, amount));
+    res.json({ txHash });
+  }));
+
+  /** Session-auth + assert the caller owns agent market :id. Returns the agent_markets row or 401/404s. */
+  async function requireMarketOwner(req: Request, res: Response): Promise<typeof agentMarkets.$inferSelect | null> {
+    const owner = await requireAddr(req, res);
+    if (!owner) return null;
+    const marketId = Number(req.params.id);
+    const [m] = await db.select().from(agentMarkets).where(eq(agentMarkets.marketId, marketId)).limit(1);
+    if (!m) { res.status(404).json({ error: 'not an agent-run market' }); return null; }
+    const [w] = await db.select().from(agentWallets).where(eq(agentWallets.walletAddress, m.walletAddress)).limit(1);
+    if (!w || w.owner !== owner) { res.status(403).json({ error: 'not the owner of this agent market' }); return null; }
+    return m;
+  }
+
+  // Pause/resume the autonomous loop for one market. Paused (enabled=0) markets are skipped by the
+  // loop's WHERE enabled=1 filter; the owner then drives reveal/advance manually via the routes below.
+  app.post('/agent/market/:id/pause', wrap(async (req, res) => {
+    const m = await requireMarketOwner(req, res);
+    if (!m) return;
+    const enabled = req.body?.enabled ? 1 : 0;
+    await db.update(agentMarkets).set({ enabled }).where(eq(agentMarkets.marketId, m.marketId));
+    readCache.delete(`market:${m.marketId}`);
+    res.json({ marketId: m.marketId, enabled: enabled === 1 });
+  }));
+
+  // Owner-signed manual actions. The DCW is the on-chain requester (reveal/grade* are onlyRequester),
+  // so the owner can't sign these from their own wallet — the server signs from the DCW after proving
+  // the SIWE session belongs to the wallet's owner. Simulate first so reverts come back decoded.
+  const simulateAsDcw = async (walletAddress: string, functionName: 'reveal' | 'gradeSubstantive' | 'gradeShortlist' | 'gradeFinal', marketId: number, participant: `0x${string}`) => {
+    try {
+      await publicClient.simulateContract({
+        address: agentContracts.marketRegistry,
+        abi: MarketRegistryABI,
+        functionName,
+        args: [BigInt(marketId), participant],
+        account: walletAddress as `0x${string}`,
+      });
+    } catch (e) {
+      const msg = (e as { shortMessage?: string; message?: string }).shortMessage ?? (e as Error).message ?? 'simulation failed';
+      throw new Error(`${functionName} would revert: ${msg}`);
+    }
+  };
+
+  // Reveal one applicant from the DCW (pays the reveal fee from market escrow). On a zero-fee market
+  // reveal() reverts NotRevealMarket, so fall through to gradeSubstantive for the 0→1 step.
+  app.post('/agent/market/:id/reveal', wrap(async (req, res) => {
+    const m = await requireMarketOwner(req, res);
+    if (!m) return;
+    const participant = String(req.body?.participant ?? '') as `0x${string}`;
+    if (!/^0x[0-9a-fA-F]{40}$/.test(participant)) throw new Error('participant address required');
+    const fee = await publicClient.readContract({
+      address: agentContracts.marketRegistry,
+      abi: MarketRegistryABI,
+      functionName: 'revealFee',
+      args: [BigInt(m.marketId)],
+    }).catch(() => 0n) as bigint;
+    const fn = fee > 0n ? 'reveal' : 'gradeSubstantive';
+    await simulateAsDcw(m.walletAddress, fn, m.marketId, participant);
+    const txHash = await waitForTx(await (fn === 'reveal'
+      ? execReveal(m.walletId, m.marketId, participant)
+      : execGradeSubstantive(m.walletId, m.marketId, participant)));
+    res.json({ txHash });
+  }));
+
+  // Advance one applicant a single tier (1→2 Shortlist, 2→3 Final) from the DCW. Mirrors the manage
+  // page's submission gate server-side: the applicant's LATEST tier job must be Submitted (2) or
+  // Completed (3) before they can climb — an applicant who never delivered can't be advanced.
+  app.post('/agent/market/:id/advance', wrap(async (req, res) => {
+    const m = await requireMarketOwner(req, res);
+    if (!m) return;
+    const participant = String(req.body?.participant ?? '') as `0x${string}`;
+    if (!/^0x[0-9a-fA-F]{40}$/.test(participant)) throw new Error('participant address required');
+
+    const app_ = await publicClient.readContract({
+      address: agentContracts.marketRegistry,
+      abi: MarketRegistryABI,
+      functionName: 'getApplication',
+      args: [BigInt(m.marketId), participant],
+    }) as { tierReached: number; tierJobIds: readonly bigint[] };
+    const tier = Number(app_.tierReached);
+    if (tier !== 1 && tier !== 2) throw new Error(`applicant is at tier ${tier} — only Revealed (1) or Shortlist (2) applicants can be advanced`);
+
+    // Submission gate: latest tier job (the one for their CURRENT tier) must be delivered.
+    const jobIds = app_.tierJobIds ?? [];
+    if (jobIds.length > 0) {
+      const lastJob = await publicClient.readContract({
+        address: agentContracts.agenticCommerce,
+        abi: AgenticCommerceABI,
+        functionName: 'getJob',
+        args: [jobIds[jobIds.length - 1]],
+      }).catch(() => null) as { status: number } | null;
+      const st = lastJob ? Number(lastJob.status) : null;
+      if (st !== null && st !== 2 && st !== 3) {
+        throw new Error('the applicant has not submitted their deliverable for the current tier yet — advancing is gated on delivery');
+      }
+    }
+
+    const fn = tier === 1 ? 'gradeShortlist' : 'gradeFinal';
+    await simulateAsDcw(m.walletAddress, fn, m.marketId, participant);
+    const txHash = await waitForTx(await (fn === 'gradeShortlist'
+      ? execGradeShortlist(m.walletId, m.marketId, participant)
+      : execGradeFinal(m.walletId, m.marketId, participant)));
+    // Keep the decision feed truthful: record the manual action so the market page's agent feed
+    // doesn't keep showing a stale "ranked — needs your review" for someone already advanced.
+    await db.update(agentDecisions)
+      .set({ stage: 'advanced', reason: 'Advanced manually by the owner.', txHash, updatedAt: Math.floor(Date.now() / 1000) })
+      .where(and(eq(agentDecisions.marketId, m.marketId), eq(agentDecisions.participant, participant.toLowerCase())));
     res.json({ txHash });
   }));
 

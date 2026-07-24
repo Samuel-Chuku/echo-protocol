@@ -237,6 +237,10 @@ function OpenWizard({ sdk, account, agentId, feeBps, onCreated }: WizardProps) {
   // previews, reveal, and advance to shortlist per the criteria below. The market draws escrow from the
   // agent wallet's pre-funded balance — the requester tops it up via the Agent wallet panel.
   const [agentMode, setAgentMode] = useState(false);
+  // Auto-advance to Shortlist is opt-out: when off, the agent screens, reveals, and RANKS applicants
+  // but never advances — the requester advances manually from the manage page. Backend enforces this
+  // with maxAdvances=0 (loop.ts gates on advancesUsed < maxAdvances), so guardrails become optional.
+  const [agentAutoAdvance, setAgentAutoAdvance] = useState(true);
   const [agentBalance, setAgentBalance] = useState<string>('0');
   const [revealCriteria, setRevealCriteria] = useState('');
   const [advanceGuardrails, setAdvanceGuardrails] = useState('');
@@ -393,24 +397,36 @@ function OpenWizard({ sdk, account, agentId, feeBps, onCreated }: WizardProps) {
                   </div>
                 </div>
 
-                {/* Gate 2 — guardrails */}
+                {/* Gate 2 — advance to shortlist. Opt-out: toggle off to let the agent reveal + rank
+                    only, and advance applicants yourself from the manage page. */}
                 <div className="relative pl-8">
                   <span className="absolute left-0 top-0 flex h-6 w-6 items-center justify-center rounded-full bg-teal-500/15 text-[11px] font-bold text-teal-300">2</span>
-                  <p className="text-sm font-semibold text-white">Advance to shortlist — only past your guardrails</p>
-                  <p className="text-[11px] text-white/40 mb-2">
-                    Reads the full revealed submission. Advances <b className="text-white/60">only if it clearly meets ALL of this</b>;
-                    anything borderline is ranked with a reason and left for you:
-                  </p>
-                  <TextArea label="" value={advanceGuardrails} onChange={(e) => setAdvanceGuardrails(e.target.value)} rows={2}
-                    placeholder="e.g. Only advance if there's a concrete plan AND a relevant work sample. If unsure, do not advance." />
-                  <div className="mt-1.5 flex flex-wrap items-center gap-3 text-[11px] text-white/40">
-                    <label className="inline-flex items-center gap-1.5">advance at most
-                      <input value={agentMaxAdvances} onChange={(e) => setAgentMaxAdvances(e.target.value)} inputMode="numeric"
-                        className="w-14 rounded border border-white/10 bg-white/[0.05] px-1.5 py-0.5 text-center font-mono text-white focus:border-teal-500/40 focus:outline-none" />
-                      applicants
-                    </label>
-                    <span className="text-white/30">· everyone else gets ranked for your review — the agent never pays a tier payout</span>
-                  </div>
+                  <label className="flex items-start gap-2 cursor-pointer">
+                    <input type="checkbox" checked={agentAutoAdvance} onChange={(e) => setAgentAutoAdvance(e.target.checked)} className="mt-0.5 h-3.5 w-3.5 accent-teal-500" />
+                    <span>
+                      <span className="block text-sm font-semibold text-white">Auto-advance to shortlist — only past your guardrails</span>
+                      <span className="block text-[11px] text-white/40">
+                        On: the agent reads the full revealed submission and advances only those clearly meeting ALL your
+                        guardrails. Off: the agent reveals and ranks applicants for you — <b className="text-white/60">you advance to
+                        Shortlist yourself</b> from the manage page.
+                      </span>
+                    </span>
+                  </label>
+                  {agentAutoAdvance && (
+                    <div className="mt-2">
+                      <p className="text-[11px] text-white/40 mb-2">Advances <b className="text-white/60">only if the submission clearly meets ALL of this</b>; anything borderline is ranked with a reason and left for you:</p>
+                      <TextArea label="" value={advanceGuardrails} onChange={(e) => setAdvanceGuardrails(e.target.value)} rows={2}
+                        placeholder="e.g. Only advance if there's a concrete plan AND a relevant work sample. If unsure, do not advance." />
+                      <div className="mt-1.5 flex flex-wrap items-center gap-3 text-[11px] text-white/40">
+                        <label className="inline-flex items-center gap-1.5">advance at most
+                          <input value={agentMaxAdvances} onChange={(e) => setAgentMaxAdvances(e.target.value)} inputMode="numeric"
+                            className="w-14 rounded border border-white/10 bg-white/[0.05] px-1.5 py-0.5 text-center font-mono text-white focus:border-teal-500/40 focus:outline-none" />
+                          applicants
+                        </label>
+                        <span className="text-white/30">· everyone else gets ranked for your review — the agent never pays a tier payout</span>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -442,12 +458,23 @@ function OpenWizard({ sdk, account, agentId, feeBps, onCreated }: WizardProps) {
           {agentMode && (
             <div className="rounded-lg border border-teal-500/20 bg-teal-500/[0.05] p-3 text-xs text-white/60 space-y-0.5">
               <p className="text-teal-300 font-semibold">🤖 Agent-run market</p>
-              <p>Your agent wallet creates + owns this market and draws the ${totalEscrow} escrow from its ${agentBalance} balance. It then autonomously screens, reveals, and advances applicants.</p>
+              <p>Your agent wallet creates + owns this market and draws the ${totalEscrow} escrow from its ${agentBalance} balance. {agentAutoAdvance
+                ? 'It then autonomously screens, reveals, and advances applicants.'
+                : 'It then autonomously screens, reveals, and ranks applicants — you advance them to Shortlist yourself from the manage page.'}</p>
             </div>
           )}
-          {agentUnderfunded && (
-            <p className="text-xs text-warning">Agent balance ${agentBalance} is below the ${totalEscrow} escrow — deposit more in the previous step.</p>
-          )}
+          {/* Why-can't-I-proceed line: whenever the create button is disabled, say the FIRST unmet
+              requirement instead of silently blocking (user feedback 2026-07-24). */}
+          {agentMode && !agentResult && (() => {
+            const reason = agentUnderfunded
+              ? `Agent balance $${agentBalance} is below the $${totalEscrow} escrow — deposit more in the previous step.`
+              : !revealCriteria.trim()
+                ? 'Add reveal criteria (step 3, gate 1) so the agent knows which previews are worth revealing.'
+                : agentAutoAdvance && !advanceGuardrails.trim()
+                  ? 'Add advancement guardrails (step 3, gate 2) — or turn off auto-advance there to reveal & rank only.'
+                  : null;
+            return reason ? <p className="text-xs text-warning">{reason}</p> : null;
+          })()}
           {agentErr && <p className="text-xs text-danger break-all">{agentErr}</p>}
           {agentResult && <p className="text-xs text-success">Agent market #{agentResult.marketId} created. The agent will start screening applicants.</p>}
           <div className="flex gap-2 items-center">
@@ -457,7 +484,7 @@ function OpenWizard({ sdk, account, agentId, feeBps, onCreated }: WizardProps) {
             ) : agentMode ? (
               <Button
                 busy={agentBusy}
-                disabled={agentUnderfunded || !revealCriteria.trim() || !advanceGuardrails.trim() || !!agentResult}
+                disabled={agentUnderfunded || !revealCriteria.trim() || (agentAutoAdvance && !advanceGuardrails.trim()) || !!agentResult}
                 onClick={async () => {
                   setAgentBusy(true); setAgentErr(null);
                   try {
@@ -478,8 +505,12 @@ function OpenWizard({ sdk, account, agentId, feeBps, onCreated }: WizardProps) {
                           flagWindow: toSeconds(flagAmount, flagUnit),
                         },
                         agent: {
-                          revealCriteria, advanceGuardrails,
-                          maxReveals: Number(agentMaxReveals), maxAdvances: Number(agentMaxAdvances),
+                          revealCriteria,
+                          // Auto-advance off → no guardrails and maxAdvances=0 so the agent reveals +
+                          // ranks but never advances; the requester advances manually.
+                          advanceGuardrails: agentAutoAdvance ? advanceGuardrails : '',
+                          maxReveals: Number(agentMaxReveals),
+                          maxAdvances: agentAutoAdvance ? Number(agentMaxAdvances) : 0,
                           revealThreshold: Number(agentThreshold),
                         },
                       });

@@ -18,7 +18,7 @@ import { GhostPenaltyModal } from '@/components/GhostPenaltyModal';
 import { usdc, scope, toUnits, short, modeName, modeBadgeTone, txLink, duration, FINDING_STATUS, MILESTONE_STATUS, JOB_STATUS, JOB_STATUS_CLASS, HOOK_TIER_LABELS } from '@/lib/format';
 import { eventLabel, summarizeArgs, timeAgo, type ActivityRow } from '@/lib/activity';
 import { humanizeError } from '@/lib/errors';
-import { getAgentMarket } from '@/lib/agentApi';
+import { getAgentMarket, pauseAgentMarket, agentReveal, agentAdvance } from '@/lib/agentApi';
 
 type PayoutSummary = {
   total: bigint;
@@ -84,10 +84,12 @@ export default function ManageMarketPage({ params }: { params: Promise<{ id: str
 
   // Agent-run context: for these markets the ON-CHAIN requester is the Circle DCW, and the human
   // owner only exists off-chain (agent_wallets). Drives the owner banner + read-only gating.
-  const [agentInfo, setAgentInfo] = useState<{ agentRun: boolean; walletAddress: string | null; owner: string | null }>({ agentRun: false, walletAddress: null, owner: null });
-  useEffect(() => {
-    getAgentMarket(Number(id)).then((a) => setAgentInfo({ agentRun: a.agentRun, walletAddress: a.walletAddress, owner: a.owner })).catch(() => {});
+  // `enabled` mirrors the loop kill-switch — paused (false) hands control to the owner's manual buttons.
+  const [agentInfo, setAgentInfo] = useState<{ agentRun: boolean; walletAddress: string | null; owner: string | null; enabled: boolean }>({ agentRun: false, walletAddress: null, owner: null, enabled: true });
+  const loadAgentInfo = useCallback(() => {
+    getAgentMarket(Number(id)).then((a) => setAgentInfo({ agentRun: a.agentRun, walletAddress: a.walletAddress, owner: a.owner, enabled: a.enabled })).catch(() => {});
   }, [id]);
+  useEffect(() => { loadAgentInfo(); }, [loadAgentInfo]);
 
   // Indexer copy of the market — renders details instantly and survives RPC outages.
   const detailVars = useMemo(() => ({ id: Number(id) }), [id]);
@@ -234,22 +236,43 @@ export default function ManageMarketPage({ params }: { params: Promise<{ id: str
       </div>
       <p className="text-sm text-white/50 mb-6">{data || gm ? '' : 'Loading…'}{subject}</p>
 
-      {/* Agent-run + you are the human owner: explain why there are no action buttons. The DCW is
-          the on-chain requester; reveal/advance/accept are onlyRequester so only the agent wallet can
-          sign them. The agent auto-reveals + advances to Shortlist and defers the rest (ranked). */}
+      {/* Agent-run + you are the human owner: the DCW is the on-chain requester, so reveal/advance/
+          accept are signed by the agent wallet — either autonomously (agent active) or on your click
+          via the owner-signed server routes (agent paused). The pause toggle switches between them. */}
       {isAgentOwner && !isRequester && (
         <div className="mb-6 flex items-start gap-3 rounded-card border border-teal-500/25 bg-teal-500/[0.07] p-4">
           <Bot className="w-4 h-4 text-teal-300 mt-0.5 shrink-0" />
-          <div>
-            <h3 className="text-sm font-semibold text-white">Your AI agent runs this market</h3>
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <h3 className="text-sm font-semibold text-white">Your AI agent {agentInfo.enabled ? 'runs' : 'is paused on'} this market</h3>
+              <Badge tone={agentInfo.enabled ? 'teal' : 'warning'}>{agentInfo.enabled ? 'agent active' : 'paused — manual control'}</Badge>
+            </div>
             <p className="text-xs text-white/60 mt-0.5">
-              This market was created from your agent wallet ({short(agentInfo.walletAddress ?? undefined)}), which is its
-              on-chain requester — so reveal, advance, and accept can only be signed by the agent, not your connected
-              wallet. The agent screens previews, pays to reveal promising applicants, and auto-advances those that
-              clearly meet your guardrails <b className="text-white/80">up to Shortlist</b>; everything past that it
-              ranks and leaves for review. Track its calls in <b className="text-white/80">AI agent activity</b> below,
-              and manage the wallet&apos;s balance from your <Link href={`/u/${account}`} className="underline hover:text-white">profile</Link>.
+              {agentInfo.enabled ? (
+                <>This market was created from your agent wallet ({short(agentInfo.walletAddress ?? undefined)}), which is its
+                on-chain requester. The agent screens previews, pays to reveal promising applicants, and auto-advances those that
+                clearly meet your guardrails <b className="text-white/80">up to Shortlist</b>; everything past that it
+                ranks and leaves for review. Pause it to take over and reveal/advance applicants yourself — your clicks
+                are signed by the agent wallet on your behalf.</>
+              ) : (
+                <>The autonomous loop is paused — nothing happens without you. Use the <b className="text-white/80">Reveal</b> and{' '}
+                <b className="text-white/80">Advance</b> buttons on each applicant below; the agent wallet ({short(agentInfo.walletAddress ?? undefined)})
+                signs them on your behalf, since it is the market&apos;s on-chain requester. Resume to hand screening back to the agent.</>
+              )}{' '}
+              Track its calls in <b className="text-white/80">AI agent activity</b> below, and manage the wallet&apos;s
+              balance from your <Link href={`/u/${account}`} className="underline hover:text-white">profile</Link>.
             </p>
+            <div className="mt-2">
+              <Command
+                label={agentInfo.enabled ? 'Pause agent — take manual control' : 'Resume agent'}
+                tone="neutral"
+                run={async () => {
+                  await pauseAgentMarket(Number(id), !agentInfo.enabled);
+                  return agentInfo.enabled ? 'Agent paused — manual controls unlocked below.' : 'Agent resumed.';
+                }}
+                onDone={loadAgentInfo}
+              />
+            </div>
           </div>
         </div>
       )}
@@ -333,9 +356,11 @@ export default function ManageMarketPage({ params }: { params: Promise<{ id: str
             <AgentDecisions marketId={Number(id)} />
             {data ? (
               // The human owner of an agent market can't sign requester actions (the DCW is the
-              // on-chain requester) — hide the action buttons (closed) but grant requester-level
-              // READS (application bodies after reveal) via readOnlyRequester.
-              <ApplicantList sdk={sdk} account={account} data={data} marketId={marketId()} onChanged={load} onGhost={setGhostResult} closed={isClosed || (agentInfo.agentRun && !isRequester)} revealedAtMap={revealedAtMap} readOnlyRequester={isAgentOwner && !isRequester} />
+              // on-chain requester) — hide the direct sdk buttons (closed) but grant requester-level
+              // READS via readOnlyRequester. When the agent is PAUSED, ownerControls swaps in
+              // owner-signed Reveal/Advance (server signs from the DCW on the owner's click).
+              <ApplicantList sdk={sdk} account={account} data={data} marketId={marketId()} onChanged={load} onGhost={setGhostResult} closed={isClosed || (agentInfo.agentRun && !isRequester)} revealedAtMap={revealedAtMap} readOnlyRequester={isAgentOwner && !isRequester}
+                ownerControls={!isClosed && isAgentOwner && !isRequester && !agentInfo.enabled} />
             ) : gm && gm.applicantCount === 0 ? (
               // The indexer already knows there's nobody yet — show the real empty state instead of
               // a confusing "waiting on the chain" line.
@@ -579,7 +604,7 @@ function StatusReport({ data, closed, rows }: { data: Loaded; closed: boolean; r
 /* ──────────────────────────── Open/Reveal applicant list ──────────────────────────── */
 
 function ApplicantList({
-  sdk, account, data, marketId, onChanged, onGhost, closed, revealedAtMap, readOnlyRequester,
+  sdk, account, data, marketId, onChanged, onGhost, closed, revealedAtMap, readOnlyRequester, ownerControls,
 }: {
   sdk: ReturnType<typeof useEcho>['sdk'];
   account?: `0x${string}`;
@@ -594,6 +619,8 @@ function ApplicantList({
   /** Human owner of an agent-run market: full requester READ rights (bodies, deliverables) but no
    *  on-chain actions — those are onlyRequester and the DCW is the requester. */
   readOnlyRequester?: boolean;
+  /** Agent paused + viewer is the owner: show owner-signed Reveal/Advance (server signs via the DCW). */
+  ownerControls?: boolean;
 }) {
   const [advance, setAdvance] = useState<{ participant: string; fromLabel: string; toLabel: string; amount: string; paysNow: boolean; run: () => Promise<unknown> } | null>(null);
   const apps = data.apps ?? [];
@@ -626,6 +653,26 @@ function ApplicantList({
     return () => { cancelled = true; };
   }, [sdk, apps]);
 
+  // Submission gate (user ask 2026-07-24): an applicant can only be ADVANCED once they've delivered
+  // their current tier's job — Arc status Submitted (2) or Completed (3) on the LATEST tier job.
+  // Keyed by participant → that status; participants with no tier job yet (just Revealed via paid
+  // reveal, which spawns no job) are absent and stay advanceable.
+  const [latestJobStatus, setLatestJobStatus] = useState<Map<string, number>>(new Map());
+  useEffect(() => {
+    let cancelled = false;
+    const withJobs = apps.filter((a: any) => [1, 2].includes(Number(a.tierReached)) && (a.tierJobIds ?? []).length > 0);
+    if (withJobs.length === 0) { setLatestJobStatus(new Map()); return; }
+    (async () => {
+      const entries = await Promise.all(withJobs.map(async (a: any) => {
+        const ids = a.tierJobIds as bigint[];
+        const j = await sdk.getArcJob(ids[ids.length - 1]).catch(() => null) as { status: number } | null;
+        return [a.participant as string, j ? Number(j.status) : -1] as const;
+      }));
+      if (!cancelled) setLatestJobStatus(new Map(entries.filter(([, s]) => s >= 0)));
+    })();
+    return () => { cancelled = true; };
+  }, [sdk, apps]);
+
   function nextAction(a: any) {
     const t = Number(a.tierReached);
     if (t === 0) {
@@ -635,9 +682,16 @@ function ApplicantList({
         ? { label: 'Reveal', toLabel: 'Revealed', amount: usdc(data.revealFee), paysNow: true, run: () => sdk.reveal(marketId, a.participant, account!) }
         : { label: 'Grade Substantive', toLabel: 'Revealed', amount: usdc(tierAmounts[0] ?? 0n), paysNow: false, run: () => sdk.gradeSubstantive(marketId, a.participant, account!) };
     }
+    if (t !== 1 && t !== 2) return null;
+    // Submission gate: if this applicant's current tier spawned a job, they must have DELIVERED it
+    // (Submitted=2 / Completed=3) before they can climb. Paid-reveal tier-1 applicants have no job
+    // yet (reveal spawns none) so they pass through — their first job comes with Shortlist.
+    const st = latestJobStatus.get(a.participant);
+    if (st !== undefined && st !== 2 && st !== 3) {
+      return { waitingOn: t === 1 ? 'Revealed' : 'Shortlist' } as const;
+    }
     if (t === 1) return { label: 'Advance', toLabel: 'Shortlist', amount: usdc(tierAmounts[1] ?? 0n), paysNow: false, run: () => sdk.gradeShortlist(marketId, a.participant, account!) };
-    if (t === 2) return { label: 'Advance', toLabel: 'Final', amount: usdc(tierAmounts[2] ?? 0n), paysNow: false, run: () => sdk.gradeFinal(marketId, a.participant, account!) };
-    return null;
+    return { label: 'Advance', toLabel: 'Final', amount: usdc(tierAmounts[2] ?? 0n), paysNow: false, run: () => sdk.gradeFinal(marketId, a.participant, account!) };
   }
 
   if (apps.length === 0) {
@@ -682,9 +736,48 @@ function ApplicantList({
                   </span>
                 )}
 
+                {ownerControls && (() => {
+                  // Owner-signed actions (agent paused): same ladder + submission gate as the direct
+                  // requester path, but the SERVER signs from the DCW (the on-chain requester). Reveal
+                  // covers 0→1 (server falls back to gradeSubstantive on zero-fee markets); Advance
+                  // covers 1→2 and 2→3 with the delivery gate re-checked server-side too.
+                  if (t === 0) {
+                    return (
+                      <span className="ml-auto flex items-center gap-2">
+                        <Command label={data.revealFee > 0n ? `Reveal ($${usdc(data.revealFee)})` : 'Grade Substantive'} modal
+                          run={async () => (await agentReveal(Number(marketId), a.participant)).txHash}
+                          onDone={onChanged} />
+                      </span>
+                    );
+                  }
+                  if (t !== 1 && t !== 2) return null;
+                  const st = latestJobStatus.get(a.participant);
+                  if (st !== undefined && st !== 2 && st !== 3) {
+                    return (
+                      <span className="ml-auto text-xs text-white/40 flex items-center gap-1" title="Advancing is gated on delivery: the applicant must submit their deliverable for the current tier first.">
+                        <Clock className="w-3 h-3" />
+                        Waiting on their {t === 1 ? 'Substantive' : 'Shortlist'} deliverable
+                      </span>
+                    );
+                  }
+                  return (
+                    <span className="ml-auto flex items-center gap-2">
+                      <Command label={`Advance to ${t === 1 ? 'Shortlist' : 'Final'}`} modal
+                        run={async () => (await agentAdvance(Number(marketId), a.participant)).txHash}
+                        onDone={onChanged} />
+                    </span>
+                  );
+                })()}
+
                 {!closed && (
                 <span className="ml-auto flex items-center gap-2">
-                  {next && (
+                  {next && 'waitingOn' in next && (
+                    <span className="text-xs text-white/40 flex items-center gap-1" title="Advancing is gated on delivery: the applicant must submit their deliverable for the current tier first.">
+                      <Clock className="w-3 h-3" />
+                      Waiting on their {next.waitingOn === 'Revealed' ? 'Substantive' : 'Shortlist'} deliverable
+                    </span>
+                  )}
+                  {next && !('waitingOn' in next) && (
                     <Button
                       variant="secondary"
                       onClick={() => setAdvance({ participant: a.participant, fromLabel: TIER_LABELS[t], toLabel: next.toLabel, amount: next.amount, paysNow: next.paysNow, run: next.run })}

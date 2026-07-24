@@ -122,6 +122,18 @@ export function execGradeShortlist(walletId: string, marketId: number, participa
   return execAbi(walletId, C.marketRegistry, 'gradeShortlist(uint256,address)', [String(marketId), participant]);
 }
 
+/** gradeSubstantive(marketId, participant) — 0→1 advance on a zero-reveal-fee market (reveal()
+ *  reverts NotRevealMarket there). Owner-driven manual actions only; the loop always uses reveal. */
+export function execGradeSubstantive(walletId: string, marketId: number, participant: string): Promise<string> {
+  return execAbi(walletId, C.marketRegistry, 'gradeSubstantive(uint256,address)', [String(marketId), participant]);
+}
+
+/** gradeFinal(marketId, participant) — advances a shortlisted applicant to Final (tier 3). Only ever
+ *  called from the owner's manual manage actions — the autonomous loop stops at Shortlist by design. */
+export function execGradeFinal(walletId: string, marketId: number, participant: string): Promise<string> {
+  return execAbi(walletId, C.marketRegistry, 'gradeFinal(uint256,address)', [String(marketId), participant]);
+}
+
 /** approve(spender, amount) on USDC — lets the market pull escrow when the DCW creates a market. */
 export function execApproveUsdc(walletId: string, spender: string, amount: string): Promise<string> {
   return execAbi(walletId, C.usdc, 'approve(address,uint256)', [spender, amount]);
